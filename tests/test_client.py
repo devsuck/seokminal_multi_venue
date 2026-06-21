@@ -45,7 +45,12 @@ def test_get_daily_price_single_page_returns_rows_oldest_first():
 def test_get_daily_price_paginates_when_page_is_full(monkeypatch):
     monkeypatch.setattr("time.sleep", lambda _: None)
     session = MagicMock()
-    full_page = [_row(f"2024{(100 - i) // 4 + 1:02d}{(100 - i) % 28 + 1:02d}") for i in range(100)]
+    import datetime as dt
+
+    page_end = dt.date(2024, 3, 31)
+    full_page = [
+        _row((page_end - dt.timedelta(days=i)).strftime("%Y%m%d")) for i in range(100)
+    ]
     second_page = [_row("20231201")]
     session.get.side_effect = [
         _mock_response(full_page),

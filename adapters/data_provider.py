@@ -1,9 +1,11 @@
 import datetime as dt
+from zoneinfo import ZoneInfo
 
 from nautilus_trader.core.datetime import dt_to_unix_nanos
 from nautilus_trader.model.currencies import KRW
-from nautilus_trader.model.data import Bar, BarType
-from nautilus_trader.model.identifiers import InstrumentId, Symbol
+from nautilus_trader.model.data import Bar, BarType, TradeTick
+from nautilus_trader.model.enums import AggressorSide
+from nautilus_trader.model.identifiers import InstrumentId, Symbol, TradeId
 from nautilus_trader.model.instruments import Equity
 from nautilus_trader.model.objects import Price, Quantity
 
@@ -39,6 +41,75 @@ def map_kis_daily_bar(row: dict, bar_type: BarType, price_precision: int) -> Bar
         low=Price(float(row["stck_lwpr"]), price_precision),
         close=Price(float(row["stck_clpr"]), price_precision),
         volume=Quantity(float(row["acml_vol"]), 0),
+        ts_event=ts_event,
+        ts_init=ts_event,
+    )
+
+
+TRADE_TR_ID = "H0STCNT0"
+TRADE_FIELD_COUNT = 46
+TRADE_CODE_IDX = 0
+TRADE_TIME_IDX = 1
+TRADE_PRICE_IDX = 2
+TRADE_VOLUME_IDX = 12
+TRADE_SIDE_IDX = 21
+
+SIDE_CODE_BUY = "1"
+SIDE_CODE_SELL = "5"
+
+KST = ZoneInfo("Asia/Seoul")
+
+
+def parse_kis_trade_message(raw: str) -> dict | None:
+    parts = raw.split("|")
+    if len(parts) < 4 or parts[1] != TRADE_TR_ID:
+        return None
+
+    data = parts[3]
+    record = data.split("^")
+    if len(record) != TRADE_FIELD_COUNT:
+        raise ValueError(
+            f"expected {TRADE_FIELD_COUNT} fields in KIS trade frame, got {len(record)}: {raw!r}"
+        )
+
+    return {
+        "code": record[TRADE_CODE_IDX],
+        "time": record[TRADE_TIME_IDX],
+        "price": record[TRADE_PRICE_IDX],
+        "volume": record[TRADE_VOLUME_IDX],
+        "side_code": record[TRADE_SIDE_IDX],
+    }
+
+
+def map_kis_trade_tick(
+    fields: dict,
+    instrument_id: InstrumentId,
+    price_precision: int,
+    trade_date: dt.date,
+    sequence: int,
+) -> TradeTick:
+    side_code = fields["side_code"]
+    if side_code == SIDE_CODE_BUY:
+        aggressor_side = AggressorSide.BUYER
+    elif side_code == SIDE_CODE_SELL:
+        aggressor_side = AggressorSide.SELLER
+    else:
+        aggressor_side = AggressorSide.NO_AGGRESSOR
+
+    time_str = fields["time"]
+    event_dt = dt.datetime.combine(
+        trade_date,
+        dt.time(int(time_str[0:2]), int(time_str[2:4]), int(time_str[4:6])),
+        tzinfo=KST,
+    )
+    ts_event = dt_to_unix_nanos(event_dt)
+
+    return TradeTick(
+        instrument_id=instrument_id,
+        price=Price(float(fields["price"]), price_precision),
+        size=Quantity(float(fields["volume"]), 0),
+        aggressor_side=aggressor_side,
+        trade_id=TradeId(f"{fields['code']}-{fields['time']}-{sequence}"),
         ts_event=ts_event,
         ts_init=ts_event,
     )

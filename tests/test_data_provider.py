@@ -1,7 +1,16 @@
+import datetime as dt
+
 from nautilus_trader.model.data import BarType
+from nautilus_trader.model.enums import AggressorSide
 from nautilus_trader.model.identifiers import InstrumentId
 
-from adapters.data_provider import bar_type_for, build_xkrx_equity, map_kis_daily_bar
+from adapters.data_provider import (
+    bar_type_for,
+    build_xkrx_equity,
+    map_kis_daily_bar,
+    map_kis_trade_tick,
+    parse_kis_trade_message,
+)
 
 
 def test_build_xkrx_equity_has_expected_fields():
@@ -42,3 +51,87 @@ def test_map_kis_daily_bar_converts_row_to_bar():
     assert bar.volume.as_double() == 1_000_000.0
     # 2024-01-02 00:00:00 UTC in nanoseconds
     assert bar.ts_event == 1704153600000000000
+
+
+def _trade_record(code="005930", time="093354", price="70000", volume="15", side_code="1") -> str:
+    fields = ["0"] * 46
+    fields[0] = code
+    fields[1] = time
+    fields[2] = price
+    fields[12] = volume
+    fields[21] = side_code
+    return "^".join(fields)
+
+
+def test_parse_kis_trade_message_extracts_known_fields():
+    raw = f"0|H0STCNT0|001|{_trade_record()}"
+
+    result = parse_kis_trade_message(raw)
+
+    assert result == {
+        "code": "005930",
+        "time": "093354",
+        "price": "70000",
+        "volume": "15",
+        "side_code": "1",
+    }
+
+
+def test_parse_kis_trade_message_returns_none_for_non_trade_frame():
+    raw = '{"header":{"tr_id":"PINGPONG"}}'
+
+    assert parse_kis_trade_message(raw) is None
+
+
+def test_parse_kis_trade_message_raises_on_wrong_field_count():
+    raw = "0|H0STCNT0|001|" + "^".join(["0"] * 10)
+
+    try:
+        parse_kis_trade_message(raw)
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert raw in str(exc)
+
+
+def test_map_kis_trade_tick_converts_fields_to_trade_tick():
+    instrument_id = InstrumentId.from_str("005930.XKRX")
+    fields = {
+        "code": "005930",
+        "time": "093354",
+        "price": "70000",
+        "volume": "15",
+        "side_code": "1",
+    }
+
+    tick = map_kis_trade_tick(
+        fields,
+        instrument_id,
+        price_precision=0,
+        trade_date=dt.date(2024, 6, 3),
+        sequence=7,
+    )
+
+    assert tick.instrument_id == instrument_id
+    assert tick.price.as_double() == 70000.0
+    assert tick.size.as_double() == 15.0
+    assert tick.aggressor_side == AggressorSide.BUYER
+    assert str(tick.trade_id) == "005930-093354-7"
+    assert tick.ts_event == 1717374834000000000  # 2024-06-03 09:33:54 KST -> UTC ns
+
+
+def test_map_kis_trade_tick_maps_sell_side_code():
+    instrument_id = InstrumentId.from_str("005930.XKRX")
+    fields = {"code": "005930", "time": "093354", "price": "70000", "volume": "15", "side_code": "5"}
+
+    tick = map_kis_trade_tick(fields, instrument_id, price_precision=0, trade_date=dt.date(2024, 6, 3), sequence=1)
+
+    assert tick.aggressor_side == AggressorSide.SELLER
+
+
+def test_map_kis_trade_tick_maps_unknown_side_code_to_no_aggressor():
+    instrument_id = InstrumentId.from_str("005930.XKRX")
+    fields = {"code": "005930", "time": "093354", "price": "70000", "volume": "15", "side_code": "9"}
+
+    tick = map_kis_trade_tick(fields, instrument_id, price_precision=0, trade_date=dt.date(2024, 6, 3), sequence=1)
+
+    assert tick.aggressor_side == AggressorSide.NO_AGGRESSOR

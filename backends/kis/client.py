@@ -51,6 +51,24 @@ class KISClient:
         return [row for row in all_rows if start <= row["stck_bsop_date"] <= end]
 
     def _fetch_page(self, code: str, start: str, end: str) -> list[dict]:
+        try:
+            response = self._request_page(code, start, end)
+        except requests.HTTPError as exc:
+            if exc.response is None or exc.response.status_code != 401:
+                raise
+            self._auth.invalidate()
+            response = self._request_page(code, start, end)
+
+        payload = response.json()
+        rt_cd = payload.get("rt_cd")
+        if rt_cd != "0":
+            raise RuntimeError(f"KIS API error rt_cd={rt_cd}: {payload.get('msg1')}")
+        rows = payload.get("output2", [])
+        non_blank = [row for row in rows if row.get("stck_bsop_date")]
+        non_blank.sort(key=lambda row: row["stck_bsop_date"])
+        return non_blank
+
+    def _request_page(self, code: str, start: str, end: str) -> requests.Response:
         token = self._auth.get_access_token()
         response = self._session.get(
             f"{self._base_url}{DAILY_PRICE_PATH}",
@@ -70,11 +88,7 @@ class KISClient:
             },
         )
         response.raise_for_status()
-        payload = response.json()
-        rows = payload.get("output2", [])
-        non_blank = [row for row in rows if row.get("stck_bsop_date")]
-        non_blank.sort(key=lambda row: row["stck_bsop_date"])
-        return non_blank
+        return response
 
 
 def _previous_day(date_str: str) -> str:

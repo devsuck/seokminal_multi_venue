@@ -27,6 +27,11 @@ class KISAuth:
             return self._token
         return self._fetch_token()
 
+    def invalidate(self) -> None:
+        """Force the next `get_access_token()` call to fetch a fresh token."""
+        self._token = None
+        self._expires_at = 0.0
+
     def _fetch_token(self) -> str:
         response = self._session.post(
             f"{self._base_url}/oauth2/tokenP",

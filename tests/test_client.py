@@ -1,6 +1,9 @@
 # tests/test_client.py
 from unittest.mock import MagicMock
 
+import pytest
+import requests
+
 from backends.kis.client import KISClient
 
 
@@ -19,6 +22,24 @@ def _mock_response(rows: list[dict]) -> MagicMock:
     response = MagicMock()
     response.status_code = 200
     response.json.return_value = {"output2": rows, "rt_cd": "0"}
+    response.raise_for_status.return_value = None
+    return response
+
+
+def _mock_401_response() -> MagicMock:
+    response = MagicMock()
+    response.status_code = 401
+    response.json.return_value = {"rt_cd": "1", "msg1": "token expired"}
+    error = requests.HTTPError("401 Client Error")
+    error.response = response
+    response.raise_for_status.side_effect = error
+    return response
+
+
+def _mock_error_response(rt_cd: str = "1", msg1: str = "rate limit exceeded") -> MagicMock:
+    response = MagicMock()
+    response.status_code = 200
+    response.json.return_value = {"output2": [], "rt_cd": rt_cd, "msg1": msg1}
     response.raise_for_status.return_value = None
     return response
 
@@ -78,3 +99,49 @@ def test_get_daily_price_skips_blank_rows():
     result = client.get_daily_price("005930", "20240101", "20240101")
 
     assert len(result) == 1
+
+
+def test_get_daily_price_retries_once_after_401_then_succeeds():
+    session = MagicMock()
+    rows = [_row("20240101")]
+    session.get.side_effect = [_mock_401_response(), _mock_response(rows)]
+    auth = MagicMock()
+    auth.get_access_token.side_effect = ["stale-tok", "fresh-tok"]
+
+    client = KISClient(app_key="key", app_secret="secret", auth=auth, session=session)
+    result = client.get_daily_price("005930", "20240101", "20240101")
+
+    assert [r["stck_bsop_date"] for r in result] == ["20240101"]
+    assert session.get.call_count == 2
+    auth.invalidate.assert_called_once()
+    assert auth.get_access_token.call_count == 2
+    # Second call must use the refreshed token.
+    second_call_headers = session.get.call_args_list[1].kwargs["headers"]
+    assert second_call_headers["authorization"] == "Bearer fresh-tok"
+
+
+def test_get_daily_price_raises_when_401_persists_after_retry():
+    session = MagicMock()
+    session.get.side_effect = [_mock_401_response(), _mock_401_response()]
+    auth = MagicMock()
+    auth.get_access_token.side_effect = ["stale-tok", "still-stale-tok"]
+
+    client = KISClient(app_key="key", app_secret="secret", auth=auth, session=session)
+
+    with pytest.raises(requests.HTTPError):
+        client.get_daily_price("005930", "20240101", "20240101")
+
+    assert session.get.call_count == 2
+    auth.invalidate.assert_called_once()
+
+
+def test_get_daily_price_raises_runtime_error_on_nonzero_rt_cd():
+    session = MagicMock()
+    session.get.return_value = _mock_error_response(rt_cd="1", msg1="rate limit exceeded")
+    auth = MagicMock()
+    auth.get_access_token.return_value = "tok"
+
+    client = KISClient(app_key="key", app_secret="secret", auth=auth, session=session)
+
+    with pytest.raises(RuntimeError, match="rate limit exceeded"):
+        client.get_daily_price("005930", "20240101", "20240101")

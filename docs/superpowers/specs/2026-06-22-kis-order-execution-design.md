@@ -72,7 +72,10 @@ loudly with KIS's own error message on the very first real call, rather than
 silently producing wrong data. The plan includes a manual end-to-end
 verification task (mirroring sub-project 1's and 2's final manual tasks) where
 the real API responses are confirmed; if a TR ID or field name is wrong, that
-task fixes it using the error message KIS returns.
+task fixes it using the error message KIS returns. The status-mapping field
+names used by `_row_to_status_dict` (`tot_ccld_qty`, `nccs_qty`, `cncl_yn`)
+are likewise documented-but-unverified against a live connection, and fall
+into this same risk category.
 
 ## Architecture
 
@@ -99,20 +102,32 @@ nautilus-multi-venue/
   `ORD_DVSN` codes `"00"`/`"01"`). Posts to
   `/uapi/domestic-stock/v1/trading/order-cash` with TR ID `VTTC0802U` (buy) or
   `VTTC0801U` (sell). `price` is required for `"LIMIT"`, ignored (sent as
-  `"0"`) for `"MARKET"`. Returns the full parsed JSON response on success;
-  raises `RuntimeError` if `rt_cd != "0"`, and raises `KeyError` naturally if
-  the expected `output.ODNO` field is missing (no silent fallback — a missing
-  order number means something is wrong and the caller needs to know).
+  `"0"`) for `"MARKET"`. Returns a normalized
+  `{"order_id": str, "status": str, "filled": float, "remaining": float}`
+  dict (matching `IBOrderClient`'s shape, except `order_id` is `str` for KIS
+  rather than `int`) — since KIS's placement response only confirms
+  acceptance, `status` is always `"SUBMITTED"`, `filled` is always `0.0`, and
+  `remaining` is the requested `quantity`. Raises `RuntimeError` if `rt_cd !=
+  "0"`, and raises `KeyError` naturally if the expected `output.odno` field is
+  missing (no silent fallback — a missing order number means something is
+  wrong and the caller needs to know).
 - `get_order_status(order_date: str, order_no: str) -> dict | None`: GETs
   `/uapi/domestic-stock/v1/trading/inquire-daily-ccld` with TR ID `VTTC8001R`,
   filters the returned order list (`output1`) for the row matching `order_no`,
-  and returns that row's dict, or `None` if not found (e.g., already filtered
-  out of the day's list — this is a legitimate "not found" case, unlike the
-  order-placement response, so it returns `None` rather than raising).
+  and maps that row through `_row_to_status_dict` into the same normalized
+  `{"order_id", "status", "filled", "remaining"}` shape (deriving `status` as
+  `"CANCELLED"`/`"FILLED"`/`"PARTIAL"`/`"OPEN"` from `tot_ccld_qty`,
+  `nccs_qty`, and `cncl_yn`), or returns `None` if not found (e.g., already
+  filtered out of the day's list — this is a legitimate "not found" case,
+  unlike the order-placement response, so it returns `None` rather than
+  raising).
 - `cancel_order(order_date: str, order_no: str, code: str, quantity: int) ->
   dict`: posts to `/uapi/domestic-stock/v1/trading/order-rvsecncl` with TR ID
   `VTTC0803U` and `RVSE_CNCL_DVSN_CD = "02"` (cancel, as opposed to `"01"`
-  modify). Same error handling as `place_order`.
+  modify), then calls `get_order_status` to fetch and return the authoritative
+  post-cancel normalized status dict (raising `ValueError` if the order is
+  unexpectedly not found after cancelling). Same error handling as
+  `place_order` for the cancel call itself.
 - Same 401-retry-after-refresh pattern as `KISClient._fetch_page`, factored
   into a small shared retry helper used by all three methods (the existing
   `KISClient` doesn't share this helper since it only has one HTTP-calling

@@ -40,7 +40,7 @@ def _client(session, auth=None):
 def test_place_order_buy_limit_sends_expected_request_and_returns_payload():
     session = MagicMock()
     session.post.return_value = _mock_response(
-        {"rt_cd": "0", "msg1": "success", "output": {"ODNO": "0000001234"}}
+        {"rt_cd": "0", "msg1": "success", "output": {"odno": "0000001234"}}
     )
     client, _ = _client(session)
 
@@ -48,7 +48,7 @@ def test_place_order_buy_limit_sends_expected_request_and_returns_payload():
         code="005930", side="BUY", quantity=1, order_division="LIMIT", price=65000
     )
 
-    assert result["output"]["ODNO"] == "0000001234"
+    assert result == {"order_id": "0000001234", "status": "SUBMITTED", "filled": 0.0, "remaining": 1.0}
     session.post.assert_called_once()
     call = session.post.call_args
     assert call.args[0].endswith("/uapi/domestic-stock/v1/trading/order-cash")
@@ -64,7 +64,7 @@ def test_place_order_buy_limit_sends_expected_request_and_returns_payload():
 def test_place_order_sell_market_uses_sell_tr_id_and_zero_price():
     session = MagicMock()
     session.post.return_value = _mock_response(
-        {"rt_cd": "0", "msg1": "success", "output": {"ODNO": "0000005678"}}
+        {"rt_cd": "0", "msg1": "success", "output": {"odno": "0000005678"}}
     )
     client, _ = _client(session)
 
@@ -98,7 +98,7 @@ def test_place_order_retries_once_after_401_then_succeeds():
     session = MagicMock()
     session.post.side_effect = [
         _mock_401_response(),
-        _mock_response({"rt_cd": "0", "msg1": "success", "output": {"ODNO": "0000001234"}}),
+        _mock_response({"rt_cd": "0", "msg1": "success", "output": {"odno": "0000001234"}}),
     ]
     auth = MagicMock()
     auth.get_access_token.side_effect = ["stale-tok", "fresh-tok"]
@@ -106,7 +106,7 @@ def test_place_order_retries_once_after_401_then_succeeds():
 
     result = client.place_order(code="005930", side="BUY", quantity=1, order_division="LIMIT", price=65000)
 
-    assert result["output"]["ODNO"] == "0000001234"
+    assert result == {"order_id": "0000001234", "status": "SUBMITTED", "filled": 0.0, "remaining": 1.0}
     assert session.post.call_count == 2
     auth.invalidate.assert_called_once()
 
@@ -118,8 +118,8 @@ def test_get_order_status_returns_matching_row():
             "rt_cd": "0",
             "msg1": "success",
             "output1": [
-                {"ODNO": "0000001234", "ORD_DVSN": "00"},
-                {"ODNO": "0000009999", "ORD_DVSN": "00"},
+                {"odno": "0000001234", "tot_ccld_qty": "0", "nccs_qty": "1", "cncl_yn": "N"},
+                {"odno": "0000009999", "tot_ccld_qty": "0", "nccs_qty": "1", "cncl_yn": "N"},
             ],
         }
     )
@@ -127,7 +127,7 @@ def test_get_order_status_returns_matching_row():
 
     result = client.get_order_status(order_date="20240603", order_no="0000001234")
 
-    assert result == {"ODNO": "0000001234", "ORD_DVSN": "00"}
+    assert result == {"order_id": "0000001234", "status": "OPEN", "filled": 0.0, "remaining": 1.0}
     call = session.get.call_args
     assert call.args[0].endswith("/uapi/domestic-stock/v1/trading/inquire-daily-ccld")
     assert call.kwargs["headers"]["tr_id"] == "VTTC8001R"
@@ -139,7 +139,7 @@ def test_get_order_status_returns_matching_row():
 def test_get_order_status_returns_none_when_not_found():
     session = MagicMock()
     session.get.return_value = _mock_response(
-        {"rt_cd": "0", "msg1": "success", "output1": [{"ODNO": "0000009999"}]}
+        {"rt_cd": "0", "msg1": "success", "output1": [{"odno": "0000009999"}]}
     )
     client, _ = _client(session)
 
@@ -148,19 +148,29 @@ def test_get_order_status_returns_none_when_not_found():
     assert result is None
 
 
-def test_cancel_order_sends_expected_request_and_returns_payload():
+def test_cancel_order_cancels_and_returns_status_after_cancel():
     session = MagicMock()
-    session.post.return_value = _mock_response(
-        {"rt_cd": "0", "msg1": "success", "output": {"ODNO": "0000001234"}}
-    )
+    session.post.return_value = _mock_response({"rt_cd": "0", "msg1": "success", "output": {}})
+    session.get.return_value = _mock_response({
+        "rt_cd": "0", "msg1": "success",
+        "output1": [{"odno": "0000001234", "tot_ccld_qty": "0", "nccs_qty": "0", "cncl_yn": "Y"}],
+    })
     client, _ = _client(session)
 
     result = client.cancel_order(order_date="20240603", order_no="0000001234", code="005930", quantity=1)
 
-    assert result["output"]["ODNO"] == "0000001234"
-    call = session.post.call_args
-    assert call.args[0].endswith("/uapi/domestic-stock/v1/trading/order-rvsecncl")
-    assert call.kwargs["headers"]["tr_id"] == "VTTC0803U"
-    assert call.kwargs["json"]["ORGN_ODNO"] == "0000001234"
-    assert call.kwargs["json"]["RVSE_CNCL_DVSN_CD"] == "02"
-    assert call.kwargs["json"]["ORD_QTY"] == "1"
+    assert result == {"order_id": "0000001234", "status": "CANCELLED", "filled": 0.0, "remaining": 0.0}
+    cancel_call = session.post.call_args
+    assert cancel_call.args[0].endswith("/uapi/domestic-stock/v1/trading/order-rvsecncl")
+    assert cancel_call.kwargs["headers"]["tr_id"] == "VTTC0803U"
+    assert cancel_call.kwargs["json"]["RVSE_CNCL_DVSN_CD"] == "02"
+
+
+def test_cancel_order_raises_value_error_when_not_found_after_cancel():
+    session = MagicMock()
+    session.post.return_value = _mock_response({"rt_cd": "0", "msg1": "success", "output": {}})
+    session.get.return_value = _mock_response({"rt_cd": "0", "msg1": "success", "output1": []})
+    client, _ = _client(session)
+
+    with pytest.raises(ValueError, match="0000001234"):
+        client.cancel_order(order_date="20240603", order_no="0000001234", code="005930", quantity=1)

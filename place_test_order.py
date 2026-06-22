@@ -38,7 +38,7 @@ def main() -> None:
     placed = order_client.place_order(
         code=code, side="BUY", quantity=quantity, order_division="LIMIT", price=limit_price
     )
-    order_no = placed["output"]["ODNO"]
+    order_no = placed["order_id"]
     print("placed:", placed)
 
     status = order_client.get_order_status(order_date=order_date, order_no=order_no)

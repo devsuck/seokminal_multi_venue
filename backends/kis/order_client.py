@@ -58,8 +58,8 @@ class KISOrderClient:
                 "ORD_UNPR": ord_unpr,
             },
         )
-        _ = payload["output"]["ODNO"]  # fail loud if the order number is missing
-        return payload
+        order_id = payload["output"]["odno"]  # fail loud if the order number is missing
+        return {"order_id": order_id, "status": "SUBMITTED", "filled": 0.0, "remaining": float(quantity)}
 
     def get_order_status(self, order_date: str, order_no: str) -> dict | None:
         payload = self._call(
@@ -84,12 +84,12 @@ class KISOrderClient:
             },
         )
         for row in payload.get("output1", []):
-            if row.get("ODNO") == order_no:
-                return row
+            if row.get("odno") == order_no:
+                return self._row_to_status_dict(row)
         return None
 
     def cancel_order(self, order_date: str, order_no: str, code: str, quantity: int) -> dict:
-        return self._call(
+        self._call(
             "POST",
             ORDER_CANCEL_PATH,
             CANCEL_TR_ID,
@@ -105,6 +105,24 @@ class KISOrderClient:
                 "QTY_ALL_ORD_YN": "Y",
             },
         )
+        status = self.get_order_status(order_date, order_no)
+        if status is None:
+            raise ValueError(f"order {order_no} not found after cancel")
+        return status
+
+    @staticmethod
+    def _row_to_status_dict(row: dict) -> dict:
+        filled = float(row.get("tot_ccld_qty", 0))
+        remaining = float(row.get("nccs_qty", 0))
+        if row.get("cncl_yn") == "Y":
+            status = "CANCELLED"
+        elif remaining == 0 and filled > 0:
+            status = "FILLED"
+        elif filled > 0:
+            status = "PARTIAL"
+        else:
+            status = "OPEN"
+        return {"order_id": row.get("odno"), "status": status, "filled": filled, "remaining": remaining}
 
     def _call(
         self,

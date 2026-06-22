@@ -24,13 +24,12 @@ async def run_stream(
 ) -> None:
     sequence = 0
     async for raw_message in client.stream_trades(code):
-        fields = parse_kis_trade_message(raw_message)
-        if fields is None:
-            continue
-
-        sequence += 1
-        tick = map_kis_trade_tick(fields, instrument_id, price_precision, trade_date, sequence)
-        print_fn(tick)
+        for fields in parse_kis_trade_message(raw_message):
+            sequence += 1
+            tick = map_kis_trade_tick(
+                fields, instrument_id, price_precision, trade_date, sequence
+            )
+            print_fn(tick)
 
 
 def main() -> None:

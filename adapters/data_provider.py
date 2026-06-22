@@ -60,25 +60,33 @@ SIDE_CODE_SELL = "5"
 KST = ZoneInfo("Asia/Seoul")
 
 
-def parse_kis_trade_message(raw: str) -> dict | None:
+def parse_kis_trade_message(raw: str) -> list[dict]:
     parts = raw.split("|")
     if len(parts) < 4 or parts[1] != TRADE_TR_ID:
-        return None
+        return []
 
-    data = parts[3]
-    record = data.split("^")
-    if len(record) != TRADE_FIELD_COUNT:
+    record_count = int(parts[2])
+    fields = parts[3].split("^")
+    expected_field_count = TRADE_FIELD_COUNT * record_count
+    if len(fields) != expected_field_count:
         raise ValueError(
-            f"expected {TRADE_FIELD_COUNT} fields in KIS trade frame, got {len(record)}: {raw!r}"
+            f"expected {expected_field_count} fields in KIS trade frame "
+            f"({record_count} records), got {len(fields)}: {raw!r}"
         )
 
-    return {
-        "code": record[TRADE_CODE_IDX],
-        "time": record[TRADE_TIME_IDX],
-        "price": record[TRADE_PRICE_IDX],
-        "volume": record[TRADE_VOLUME_IDX],
-        "side_code": record[TRADE_SIDE_IDX],
-    }
+    records = []
+    for i in range(record_count):
+        record = fields[i * TRADE_FIELD_COUNT : (i + 1) * TRADE_FIELD_COUNT]
+        records.append(
+            {
+                "code": record[TRADE_CODE_IDX],
+                "time": record[TRADE_TIME_IDX],
+                "price": record[TRADE_PRICE_IDX],
+                "volume": record[TRADE_VOLUME_IDX],
+                "side_code": record[TRADE_SIDE_IDX],
+            }
+        )
+    return records
 
 
 def map_kis_trade_tick(

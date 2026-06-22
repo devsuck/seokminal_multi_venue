@@ -68,19 +68,35 @@ def test_parse_kis_trade_message_extracts_known_fields():
 
     result = parse_kis_trade_message(raw)
 
-    assert result == {
-        "code": "005930",
-        "time": "093354",
-        "price": "70000",
-        "volume": "15",
-        "side_code": "1",
-    }
+    assert result == [
+        {
+            "code": "005930",
+            "time": "093354",
+            "price": "70000",
+            "volume": "15",
+            "side_code": "1",
+        }
+    ]
 
 
-def test_parse_kis_trade_message_returns_none_for_non_trade_frame():
+def test_parse_kis_trade_message_extracts_multiple_concatenated_records():
+    raw = "0|H0STCNT0|002|" + _trade_record(price="70000") + "^" + _trade_record(
+        price="70100", side_code="5"
+    )
+
+    result = parse_kis_trade_message(raw)
+
+    assert len(result) == 2
+    assert result[0]["price"] == "70000"
+    assert result[0]["side_code"] == "1"
+    assert result[1]["price"] == "70100"
+    assert result[1]["side_code"] == "5"
+
+
+def test_parse_kis_trade_message_returns_empty_list_for_non_trade_frame():
     raw = '{"header":{"tr_id":"PINGPONG"}}'
 
-    assert parse_kis_trade_message(raw) is None
+    assert parse_kis_trade_message(raw) == []
 
 
 def test_parse_kis_trade_message_raises_on_wrong_field_count():

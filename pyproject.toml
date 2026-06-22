@@ -10,6 +10,7 @@ dependencies = [
     "nautilus_trader",
     "requests>=2.31",
     "python-dotenv>=1.0",
+    "ib_async>=2.1.0",
 ]
 
 [project.optional-dependencies]

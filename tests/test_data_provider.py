@@ -1,4 +1,5 @@
 import datetime as dt
+from types import SimpleNamespace
 
 from nautilus_trader.model.data import BarType
 from nautilus_trader.model.enums import AggressorSide
@@ -6,7 +7,9 @@ from nautilus_trader.model.identifiers import InstrumentId
 
 from adapters.data_provider import (
     bar_type_for,
+    build_us_equity,
     build_xkrx_equity,
+    map_ib_trade_tick,
     map_kis_daily_bar,
     map_kis_trade_tick,
     parse_kis_trade_message,
@@ -151,3 +154,30 @@ def test_map_kis_trade_tick_maps_unknown_side_code_to_no_aggressor():
     tick = map_kis_trade_tick(fields, instrument_id, price_precision=0, trade_date=dt.date(2024, 6, 3), sequence=1)
 
     assert tick.aggressor_side == AggressorSide.NO_AGGRESSOR
+
+
+def test_build_us_equity_has_expected_fields():
+    equity = build_us_equity("AAPL")
+
+    assert equity.id == InstrumentId.from_str("AAPL.NASDAQ")
+    assert str(equity.quote_currency) == "USD"
+    assert equity.price_precision == 2
+    assert equity.lot_size.as_double() == 1.0
+
+
+def test_map_ib_trade_tick_converts_raw_tick_to_trade_tick():
+    instrument_id = InstrumentId.from_str("AAPL.NASDAQ")
+    raw_tick = SimpleNamespace(
+        time=dt.datetime(2024, 6, 3, 13, 30, 0, tzinfo=dt.timezone.utc),
+        price=195.50,
+        size=100,
+    )
+
+    tick = map_ib_trade_tick(raw_tick, instrument_id, price_precision=2, sequence=3)
+
+    assert tick.instrument_id == instrument_id
+    assert tick.price.as_double() == 195.50
+    assert tick.size.as_double() == 100.0
+    assert tick.aggressor_side == AggressorSide.NO_AGGRESSOR
+    assert str(tick.trade_id) == "AAPL-20240603133000-3"
+    assert tick.ts_event == 1717421400000000000  # 2024-06-03 13:30:00 UTC -> ns

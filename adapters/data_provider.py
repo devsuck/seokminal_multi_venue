@@ -2,7 +2,7 @@ import datetime as dt
 from zoneinfo import ZoneInfo
 
 from nautilus_trader.core.datetime import dt_to_unix_nanos
-from nautilus_trader.model.currencies import KRW
+from nautilus_trader.model.currencies import KRW, USD
 from nautilus_trader.model.data import Bar, BarType, TradeTick
 from nautilus_trader.model.enums import AggressorSide
 from nautilus_trader.model.identifiers import InstrumentId, Symbol, TradeId
@@ -118,6 +118,40 @@ def map_kis_trade_tick(
         size=Quantity(float(fields["volume"]), 0),
         aggressor_side=aggressor_side,
         trade_id=TradeId(f"{fields['code']}-{fields['time']}-{sequence}"),
+        ts_event=ts_event,
+        ts_init=ts_event,
+    )
+
+
+def build_us_equity(symbol: str) -> Equity:
+    now_ns = dt_to_unix_nanos(dt.datetime.now(dt.timezone.utc))
+    return Equity(
+        instrument_id=InstrumentId.from_str(f"{symbol}.NASDAQ"),
+        raw_symbol=Symbol(symbol),
+        currency=USD,
+        price_precision=2,
+        price_increment=Price.from_str("0.01"),
+        lot_size=Quantity.from_int(1),
+        ts_event=now_ns,
+        ts_init=now_ns,
+    )
+
+
+def map_ib_trade_tick(
+    raw_tick,
+    instrument_id: InstrumentId,
+    price_precision: int,
+    sequence: int,
+) -> TradeTick:
+    ts_event = dt_to_unix_nanos(raw_tick.time)
+    time_str = raw_tick.time.strftime("%Y%m%d%H%M%S")
+
+    return TradeTick(
+        instrument_id=instrument_id,
+        price=Price(float(raw_tick.price), price_precision),
+        size=Quantity(float(raw_tick.size), 0),
+        aggressor_side=AggressorSide.NO_AGGRESSOR,
+        trade_id=TradeId(f"{instrument_id.symbol}-{time_str}-{sequence}"),
         ts_event=ts_event,
         ts_init=ts_event,
     )

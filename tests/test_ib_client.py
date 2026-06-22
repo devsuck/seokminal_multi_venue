@@ -33,11 +33,15 @@ class FakeTicker:
 class FakeIB:
     def __init__(self, batches):
         self.connect_calls: list[tuple] = []
+        self.qualify_calls: list[tuple] = []
         self.req_calls: list[tuple] = []
         self._ticker = FakeTicker(batches)
 
     async def connectAsync(self, host, port, client_id):
         self.connect_calls.append((host, port, client_id))
+
+    async def qualifyContractsAsync(self, contract):
+        self.qualify_calls.append((contract.symbol, contract.exchange, contract.currency))
 
     def reqTickByTickData(self, contract, tick_type):
         self.req_calls.append((contract.symbol, contract.exchange, contract.currency, tick_type))
@@ -56,4 +60,5 @@ async def test_stream_trades_connects_subscribes_and_yields_ticks():
 
     assert received == [tick1, tick2]
     assert fake_ib.connect_calls == [("127.0.0.1", 7497, 1)]
+    assert fake_ib.qualify_calls == [("AAPL", "SMART", "USD")]
     assert fake_ib.req_calls == [("AAPL", "SMART", "USD", "AllLast")]

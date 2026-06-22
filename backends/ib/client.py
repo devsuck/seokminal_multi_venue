@@ -23,6 +23,7 @@ class IBClient:
     async def stream_trades(self, symbol: str) -> AsyncIterator[TickByTickAllLast]:
         await self._ib.connectAsync(self._host, self._port, self._client_id)
         contract = Stock(symbol, "SMART", "USD")
+        await self._ib.qualifyContractsAsync(contract)
         ticker = self._ib.reqTickByTickData(contract, TICK_TYPE)
         async for _ in ticker.updateEvent:
             for tick in ticker.tickByTicks:

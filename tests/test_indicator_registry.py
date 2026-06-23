@@ -89,3 +89,41 @@ def test_obv_has_no_required_params():
     registry.on_bar(_bar(BAR_TYPE_AAPL, 100.0, 0))
 
     assert registry.current_value(operand) is not None
+
+
+def test_bar_buffer_is_cleared_after_indicator_creation():
+    """
+    Verify that the internal _bars_by_type buffer is cleared and stops growing
+    once an indicator is created for a bar_type. This ensures the buffer doesn't
+    grow unbounded in long-running sessions. The buffer is actually cleared on
+    the first on_bar call after an indicator is created to allow multiple
+    indicators with different params for the same bar_type to all be backfilled.
+    """
+    registry = IndicatorRegistry()
+    operand = IndicatorOperand(indicator="RSI", bar_type=BAR_TYPE_AAPL, params={"period": 3})
+
+    # Send 50 bars before any indicator exists
+    for i in range(50):
+        registry.on_bar(_bar(BAR_TYPE_AAPL, 100.0 + (i % 3), i))
+
+    # At this point, buffer should have 50 bars
+    assert len(registry._bars_by_type.get(BAR_TYPE_AAPL, [])) == 50
+
+    # Create an indicator (this replays the buffer but doesn't clear it yet)
+    registry.current_value(operand)
+
+    # Buffer still exists at this point (will be cleared on next on_bar)
+    assert len(registry._bars_by_type.get(BAR_TYPE_AAPL, [])) == 50
+
+    # Send one more bar after the indicator exists - this triggers buffer clearing
+    registry.on_bar(_bar(BAR_TYPE_AAPL, 100.0, 100))
+
+    # Buffer should now be empty since it was cleared after first on_bar post-creation
+    assert len(registry._bars_by_type.get(BAR_TYPE_AAPL, [])) == 0
+
+    # Send 50 more bars after the buffer is cleared
+    for i in range(101, 151):
+        registry.on_bar(_bar(BAR_TYPE_AAPL, 100.0 + (i % 3), i))
+
+    # Buffer should still be empty (not growing), since we stop buffering once an indicator exists
+    assert len(registry._bars_by_type.get(BAR_TYPE_AAPL, [])) == 0

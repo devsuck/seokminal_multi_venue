@@ -62,6 +62,11 @@ class IndicatorRegistry:
     def __init__(self) -> None:
         self._indicators: dict[tuple, object] = {}
         self._bars_by_type: dict[str, list[Bar]] = {}
+        # Track bar_types where we've created at least one indicator and backfilled.
+        # The buffer will be cleared on the next on_bar call for that bar_type.
+        self._bar_types_to_clear_buffer: set[str] = set()
+        # Track bar_types that have at least one indicator to avoid unbounded buffering
+        self._bar_types_with_indicators: set[str] = set()
 
     def get_or_create(self, operand: IndicatorOperand):
         key = self._key(operand)
@@ -73,14 +78,34 @@ class IndicatorRegistry:
             if bar_type_str in self._bars_by_type:
                 for bar in self._bars_by_type[bar_type_str]:
                     indicator.handle_bar(bar)
+            # Mark that this bar_type now has at least one indicator, and schedule
+            # the buffer to be cleared on the next on_bar call. This allows
+            # subsequent indicators with different params to still be backfilled
+            # if get_or_create is called before on_bar arrives.
+            self._bar_types_with_indicators.add(bar_type_str)
+            self._bar_types_to_clear_buffer.add(bar_type_str)
         return self._indicators[key]
 
     def on_bar(self, bar: Bar) -> None:
         bar_type_str = str(bar.bar_type)
-        # Buffer this bar for later indicators
-        if bar_type_str not in self._bars_by_type:
-            self._bars_by_type[bar_type_str] = []
-        self._bars_by_type[bar_type_str].append(bar)
+
+        # Clear the buffer for this bar_type if scheduled (from get_or_create).
+        # This defers buffer clearing until after at least one on_bar call post-creation,
+        # allowing multiple indicators for the same bar_type to be created in sequence
+        # and still receive backfill. Trade-off: bars arriving before any indicator was
+        # created will be buffered; once the first indicator is created and one on_bar
+        # arrives, the buffer is cleared and won't grow further.
+        if bar_type_str in self._bar_types_to_clear_buffer:
+            if bar_type_str in self._bars_by_type:
+                del self._bars_by_type[bar_type_str]
+            self._bar_types_to_clear_buffer.discard(bar_type_str)
+
+        # Only buffer this bar if no indicator exists for this bar_type yet.
+        # Once an indicator is created, it gets all future bars directly via this loop.
+        if bar_type_str not in self._bar_types_with_indicators:
+            if bar_type_str not in self._bars_by_type:
+                self._bars_by_type[bar_type_str] = []
+            self._bars_by_type[bar_type_str].append(bar)
         # Update all existing indicators that match this bar type
         for (key_bar_type, _indicator, _params), indicator in self._indicators.items():
             if key_bar_type == bar_type_str:

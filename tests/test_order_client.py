@@ -40,7 +40,7 @@ def _client(session, auth=None):
 def test_place_order_buy_limit_sends_expected_request_and_returns_payload():
     session = MagicMock()
     session.post.return_value = _mock_response(
-        {"rt_cd": "0", "msg1": "success", "output": {"odno": "0000001234"}}
+        {"rt_cd": "0", "msg1": "success", "output": {"ODNO": "0000001234"}}
     )
     client, _ = _client(session)
 
@@ -64,7 +64,7 @@ def test_place_order_buy_limit_sends_expected_request_and_returns_payload():
 def test_place_order_sell_market_uses_sell_tr_id_and_zero_price():
     session = MagicMock()
     session.post.return_value = _mock_response(
-        {"rt_cd": "0", "msg1": "success", "output": {"odno": "0000005678"}}
+        {"rt_cd": "0", "msg1": "success", "output": {"ODNO": "0000005678"}}
     )
     client, _ = _client(session)
 
@@ -98,7 +98,7 @@ def test_place_order_retries_once_after_401_then_succeeds():
     session = MagicMock()
     session.post.side_effect = [
         _mock_401_response(),
-        _mock_response({"rt_cd": "0", "msg1": "success", "output": {"odno": "0000001234"}}),
+        _mock_response({"rt_cd": "0", "msg1": "success", "output": {"ODNO": "0000001234"}}),
     ]
     auth = MagicMock()
     auth.get_access_token.side_effect = ["stale-tok", "fresh-tok"]
@@ -118,8 +118,8 @@ def test_get_order_status_returns_matching_row():
             "rt_cd": "0",
             "msg1": "success",
             "output1": [
-                {"odno": "0000001234", "tot_ccld_qty": "0", "nccs_qty": "1", "cncl_yn": "N"},
-                {"odno": "0000009999", "tot_ccld_qty": "0", "nccs_qty": "1", "cncl_yn": "N"},
+                {"ODNO": "0000001234", "TOT_CCLD_QTY": "0", "NCCS_QTY": "1", "CNCL_YN": "N"},
+                {"ODNO": "0000009999", "TOT_CCLD_QTY": "0", "NCCS_QTY": "1", "CNCL_YN": "N"},
             ],
         }
     )
@@ -139,7 +139,7 @@ def test_get_order_status_returns_matching_row():
 def test_get_order_status_returns_none_when_not_found():
     session = MagicMock()
     session.get.return_value = _mock_response(
-        {"rt_cd": "0", "msg1": "success", "output1": [{"odno": "0000009999"}]}
+        {"rt_cd": "0", "msg1": "success", "output1": [{"ODNO": "0000009999"}]}
     )
     client, _ = _client(session)
 
@@ -148,29 +148,27 @@ def test_get_order_status_returns_none_when_not_found():
     assert result is None
 
 
-def test_cancel_order_cancels_and_returns_status_after_cancel():
+def test_cancel_order_sends_expected_request_and_returns_cancelled_status():
     session = MagicMock()
-    session.post.return_value = _mock_response({"rt_cd": "0", "msg1": "success", "output": {}})
-    session.get.return_value = _mock_response({
-        "rt_cd": "0", "msg1": "success",
-        "output1": [{"odno": "0000001234", "tot_ccld_qty": "0", "nccs_qty": "0", "cncl_yn": "Y"}],
-    })
+    session.post.return_value = _mock_response(
+        {"rt_cd": "0", "msg1": "success", "output": {"ODNO": "0000099999"}}
+    )
     client, _ = _client(session)
 
-    result = client.cancel_order(order_date="20240603", order_no="0000001234", code="005930", quantity=1)
+    result = client.cancel_order(order_no="0000001234", code="005930", quantity=1)
 
     assert result == {"order_id": "0000001234", "status": "CANCELLED", "filled": 0.0, "remaining": 0.0}
     cancel_call = session.post.call_args
     assert cancel_call.args[0].endswith("/uapi/domestic-stock/v1/trading/order-rvsecncl")
     assert cancel_call.kwargs["headers"]["tr_id"] == "VTTC0803U"
+    assert cancel_call.kwargs["json"]["ORGN_ODNO"] == "0000001234"
     assert cancel_call.kwargs["json"]["RVSE_CNCL_DVSN_CD"] == "02"
 
 
-def test_cancel_order_raises_value_error_when_not_found_after_cancel():
+def test_cancel_order_raises_runtime_error_on_nonzero_rt_cd():
     session = MagicMock()
-    session.post.return_value = _mock_response({"rt_cd": "0", "msg1": "success", "output": {}})
-    session.get.return_value = _mock_response({"rt_cd": "0", "msg1": "success", "output1": []})
+    session.post.return_value = _mock_response({"rt_cd": "1", "msg1": "order already filled"})
     client, _ = _client(session)
 
-    with pytest.raises(ValueError, match="0000001234"):
-        client.cancel_order(order_date="20240603", order_no="0000001234", code="005930", quantity=1)
+    with pytest.raises(RuntimeError, match="order already filled"):
+        client.cancel_order(order_no="0000001234", code="005930", quantity=1)

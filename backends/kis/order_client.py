@@ -58,7 +58,7 @@ class KISOrderClient:
                 "ORD_UNPR": ord_unpr,
             },
         )
-        order_id = payload["output"]["odno"]  # fail loud if the order number is missing
+        order_id = payload["output"]["ODNO"]  # fail loud if the order number is missing
         return {"order_id": order_id, "status": "SUBMITTED", "filled": 0.0, "remaining": float(quantity)}
 
     def get_order_status(self, order_date: str, order_no: str) -> dict | None:
@@ -84,11 +84,20 @@ class KISOrderClient:
             },
         )
         for row in payload.get("output1", []):
-            if row.get("odno") == order_no:
+            if row.get("ODNO") == order_no:
                 return self._row_to_status_dict(row)
         return None
 
-    def cancel_order(self, order_date: str, order_no: str, code: str, quantity: int) -> dict:
+    def cancel_order(self, order_no: str, code: str, quantity: int) -> dict:
+        # Does not delegate to get_order_status: confirmed live against a
+        # real mock-trading account (2026-06-23) that inquire-daily-ccld
+        # returns an empty output1 for this account regardless of CCLD_DVSN/
+        # PDNO combination tried, even though the order genuinely exists
+        # (output2.tot_ord_qty reflected it) and cancels successfully. This
+        # looks like a mock-trading-environment limitation in querying
+        # unfilled orders, not a bug in our request — revisit when wiring up
+        # real execution later, since real-account behavior is unverified
+        # and may differ. The cancel call itself is confirmed working live.
         self._call(
             "POST",
             ORDER_CANCEL_PATH,
@@ -105,16 +114,21 @@ class KISOrderClient:
                 "QTY_ALL_ORD_YN": "Y",
             },
         )
-        status = self.get_order_status(order_date, order_no)
-        if status is None:
-            raise ValueError(f"order {order_no} not found after cancel")
-        return status
+        return {"order_id": order_no, "status": "CANCELLED", "filled": 0.0, "remaining": 0.0}
 
     @staticmethod
     def _row_to_status_dict(row: dict) -> dict:
-        filled = float(row.get("tot_ccld_qty", 0))
-        remaining = float(row.get("nccs_qty", 0))
-        if row.get("cncl_yn") == "Y":
+        # KIS's trading-domain endpoints (order-cash, inquire-daily-ccld,
+        # order-rvsecncl) return UPPERCASE response field names, unlike the
+        # quotations-domain endpoints (e.g. get_daily_price's stck_bsop_date)
+        # which return lowercase — confirmed live: a real order-cash response
+        # returned {"output": {"ODNO": ..., "ORD_TMD": ...}}. The exact names
+        # below (TOT_CCLD_QTY/NCCS_QTY/CNCL_YN) follow that same uppercase
+        # convention but are not yet confirmed live for this specific
+        # endpoint — fix here if a live inquire-daily-ccld response disagrees.
+        filled = float(row.get("TOT_CCLD_QTY", 0))
+        remaining = float(row.get("NCCS_QTY", 0))
+        if row.get("CNCL_YN") == "Y":
             status = "CANCELLED"
         elif remaining == 0 and filled > 0:
             status = "FILLED"
@@ -122,7 +136,7 @@ class KISOrderClient:
             status = "PARTIAL"
         else:
             status = "OPEN"
-        return {"order_id": row.get("odno"), "status": status, "filled": filled, "remaining": remaining}
+        return {"order_id": row.get("ODNO"), "status": status, "filled": filled, "remaining": remaining}
 
     def _call(
         self,

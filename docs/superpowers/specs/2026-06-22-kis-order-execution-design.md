@@ -73,9 +73,48 @@ silently producing wrong data. The plan includes a manual end-to-end
 verification task (mirroring sub-project 1's and 2's final manual tasks) where
 the real API responses are confirmed; if a TR ID or field name is wrong, that
 task fixes it using the error message KIS returns. The status-mapping field
-names used by `_row_to_status_dict` (`tot_ccld_qty`, `nccs_qty`, `cncl_yn`)
+names used by `_row_to_status_dict` (`TOT_CCLD_QTY`, `NCCS_QTY`, `CNCL_YN`)
 are likewise documented-but-unverified against a live connection, and fall
-into this same risk category.
+into this same risk category. **Confirmed live (2026-06-23):** KIS's
+trading-domain endpoints (order-cash, inquire-daily-ccld, order-rvsecncl)
+return UPPERCASE response field names (e.g. a real order-cash response
+included `{"output": {"ODNO": ..., "ORD_TMD": ...}}`), unlike the
+quotations-domain endpoints (sub-project 1's `get_daily_price`, which returns
+lowercase fields like `stck_bsop_date`). `ODNO` is confirmed; `TOT_CCLD_QTY`/
+`NCCS_QTY`/`CNCL_YN` follow the same convention but are not yet confirmed for
+the inquire-daily-ccld endpoint specifically.
+
+**Additional account-setup finding (2026-06-23):** KIS requires a mock-trading
+app key/secret and account number (`KIS_CANO`'s sibling values
+`KIS_MOCK_APP_KEY`/`KIS_MOCK_APP_SECRET`/`KIS_MOCK_CANO` in `.env`) that are
+**separate** from the real-trading credentials used by `KISClient` — the
+real-trading app key is rejected by mock order endpoints (KIS error
+`EGW02007`: "해당 앱키는 모의투자용 앱키가 아닙니다"), and the real account
+number is rejected too (`IGW00002`: account number mismatch). `place_test_order.py`
+uses `KIS_MOCK_APP_KEY`/`KIS_MOCK_APP_SECRET`/`KIS_MOCK_CANO` for the
+`KISOrderClient`, while `KISClient` (for the reference price lookup) keeps
+using the real-trading `KIS_APP_KEY`/`KIS_APP_SECRET`. Also: KIS rejects limit
+prices that aren't a multiple of KRX's tick size (호가단위, which varies by
+price range) with `"모의투자 주문처리가 안되었습니다(호가단위 오류)"` —
+`place_test_order.py` rounds its computed limit price down to a valid tick.
+
+**Known limitation, accepted (2026-06-23):** `get_order_status` (and by
+extension a `cancel_order` design that depended on it) does not work against
+this mock-trading account — `inquire-daily-ccld` returns an empty `output1`
+for the placed order regardless of `CCLD_DVSN`/`PDNO` parameter combination
+tried (`"00"`/`"01"`/`"02"`, with and without `PDNO` filled in), even though
+the order genuinely exists (`output2.tot_ord_qty` reflects it) and cancels
+successfully via `order-rvsecncl`. This looks like a mock-trading-environment
+limitation specific to querying unfilled orders, not a request-shape bug —
+but it's unverified whether the real-trading domain has the same limitation.
+Decision: `cancel_order` does not depend on `get_order_status`'s result (see
+Architecture section below); `get_order_status` itself is left as originally
+designed and is expected to keep returning `None` in this mock environment.
+This is acceptable because this sub-project's adapters aren't wired into any
+actual trading flow yet (no Nautilus `ExecutionEngine` integration, and
+Nautilus backtesting doesn't call these adapters at all) — revisit
+`get_order_status` only when real execution (live or mock) is actually wired
+up later, at which point re-verify against whichever account is in use.
 
 ## Architecture
 
@@ -108,7 +147,7 @@ nautilus-multi-venue/
   rather than `int`) — since KIS's placement response only confirms
   acceptance, `status` is always `"SUBMITTED"`, `filled` is always `0.0`, and
   `remaining` is the requested `quantity`. Raises `RuntimeError` if `rt_cd !=
-  "0"`, and raises `KeyError` naturally if the expected `output.odno` field is
+  "0"`, and raises `KeyError` naturally if the expected `output.ODNO` field is
   missing (no silent fallback — a missing order number means something is
   wrong and the caller needs to know).
 - `get_order_status(order_date: str, order_no: str) -> dict | None`: GETs
@@ -116,18 +155,20 @@ nautilus-multi-venue/
   filters the returned order list (`output1`) for the row matching `order_no`,
   and maps that row through `_row_to_status_dict` into the same normalized
   `{"order_id", "status", "filled", "remaining"}` shape (deriving `status` as
-  `"CANCELLED"`/`"FILLED"`/`"PARTIAL"`/`"OPEN"` from `tot_ccld_qty`,
-  `nccs_qty`, and `cncl_yn`), or returns `None` if not found (e.g., already
+  `"CANCELLED"`/`"FILLED"`/`"PARTIAL"`/`"OPEN"` from `TOT_CCLD_QTY`,
+  `NCCS_QTY`, and `CNCL_YN`), or returns `None` if not found (e.g., already
   filtered out of the day's list — this is a legitimate "not found" case,
   unlike the order-placement response, so it returns `None` rather than
   raising).
-- `cancel_order(order_date: str, order_no: str, code: str, quantity: int) ->
-  dict`: posts to `/uapi/domestic-stock/v1/trading/order-rvsecncl` with TR ID
-  `VTTC0803U` and `RVSE_CNCL_DVSN_CD = "02"` (cancel, as opposed to `"01"`
-  modify), then calls `get_order_status` to fetch and return the authoritative
-  post-cancel normalized status dict (raising `ValueError` if the order is
-  unexpectedly not found after cancelling). Same error handling as
-  `place_order` for the cancel call itself.
+- `cancel_order(order_no: str, code: str, quantity: int) -> dict`: posts to
+  `/uapi/domestic-stock/v1/trading/order-rvsecncl` with TR ID `VTTC0803U` and
+  `RVSE_CNCL_DVSN_CD = "02"` (cancel, as opposed to `"01"` modify), then
+  returns `{"order_id": order_no, "status": "CANCELLED", "filled": 0.0,
+  "remaining": 0.0}` directly — it does **not** delegate to
+  `get_order_status` (an earlier version of this design did; see the "Known
+  limitation, accepted" note above for why that was reverted after live
+  testing). Same
+  error handling as `place_order` for the cancel call itself.
 - Same 401-retry-after-refresh pattern as `KISClient._fetch_page`, factored
   into a small shared retry helper used by all three methods (the existing
   `KISClient` doesn't share this helper since it only has one HTTP-calling

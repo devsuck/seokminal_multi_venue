@@ -162,3 +162,23 @@ def test_parse_rejects_invalid_bar_type():
                 ],
             }
         )
+
+
+def test_parse_rejects_invalid_bb_band():
+    with pytest.raises(ValueError, match="band"):
+        ConditionParser.parse(
+            {
+                "combinator": "AND",
+                "conditions": [
+                    {
+                        "left": {
+                            "indicator": "BB",
+                            "bar_type": BAR_TYPE,
+                            "params": {"period": 20, "k": 2.0, "band": "NOT_A_REAL_BAND"},
+                        },
+                        "op": "<",
+                        "right": {"value": 100},
+                    }
+                ],
+            }
+        )

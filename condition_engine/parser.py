@@ -88,4 +88,12 @@ class ConditionParser:
                 f"{indicator} missing required params: {sorted(missing)}"
             )
 
+        # Validate BB band parameter
+        if indicator == "BB":
+            band = params.get("band")
+            if band not in {"upper", "middle", "lower"}:
+                raise ValueError(
+                    f"invalid BB band: {band!r}, expected one of upper/middle/lower"
+                )
+
         return IndicatorOperand(indicator=indicator, bar_type=bar_type, params=params)

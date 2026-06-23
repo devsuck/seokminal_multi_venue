@@ -134,3 +134,42 @@ def test_parse_rejects_non_strategy_class():
                 }
             ]
         )
+
+
+def test_parse_raises_value_error_missing_condition_key():
+    with pytest.raises(ValueError, match="condition"):
+        SpawnerParser.parse(
+            [
+                {
+                    "strategy": {
+                        "class": "tests.fixtures.dummy_strategy:DummyStrategy",
+                        "params": {},
+                    },
+                }
+            ]
+        )
+
+
+def test_parse_raises_value_error_missing_strategy_key():
+    with pytest.raises(ValueError, match="strategy"):
+        SpawnerParser.parse(
+            [
+                {
+                    "condition": _condition_dict(),
+                }
+            ]
+        )
+
+
+def test_parse_raises_value_error_missing_class_key():
+    with pytest.raises(ValueError, match="class"):
+        SpawnerParser.parse(
+            [
+                {
+                    "condition": _condition_dict(),
+                    "strategy": {
+                        "params": {},
+                    },
+                }
+            ]
+        )

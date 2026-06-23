@@ -20,11 +20,27 @@ class SpawnerParser:
 
     @staticmethod
     def _parse_rule(entry: dict) -> SpawnRule:
-        condition_set = ConditionParser.parse(entry["condition"])
-        strategy_class = SpawnerParser._resolve_strategy_class(
-            entry["strategy"]["class"]
-        )
-        params = entry["strategy"].get("params", {})
+        try:
+            condition_dict = entry["condition"]
+        except KeyError as exc:
+            raise ValueError("missing required key 'condition' in spawn rule") from exc
+
+        try:
+            strategy_dict = entry["strategy"]
+        except KeyError as exc:
+            raise ValueError("missing required key 'strategy' in spawn rule") from exc
+
+        condition_set = ConditionParser.parse(condition_dict)
+
+        try:
+            class_path = strategy_dict["class"]
+        except KeyError as exc:
+            raise ValueError(
+                "missing required key 'class' in strategy dict"
+            ) from exc
+
+        strategy_class = SpawnerParser._resolve_strategy_class(class_path)
+        params = strategy_dict.get("params", {})
         return SpawnRule(
             condition_set=condition_set,
             strategy_class=strategy_class,

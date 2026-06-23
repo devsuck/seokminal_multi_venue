@@ -51,8 +51,15 @@ Concretely for this spec:
   applied to a flat list of comparisons). Nested trees (`AND(OR(...), ...)`)
   are explicitly deferred to a later sub-project.
 - **Multi-instrument/multi-timeframe**: supported from v1. Each operand
-  carries its own `instrument_id` + `bar_type`, independent of the others in
-  the same condition set.
+  carries its own `bar_type` (a full Nautilus `BarType` string, e.g.
+  `"AAPL.NASDAQ-1-MINUTE-LAST-EXTERNAL"`), independent of the others in the
+  same condition set. **Correction made while verifying against the
+  installed `nautilus_trader` library** (initial design had separate
+  `instrument_id` + `bar_type` fields): Nautilus's `BarType.from_str` format
+  already embeds the instrument ID inside the bar-type string and exposes it
+  via `bar_type.instrument_id` — keeping both fields would let a JSON
+  document specify a mismatched pair. A single `bar_type` field is both
+  sufficient and unambiguous.
 - **Cross-instrument timing semantics**: when one operand's bar arrives and
   another operand (different instrument/timeframe) hasn't updated yet,
   evaluation uses **the last known value** for the stale operand rather than
@@ -86,7 +93,7 @@ nautilus-multi-venue/
 
 Dataclasses:
 - `LiteralOperand(value: float)`
-- `IndicatorOperand(indicator: str, instrument_id: str, bar_type: str, params: dict)`
+- `IndicatorOperand(indicator: str, bar_type: str, params: dict)`
 - `Comparison(left: LiteralOperand | IndicatorOperand, op: str, right: LiteralOperand | IndicatorOperand)`
 - `ConditionSet(combinator: Literal["AND", "OR"], comparisons: list[Comparison])`
 
@@ -94,7 +101,23 @@ Dataclasses:
 `ValueError` at parse time (not at evaluation time) for: unknown indicator
 name (outside the 6 supported), unsupported `op` (only `<`, `<=`, `>`, `>=`,
 `==` supported), missing required params for an indicator (e.g. RSI without
-`period`), or unknown `combinator`.
+`period`), an invalid `bar_type` string (anything `BarType.from_str` rejects),
+or unknown `combinator`.
+
+Per-indicator required `params`, verified against the installed
+`nautilus_trader` indicator constructors:
+- `RSI`: `period` (int). Optional `ma_type` (str, one of
+  `MovingAverageType` member names, default `"SIMPLE"`).
+- `MA`: `period` (int), `ma_type` (str, required — `MovingAverageFactory.create`
+  has no default).
+- `BB`: `period` (int), `k` (float), `band` (str, one of `"upper"`,
+  `"middle"`, `"lower"` — `BollingerBands` has no single `.value`, it exposes
+  three separate band attributes, so the JSON must say which one this operand
+  reads). Optional `ma_type` (default `"SIMPLE"`).
+- `MACD`: `fast_period` (int), `slow_period` (int). Optional `ma_type`
+  (default `"EXPONENTIAL"`).
+- `CCI`: `period` (int). Optional `scalar` (float, default `0.015`).
+- `OBV`: no required params. Optional `period` (int, default `0`).
 
 Example input:
 
@@ -103,14 +126,14 @@ Example input:
   "combinator": "AND",
   "conditions": [
     {
-      "left":  {"indicator": "RSI", "instrument_id": "AAPL.NASDAQ", "bar_type": "1-MINUTE", "params": {"period": 14}},
+      "left":  {"indicator": "RSI", "bar_type": "AAPL.NASDAQ-1-MINUTE-LAST-EXTERNAL", "params": {"period": 14}},
       "op": "<",
       "right": {"value": 30}
     },
     {
-      "left":  {"indicator": "MA", "instrument_id": "AAPL.NASDAQ", "bar_type": "1-MINUTE", "params": {"period": 20}},
+      "left":  {"indicator": "MA", "bar_type": "AAPL.NASDAQ-1-MINUTE-LAST-EXTERNAL", "params": {"period": 20, "ma_type": "SIMPLE"}},
       "op": ">",
-      "right": {"indicator": "MA", "instrument_id": "AAPL.NASDAQ", "bar_type": "1-MINUTE", "params": {"period": 50}}
+      "right": {"indicator": "MA", "bar_type": "AAPL.NASDAQ-1-MINUTE-LAST-EXTERNAL", "params": {"period": 50, "ma_type": "SIMPLE"}}
     }
   ]
 }
@@ -119,18 +142,25 @@ Example input:
 ### `indicator_registry.py`
 
 `IndicatorRegistry`:
-- Internal map keyed by `(instrument_id, bar_type, indicator_name, tuple(sorted(params.items())))` -> Nautilus indicator instance.
+- Internal map keyed by `(bar_type_str, indicator_name, tuple(sorted(params.items())))`
+  -> Nautilus indicator instance. `bar_type_str` alone disambiguates both
+  instrument and timeframe, per the correction above.
 - `get_or_create(operand: IndicatorOperand) -> Indicator` — lazily
   constructs the right Nautilus indicator via a small factory mapping
-  (`RSI` -> `RelativeStrengthIndex`, `MA` -> `MovingAverageFactory.create`,
-  `BB` -> `BollingerBands`, `MACD` -> `MovingAverageConvergenceDivergence`,
-  `CCI` -> `CommodityChannelIndex`, `OBV` -> `OnBalanceVolume`).
+  (`RSI` -> `RelativeStrengthIndex(period, ma_type)`, `MA` ->
+  `MovingAverageFactory.create(period, ma_type)`, `BB` ->
+  `BollingerBands(period, k, ma_type)`, `MACD` ->
+  `MovingAverageConvergenceDivergence(fast_period, slow_period, ma_type)`,
+  `CCI` -> `CommodityChannelIndex(period, scalar, ma_type)`, `OBV` ->
+  `OnBalanceVolume(period)`). `ma_type` strings are converted to
+  `MovingAverageType` enum members via `MovingAverageType[name]`.
 - `on_bar(bar: Bar) -> None` — updates only the indicators keyed to
-  `bar.instrument_id` + `bar.bar_type` (via each indicator's `handle_bar`).
-  Indicators for other instruments/timeframes are untouched.
-- `current_value(operand: IndicatorOperand) -> float | None` — returns the
-  indicator's current value, or `None` if it hasn't warmed up yet (not yet
-  `.initialized`).
+  `str(bar.bar_type)` (via each indicator's `handle_bar(bar)`). Indicators
+  for other instruments/timeframes are untouched.
+- `current_value(operand: IndicatorOperand) -> float | None` — returns
+  `None` if the indicator is not yet `.initialized`; otherwise returns
+  `.value` for RSI/MA/MACD/CCI/OBV, or `.upper`/`.middle`/`.lower` (per
+  `operand.params["band"]`) for BB.
 
 ### `evaluator.py`
 
@@ -149,8 +179,8 @@ Example input:
   (unknown indicator/op, missing params, unknown combinator) -> `ValueError`.
 - `test_indicator_registry.py`: feed synthetic `Bar` sequences into real
   Nautilus indicator instances via `on_bar`; verify `.value`/`current_value`
-  updates correctly and that bars for one `(instrument_id, bar_type)` key
-  never affect indicators registered under a different key.
+  updates correctly and that bars for one `bar_type` key never affect
+  indicators registered under a different key.
 - `test_condition_evaluator.py`: AND/OR combination correctness; "not yet
   warmed up" (`None`) treated as `False`; multi-instrument case where only
   one operand's instrument receives a new bar still produces an immediate

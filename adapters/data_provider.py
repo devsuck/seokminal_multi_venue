@@ -1,6 +1,8 @@
 import datetime as dt
 from zoneinfo import ZoneInfo
 
+from ib_async.objects import BarData
+
 from nautilus_trader.core.datetime import dt_to_unix_nanos
 from nautilus_trader.model.currencies import KRW, USD
 from nautilus_trader.model.data import Bar, BarType, TradeTick
@@ -152,6 +154,22 @@ def map_ib_trade_tick(
         size=Quantity(float(raw_tick.size), 0),
         aggressor_side=AggressorSide.NO_AGGRESSOR,
         trade_id=TradeId(f"{instrument_id.symbol}-{time_str}-{sequence}"),
+        ts_event=ts_event,
+        ts_init=ts_event,
+    )
+
+
+def map_ib_daily_bar(row: BarData, bar_type: BarType, price_precision: int) -> Bar:
+    event_date = dt.datetime.combine(row.date, dt.time.min, tzinfo=dt.timezone.utc)
+    ts_event = dt_to_unix_nanos(event_date)
+
+    return Bar(
+        bar_type=bar_type,
+        open=Price(float(row.open), price_precision),
+        high=Price(float(row.high), price_precision),
+        low=Price(float(row.low), price_precision),
+        close=Price(float(row.close), price_precision),
+        volume=Quantity(float(row.volume), 0),
         ts_event=ts_event,
         ts_init=ts_event,
     )

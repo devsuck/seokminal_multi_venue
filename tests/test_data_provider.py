@@ -1,6 +1,7 @@
 import datetime as dt
 from types import SimpleNamespace
 
+from ib_async.objects import BarData
 from nautilus_trader.model.data import BarType
 from nautilus_trader.model.enums import AggressorSide
 from nautilus_trader.model.identifiers import InstrumentId
@@ -9,6 +10,7 @@ from adapters.data_provider import (
     bar_type_for,
     build_us_equity,
     build_xkrx_equity,
+    map_ib_daily_bar,
     map_ib_trade_tick,
     map_kis_daily_bar,
     map_kis_trade_tick,
@@ -52,6 +54,29 @@ def test_map_kis_daily_bar_converts_row_to_bar():
     assert bar.low.as_double() == 69000.0
     assert bar.close.as_double() == 70000.0
     assert bar.volume.as_double() == 1_000_000.0
+    # 2024-01-02 00:00:00 UTC in nanoseconds
+    assert bar.ts_event == 1704153600000000000
+
+
+def test_map_ib_daily_bar_converts_row_to_bar():
+    bar_type = bar_type_for(InstrumentId.from_str("AAPL.NASDAQ"))
+    row = BarData(
+        date=dt.date(2024, 1, 2),
+        open=185.5,
+        high=186.5,
+        low=184.0,
+        close=186.0,
+        volume=50000.0,
+    )
+
+    bar = map_ib_daily_bar(row, bar_type, price_precision=2)
+
+    assert bar.bar_type == bar_type
+    assert bar.open.as_double() == 185.5
+    assert bar.high.as_double() == 186.5
+    assert bar.low.as_double() == 184.0
+    assert bar.close.as_double() == 186.0
+    assert bar.volume.as_double() == 50000.0
     # 2024-01-02 00:00:00 UTC in nanoseconds
     assert bar.ts_event == 1704153600000000000
 

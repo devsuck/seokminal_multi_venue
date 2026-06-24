@@ -1,10 +1,13 @@
+# backends/ib/client.py
 from collections.abc import AsyncIterator
 
 from ib_async import IB
 from ib_async.contract import Stock
-from ib_async.objects import TickByTickAllLast
+from ib_async.objects import BarData, TickByTickAllLast
 
 TICK_TYPE = "AllLast"
+DAILY_BAR_SIZE = "1 day"
+DAILY_WHAT_TO_SHOW = "TRADES"
 
 
 class IBClient:
@@ -29,3 +32,23 @@ class IBClient:
             for tick in ticker.tickByTicks:
                 yield tick
             ticker.tickByTicks.clear()
+
+    async def get_daily_bars(self, symbol: str, end_date: str, duration: str) -> list[BarData]:
+        await self._ib.connectAsync(self._host, self._port, self._client_id)
+        contract = Stock(symbol, "SMART", "USD")
+        await self._ib.qualifyContractsAsync(contract)
+        bars = await self._ib.reqHistoricalDataAsync(
+            contract,
+            endDateTime=end_date,
+            durationStr=duration,
+            barSizeSetting=DAILY_BAR_SIZE,
+            whatToShow=DAILY_WHAT_TO_SHOW,
+            useRTH=True,
+        )
+        if not bars:
+            raise ValueError(
+                f"no historical daily bars returned for {symbol} "
+                f"(end_date={end_date!r}, duration={duration!r}) -- "
+                "check IB market data permissions"
+            )
+        return bars

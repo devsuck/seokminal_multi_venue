@@ -9,9 +9,10 @@ from backends.ib.client import IBClient
 
 
 async def run_ingestion_ib(
-    symbol: str, end_date: str, duration: str, catalog_path: str, client: IBClient
+    symbol: str, end_date: str, duration: str, catalog_path: str, client: IBClient,
+    venue: str = "NASDAQ",
 ) -> int:
-    instrument = build_us_equity(symbol)
+    instrument = build_us_equity(symbol, venue=venue)
     bar_type = bar_type_for(instrument.id)
 
     rows = await client.get_daily_bars(symbol, end_date, duration)
@@ -27,6 +28,7 @@ async def run_ingestion_ib(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Ingest IB daily bars into a ParquetDataCatalog")
     parser.add_argument("--symbol", default="AAPL")
+    parser.add_argument("--venue", default="NASDAQ")
     parser.add_argument("--end-date", default=dt.date.today().strftime("%Y%m%d 23:59:59"))
     parser.add_argument("--duration", default="1 Y")
     parser.add_argument("--catalog-path", default="./catalog")
@@ -35,7 +37,7 @@ def main() -> None:
     client = IBClient()
 
     written = asyncio.run(
-        run_ingestion_ib(args.symbol, args.end_date, args.duration, args.catalog_path, client)
+        run_ingestion_ib(args.symbol, args.end_date, args.duration, args.catalog_path, client, venue=args.venue)
     )
     print(
         f"Wrote {written} bars for {args.symbol} "

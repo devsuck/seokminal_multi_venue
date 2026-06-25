@@ -37,3 +37,27 @@ async def test_run_ingestion_ib_writes_instrument_and_bars_to_catalog():
         assert bars[1].close.as_double() == 186.8
 
     client.get_daily_bars.assert_called_once_with("AAPL", "20240103 23:59:59", "1 Y")
+
+
+async def test_run_ingestion_ib_accepts_explicit_venue():
+    client = AsyncMock()
+    client.get_daily_bars.return_value = [
+        BarData(date=dt.date(2024, 1, 2), open=470.0, high=472.0, low=469.0, close=471.5, volume=80000.0),
+    ]
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        written = await run_ingestion_ib(
+            symbol="SPY",
+            end_date="20240102 23:59:59",
+            duration="1 Y",
+            catalog_path=tmp_dir,
+            client=client,
+            venue="ARCA",
+        )
+
+        assert written == 1
+
+        catalog = ParquetDataCatalog(tmp_dir)
+        instruments = catalog.instruments()
+        assert len(instruments) == 1
+        assert str(instruments[0].id) == "SPY.ARCA"

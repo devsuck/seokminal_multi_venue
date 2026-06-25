@@ -44,10 +44,7 @@ def get_bars(
     catalog = ParquetDataCatalog(CATALOG_PATH)
     bar_type_str = str(bar_type_for(InstrumentId.from_str(instrument_id)))
 
-    try:
-        all_bars = catalog.bars(bar_types=[bar_type_str])
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    all_bars = catalog.bars(bar_types=[bar_type_str])
 
     bars = [b for b in all_bars if start_ns <= b.ts_event <= end_ns]
     if not bars:

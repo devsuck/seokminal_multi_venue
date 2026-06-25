@@ -144,6 +144,11 @@ class KISClient:
             params={
                 "FID_COND_MRKT_DIV_CODE": "U",
                 "FID_INPUT_ISCD": index_code,
+                # Index endpoint inverts the stock endpoint's convention:
+                # DATE_1 is the anchor/latest date (paginated backward from
+                # it), DATE_2 is the lower bound. Confirmed live against
+                # the real KIS API -- don't "fix" this back to DATE_1=start
+                # by analogy with get_daily_price.
                 "FID_INPUT_DATE_1": end,
                 "FID_INPUT_DATE_2": start,
                 "FID_PERIOD_DIV_CODE": "D",

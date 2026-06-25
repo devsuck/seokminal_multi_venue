@@ -11,18 +11,18 @@ def test_run_ingestion_kospi_writes_instrument_and_bars_to_catalog():
     client.get_daily_index_price.return_value = [
         {
             "stck_bsop_date": "20240102",
-            "bstp_nmix_oprc": "264500",
-            "bstp_nmix_hgpr": "265500",
-            "bstp_nmix_lwpr": "264000",
-            "bstp_nmix_prpr": "265032",
+            "bstp_nmix_oprc": "2645.00",
+            "bstp_nmix_hgpr": "2655.00",
+            "bstp_nmix_lwpr": "2640.00",
+            "bstp_nmix_prpr": "2650.32",
             "acml_vol": "500000000",
         },
         {
             "stck_bsop_date": "20240103",
-            "bstp_nmix_oprc": "265100",
-            "bstp_nmix_hgpr": "266000",
-            "bstp_nmix_lwpr": "264800",
-            "bstp_nmix_prpr": "265800",
+            "bstp_nmix_oprc": "2651.00",
+            "bstp_nmix_hgpr": "2660.00",
+            "bstp_nmix_lwpr": "2648.00",
+            "bstp_nmix_prpr": "2658.00",
             "acml_vol": "480000000",
         },
     ]
@@ -55,18 +55,18 @@ def test_run_ingestion_kospi_uses_custom_index_code_override():
     client.get_daily_index_price.return_value = [
         {
             "stck_bsop_date": "20240102",
-            "bstp_nmix_oprc": "264500",
-            "bstp_nmix_hgpr": "265500",
-            "bstp_nmix_lwpr": "264000",
-            "bstp_nmix_prpr": "265032",
+            "bstp_nmix_oprc": "2645.00",
+            "bstp_nmix_hgpr": "2655.00",
+            "bstp_nmix_lwpr": "2640.00",
+            "bstp_nmix_prpr": "2650.32",
             "acml_vol": "500000000",
         },
         {
             "stck_bsop_date": "20240103",
-            "bstp_nmix_oprc": "265100",
-            "bstp_nmix_hgpr": "266000",
-            "bstp_nmix_lwpr": "264800",
-            "bstp_nmix_prpr": "265800",
+            "bstp_nmix_oprc": "2651.00",
+            "bstp_nmix_hgpr": "2660.00",
+            "bstp_nmix_lwpr": "2648.00",
+            "bstp_nmix_prpr": "2658.00",
             "acml_vol": "480000000",
         },
     ]

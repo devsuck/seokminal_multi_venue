@@ -71,10 +71,10 @@ def map_kis_index_daily_bar(row: dict, bar_type: BarType, price_precision: int) 
 
     return Bar(
         bar_type=bar_type,
-        open=Price(float(row["bstp_nmix_oprc"]) / 100, price_precision),
-        high=Price(float(row["bstp_nmix_hgpr"]) / 100, price_precision),
-        low=Price(float(row["bstp_nmix_lwpr"]) / 100, price_precision),
-        close=Price(float(row["bstp_nmix_prpr"]) / 100, price_precision),
+        open=Price(float(row["bstp_nmix_oprc"]), price_precision),
+        high=Price(float(row["bstp_nmix_hgpr"]), price_precision),
+        low=Price(float(row["bstp_nmix_lwpr"]), price_precision),
+        close=Price(float(row["bstp_nmix_prpr"]), price_precision),
         volume=Quantity(float(row["acml_vol"]), 0),
         ts_event=ts_event,
         ts_init=ts_event,

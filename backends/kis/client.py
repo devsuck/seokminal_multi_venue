@@ -144,8 +144,8 @@ class KISClient:
             params={
                 "FID_COND_MRKT_DIV_CODE": "U",
                 "FID_INPUT_ISCD": index_code,
-                "FID_INPUT_DATE_1": start,
-                "FID_INPUT_DATE_2": end,
+                "FID_INPUT_DATE_1": end,
+                "FID_INPUT_DATE_2": start,
                 "FID_PERIOD_DIV_CODE": "D",
             },
         )

@@ -238,10 +238,10 @@ def test_map_kis_index_daily_bar_converts_row_to_bar():
     bar_type = bar_type_for(InstrumentId.from_str("KOSPI.XKRX"))
     row = {
         "stck_bsop_date": "20240102",
-        "bstp_nmix_oprc": "264500",
-        "bstp_nmix_hgpr": "265500",
-        "bstp_nmix_lwpr": "264000",
-        "bstp_nmix_prpr": "265032",
+        "bstp_nmix_oprc": "2645.00",
+        "bstp_nmix_hgpr": "2655.00",
+        "bstp_nmix_lwpr": "2640.00",
+        "bstp_nmix_prpr": "2650.32",
         "acml_vol": "500000000",
     }
 

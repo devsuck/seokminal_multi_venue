@@ -172,6 +172,11 @@ def test_get_daily_index_price_single_page_returns_rows_oldest_first():
     call_kwargs = session.get.call_args.kwargs
     assert call_kwargs["params"]["FID_COND_MRKT_DIV_CODE"] == "U"
     assert call_kwargs["params"]["FID_INPUT_ISCD"] == "0001"
+    # KIS's index endpoint anchors pagination on FID_INPUT_DATE_1 (latest/end)
+    # and uses FID_INPUT_DATE_2 as the lower bound (start) -- the opposite of
+    # the stock endpoint's convention.
+    assert call_kwargs["params"]["FID_INPUT_DATE_1"] == "20240103"
+    assert call_kwargs["params"]["FID_INPUT_DATE_2"] == "20240101"
 
 
 def test_get_daily_index_price_skips_blank_rows():

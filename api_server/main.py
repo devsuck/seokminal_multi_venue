@@ -37,11 +37,11 @@ class BarsResponse(BaseModel):
 @app.get("/bars", response_model=BarsResponse)
 def get_bars(
     instrument_id: str = Query(...),
-    start: str = Query(...),
-    end: str = Query(...),
+    start: dt.date = Query(...),
+    end: dt.date = Query(...),
 ) -> BarsResponse:
-    start_ns = date_to_ns(start)
-    end_ns = date_to_ns(end)
+    start_ns = date_to_ns(start.isoformat())
+    end_ns = date_to_ns(end.isoformat())
 
     catalog = ParquetDataCatalog(CATALOG_PATH)
     bar_type_str = str(bar_type_for(InstrumentId.from_str(instrument_id)))
@@ -85,8 +85,8 @@ SUPPORTED_STRATEGIES = {"ema_cross"}
 @app.get("/backtest", response_model=BacktestResponse)
 def get_backtest(
     instrument_id: str = Query(...),
-    start: str = Query(...),
-    end: str = Query(...),
+    start: dt.date = Query(...),
+    end: dt.date = Query(...),
     strategy: str = Query(...),
     fast: int = Query(10),
     slow: int = Query(20),
@@ -98,8 +98,8 @@ def get_backtest(
             detail=f"unsupported strategy {strategy!r}, expected one of {SUPPORTED_STRATEGIES}",
         )
 
-    start_ns = date_to_ns(start)
-    end_ns = date_to_ns(end)
+    start_ns = date_to_ns(start.isoformat())
+    end_ns = date_to_ns(end.isoformat())
     bar_type_str = str(bar_type_for(InstrumentId.from_str(instrument_id)))
 
     spawn_rules_json = [
@@ -154,15 +154,15 @@ class CorrelationResponse(BaseModel):
 @app.get("/correlation", response_model=CorrelationResponse)
 def get_correlation(
     instrument_ids: str = Query(...),
-    start: str = Query(...),
-    end: str = Query(...),
+    start: dt.date = Query(...),
+    end: dt.date = Query(...),
 ) -> CorrelationResponse:
     ids = instrument_ids.split(",")
     bar_type_strs = [
         str(bar_type_for(InstrumentId.from_str(instrument_id))) for instrument_id in ids
     ]
-    start_ns = date_to_ns(start)
-    end_ns = date_to_ns(end)
+    start_ns = date_to_ns(start.isoformat())
+    end_ns = date_to_ns(end.isoformat())
 
     try:
         matrix = corr_matrix(

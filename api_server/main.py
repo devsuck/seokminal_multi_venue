@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from adapters.data_provider import bar_type_for
 from backtest_runner.runner import run_backtest
+from correlation_analysis.correlation import corr_matrix
 
 CATALOG_PATH = "./catalog"
 
@@ -138,3 +139,51 @@ def get_backtest(
         total_pnl_pct=report["total_pnl_pct"],
         bar_count=report["bar_count"],
     )
+
+
+class CorrelationPair(BaseModel):
+    a: str
+    b: str
+    correlation: float
+
+
+class CorrelationResponse(BaseModel):
+    pairs: list[CorrelationPair]
+
+
+@app.get("/correlation", response_model=CorrelationResponse)
+def get_correlation(
+    instrument_ids: str = Query(...),
+    start: str = Query(...),
+    end: str = Query(...),
+) -> CorrelationResponse:
+    ids = instrument_ids.split(",")
+    bar_type_strs = [
+        str(bar_type_for(InstrumentId.from_str(instrument_id))) for instrument_id in ids
+    ]
+    start_ns = date_to_ns(start)
+    end_ns = date_to_ns(end)
+
+    try:
+        matrix = corr_matrix(
+            instrument_ids=ids,
+            bar_type_strs=bar_type_strs,
+            start_ns=start_ns,
+            end_ns=end_ns,
+            catalog_path=CATALOG_PATH,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    seen: set[tuple[str, str]] = set()
+    pairs = []
+    for (a, b), correlation in matrix.items():
+        # Check both orderings to avoid duplicates
+        canonical_key = tuple(sorted((a, b)))
+        if canonical_key in seen:
+            continue
+        seen.add(canonical_key)
+        # Output using the original order from the matrix
+        pairs.append(CorrelationPair(a=a, b=b, correlation=correlation))
+
+    return CorrelationResponse(pairs=pairs)

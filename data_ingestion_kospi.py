@@ -11,11 +11,11 @@ from backends.kis.client import KISClient
 KOSPI_INDEX_CODE = "0001"
 
 
-def run_ingestion_kospi(start: str, end: str, catalog_path: str, client: KISClient) -> int:
+def run_ingestion_kospi(start: str, end: str, catalog_path: str, client: KISClient, index_code: str = KOSPI_INDEX_CODE) -> int:
     instrument = build_kospi_index()
     bar_type = bar_type_for(instrument.id)
 
-    rows = client.get_daily_index_price(KOSPI_INDEX_CODE, start, end)
+    rows = client.get_daily_index_price(index_code, start, end)
     bars = [
         map_kis_index_daily_bar(row, bar_type, instrument.price_precision)
         for row in rows
@@ -42,7 +42,7 @@ def main() -> None:
     app_secret = os.environ["KIS_APP_SECRET"]
     client = KISClient(app_key=app_key, app_secret=app_secret)
 
-    written = run_ingestion_kospi(args.start, args.end, args.catalog_path, client)
+    written = run_ingestion_kospi(args.start, args.end, args.catalog_path, client, index_code=args.index_code)
     print(f"Wrote {written} bars for KOSPI ({args.start}-{args.end}) to {args.catalog_path}")
 
 

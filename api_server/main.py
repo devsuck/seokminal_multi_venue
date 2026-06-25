@@ -1,6 +1,7 @@
 import datetime as dt
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 from pydantic import BaseModel
@@ -12,6 +13,13 @@ from correlation_analysis.correlation import corr_matrix
 CATALOG_PATH = "./catalog"
 
 app = FastAPI(title="Nautilus Multi-Venue Dashboard API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_methods=["GET"],
+    allow_headers=["*"],
+)
 
 
 def date_to_ns(date_str: str) -> int:

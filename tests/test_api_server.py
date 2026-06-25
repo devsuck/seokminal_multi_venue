@@ -39,3 +39,41 @@ def test_bars_unknown_instrument_returns_400():
         },
     )
     assert response.status_code == 400
+
+
+def test_backtest_happy_path_returns_all_metric_keys():
+    response = client.get(
+        "/backtest",
+        params={
+            "instrument_id": "AAPL.NASDAQ",
+            "start": "2024-01-01",
+            "end": "2026-12-31",
+            "strategy": "ema_cross",
+            "fast": 10,
+            "slow": 20,
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body.keys()) == {
+        "sharpe_ratio",
+        "max_drawdown",
+        "total_pnl",
+        "total_pnl_pct",
+        "bar_count",
+    }
+
+
+def test_backtest_unsupported_strategy_returns_400():
+    response = client.get(
+        "/backtest",
+        params={
+            "instrument_id": "AAPL.NASDAQ",
+            "start": "2024-01-01",
+            "end": "2026-12-31",
+            "strategy": "not_a_real_strategy",
+            "fast": 10,
+            "slow": 20,
+        },
+    )
+    assert response.status_code == 400

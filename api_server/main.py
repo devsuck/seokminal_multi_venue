@@ -178,6 +178,9 @@ def get_correlation(
     seen: set[tuple[str, str]] = set()
     pairs = []
     for (a, b), correlation in matrix.items():
+        # Skip self-correlation pairs
+        if a == b:
+            continue
         # Check both orderings to avoid duplicates
         canonical_key = tuple(sorted((a, b)))
         if canonical_key in seen:

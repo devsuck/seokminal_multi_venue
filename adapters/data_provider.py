@@ -8,7 +8,7 @@ from nautilus_trader.model.currencies import KRW, USD
 from nautilus_trader.model.data import Bar, BarType, TradeTick
 from nautilus_trader.model.enums import AggressorSide
 from nautilus_trader.model.identifiers import InstrumentId, Symbol, TradeId
-from nautilus_trader.model.instruments import Equity
+from nautilus_trader.model.instruments import Equity, IndexInstrument
 from nautilus_trader.model.objects import Price, Quantity
 
 
@@ -21,6 +21,21 @@ def build_xkrx_equity(code: str) -> Equity:
         price_precision=0,
         price_increment=Price.from_str("1"),
         lot_size=Quantity.from_int(1),
+        ts_event=now_ns,
+        ts_init=now_ns,
+    )
+
+
+def build_kospi_index() -> IndexInstrument:
+    now_ns = dt_to_unix_nanos(dt.datetime.now(dt.timezone.utc))
+    return IndexInstrument(
+        instrument_id=InstrumentId.from_str("KOSPI.XKRX"),
+        raw_symbol=Symbol("0001"),
+        currency=KRW,
+        price_precision=2,
+        price_increment=Price.from_str("0.01"),
+        size_precision=0,
+        size_increment=Quantity.from_int(1),
         ts_event=now_ns,
         ts_init=now_ns,
     )
@@ -42,6 +57,24 @@ def map_kis_daily_bar(row: dict, bar_type: BarType, price_precision: int) -> Bar
         high=Price(float(row["stck_hgpr"]), price_precision),
         low=Price(float(row["stck_lwpr"]), price_precision),
         close=Price(float(row["stck_clpr"]), price_precision),
+        volume=Quantity(float(row["acml_vol"]), 0),
+        ts_event=ts_event,
+        ts_init=ts_event,
+    )
+
+
+def map_kis_index_daily_bar(row: dict, bar_type: BarType, price_precision: int) -> Bar:
+    event_date = dt.datetime.strptime(row["stck_bsop_date"], "%Y%m%d").replace(
+        tzinfo=dt.timezone.utc
+    )
+    ts_event = dt_to_unix_nanos(event_date)
+
+    return Bar(
+        bar_type=bar_type,
+        open=Price(float(row["bstp_nmix_oprc"]) / 100, price_precision),
+        high=Price(float(row["bstp_nmix_hgpr"]) / 100, price_precision),
+        low=Price(float(row["bstp_nmix_lwpr"]) / 100, price_precision),
+        close=Price(float(row["bstp_nmix_prpr"]) / 100, price_precision),
         volume=Quantity(float(row["acml_vol"]), 0),
         ts_event=ts_event,
         ts_init=ts_event,

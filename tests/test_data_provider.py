@@ -5,14 +5,17 @@ from ib_async.objects import BarData
 from nautilus_trader.model.data import BarType
 from nautilus_trader.model.enums import AggressorSide
 from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.instruments import IndexInstrument
 
 from adapters.data_provider import (
     bar_type_for,
+    build_kospi_index,
     build_us_equity,
     build_xkrx_equity,
     map_ib_daily_bar,
     map_ib_trade_tick,
     map_kis_daily_bar,
+    map_kis_index_daily_bar,
     map_kis_trade_tick,
     parse_kis_trade_message,
 )
@@ -206,3 +209,34 @@ def test_map_ib_trade_tick_converts_raw_tick_to_trade_tick():
     assert tick.aggressor_side == AggressorSide.NO_AGGRESSOR
     assert str(tick.trade_id) == "AAPL-20240603133000-3"
     assert tick.ts_event == 1717421400000000000  # 2024-06-03 13:30:00 UTC -> ns
+
+
+def test_build_kospi_index_has_expected_fields():
+    index = build_kospi_index()
+
+    assert isinstance(index, IndexInstrument)
+    assert index.id == InstrumentId.from_str("KOSPI.XKRX")
+    assert str(index.quote_currency) == "KRW"
+    assert index.price_precision == 2
+
+
+def test_map_kis_index_daily_bar_converts_row_to_bar():
+    bar_type = bar_type_for(InstrumentId.from_str("KOSPI.XKRX"))
+    row = {
+        "stck_bsop_date": "20240102",
+        "bstp_nmix_oprc": "264500",
+        "bstp_nmix_hgpr": "265500",
+        "bstp_nmix_lwpr": "264000",
+        "bstp_nmix_prpr": "265032",
+        "acml_vol": "500000000",
+    }
+
+    bar = map_kis_index_daily_bar(row, bar_type, price_precision=2)
+
+    assert bar.bar_type == bar_type
+    assert bar.open.as_double() == 2645.00
+    assert bar.high.as_double() == 2655.00
+    assert bar.low.as_double() == 2640.00
+    assert bar.close.as_double() == 2650.32
+    assert abs(bar.volume.as_double() - 500_000_000.0) < 1.0
+    assert bar.ts_event == 1704153600000000000

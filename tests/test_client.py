@@ -145,3 +145,53 @@ def test_get_daily_price_raises_runtime_error_on_nonzero_rt_cd():
 
     with pytest.raises(RuntimeError, match="rate limit exceeded"):
         client.get_daily_price("005930", "20240101", "20240101")
+
+
+def _index_row(date: str, close: str = "265032") -> dict:
+    return {
+        "stck_bsop_date": date,
+        "bstp_nmix_oprc": "264500",
+        "bstp_nmix_hgpr": "265500",
+        "bstp_nmix_lwpr": "264000",
+        "bstp_nmix_prpr": close,
+        "acml_vol": "500000000",
+    }
+
+
+def test_get_daily_index_price_single_page_returns_rows_oldest_first():
+    session = MagicMock()
+    rows_newest_first = [_index_row("20240103"), _index_row("20240102"), _index_row("20240101")]
+    session.get.return_value = _mock_response(rows_newest_first)
+    auth = MagicMock()
+    auth.get_access_token.return_value = "tok"
+
+    client = KISClient(app_key="key", app_secret="secret", auth=auth, session=session)
+    result = client.get_daily_index_price("0001", "20240101", "20240103")
+
+    assert [r["stck_bsop_date"] for r in result] == ["20240101", "20240102", "20240103"]
+    call_kwargs = session.get.call_args.kwargs
+    assert call_kwargs["params"]["FID_COND_MRKT_DIV_CODE"] == "U"
+    assert call_kwargs["params"]["FID_INPUT_ISCD"] == "0001"
+
+
+def test_get_daily_index_price_skips_blank_rows():
+    session = MagicMock()
+    rows = [
+        _index_row("20240101"),
+        {
+            "stck_bsop_date": "",
+            "bstp_nmix_oprc": "",
+            "bstp_nmix_hgpr": "",
+            "bstp_nmix_lwpr": "",
+            "bstp_nmix_prpr": "",
+            "acml_vol": "",
+        },
+    ]
+    session.get.return_value = _mock_response(rows)
+    auth = MagicMock()
+    auth.get_access_token.return_value = "tok"
+
+    client = KISClient(app_key="key", app_secret="secret", auth=auth, session=session)
+    result = client.get_daily_index_price("0001", "20240101", "20240101")
+
+    assert len(result) == 1

@@ -158,10 +158,10 @@ def map_kis_trade_tick(
     )
 
 
-def build_us_equity(symbol: str) -> Equity:
+def build_us_equity(symbol: str, venue: str = "NASDAQ") -> Equity:
     now_ns = dt_to_unix_nanos(dt.datetime.now(dt.timezone.utc))
     return Equity(
-        instrument_id=InstrumentId.from_str(f"{symbol}.NASDAQ"),
+        instrument_id=InstrumentId.from_str(f"{symbol}.{venue}"),
         raw_symbol=Symbol(symbol),
         currency=USD,
         price_precision=2,

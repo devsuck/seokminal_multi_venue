@@ -193,6 +193,20 @@ def test_build_us_equity_has_expected_fields():
     assert equity.lot_size.as_double() == 1.0
 
 
+def test_build_us_equity_default_venue_is_nasdaq():
+    equity = build_us_equity("AAPL")
+
+    assert equity.id == InstrumentId.from_str("AAPL.NASDAQ")
+
+
+def test_build_us_equity_accepts_explicit_venue():
+    equity = build_us_equity("SPY", venue="ARCA")
+
+    assert equity.id == InstrumentId.from_str("SPY.ARCA")
+    assert str(equity.quote_currency) == "USD"
+    assert equity.price_precision == 2
+
+
 def test_map_ib_trade_tick_converts_raw_tick_to_trade_tick():
     instrument_id = InstrumentId.from_str("AAPL.NASDAQ")
     raw_tick = SimpleNamespace(

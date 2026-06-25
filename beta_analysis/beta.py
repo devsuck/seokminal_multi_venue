@@ -73,9 +73,32 @@ def beta_for_pair(
             f"fewer than 2 common dates between {instrument_id!r} and {benchmark_id!r}: found {len(common_dates)}"
         )
 
+    # Align returns to common dates
+    returns_inst_aligned = [returns_instrument[d] for d in common_dates]
+    returns_bench_aligned = [returns_benchmark[d] for d in common_dates]
+
+    # Calculate variance of benchmark
+    benchmark_variance = statistics.variance(returns_bench_aligned)
+    if benchmark_variance < 1e-10:
+        raise ValueError(
+            f"benchmark {benchmark_id!r} has near-zero variance "
+            f"({benchmark_variance}), beta is undefined"
+        )
+
+    # Calculate covariance and correlation
+    covariance = statistics.covariance(
+        returns_inst_aligned, returns_bench_aligned
+    )
+    correlation = statistics.correlation(
+        returns_inst_aligned, returns_bench_aligned
+    )
+
+    # Calculate beta
+    beta = covariance / benchmark_variance
+
     return {
         'instrument_id': instrument_id,
         'benchmark_id': benchmark_id,
-        'beta': 0.0,
-        'correlation': 0.0,
+        'beta': beta,
+        'correlation': correlation,
     }

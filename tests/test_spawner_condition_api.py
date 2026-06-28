@@ -26,7 +26,7 @@ def test_validate_valid_rule_returns_true():
             }
         }
     ]
-    r = client.get("/spawner/validate", params={"spawn_rules": json.dumps(rules)})
+    r = client.post("/spawner/validate", json={"spawn_rules": rules})
     assert r.status_code == 200
     body = r.json()
     assert body["valid"] is True
@@ -39,8 +39,9 @@ def test_validate_valid_rule_returns_true():
     assert "RSI" in info["indicators"]
 
 
-def test_validate_invalid_json_returns_422():
-    r = client.get("/spawner/validate", params={"spawn_rules": "not json"})
+def test_validate_invalid_spawn_rules_type_returns_422():
+    # Pydantic rejects non-list spawn_rules
+    r = client.post("/spawner/validate", json={"spawn_rules": "not-a-list"})
     assert r.status_code == 422
 
 
@@ -59,7 +60,7 @@ def test_validate_unknown_indicator_returns_errors():
             }
         }
     ]
-    r = client.get("/spawner/validate", params={"spawn_rules": json.dumps(rules)})
+    r = client.post("/spawner/validate", json={"spawn_rules": rules})
     assert r.status_code == 200
     body = r.json()
     assert body["valid"] is False
@@ -82,7 +83,7 @@ def test_validate_missing_rsi_period_returns_errors():
             }
         }
     ]
-    r = client.get("/spawner/validate", params={"spawn_rules": json.dumps(rules)})
+    r = client.post("/spawner/validate", json={"spawn_rules": rules})
     assert r.status_code == 200
     body = r.json()
     assert body["valid"] is False
@@ -90,7 +91,7 @@ def test_validate_missing_rsi_period_returns_errors():
 
 
 def test_validate_empty_rules_returns_valid():
-    r = client.get("/spawner/validate", params={"spawn_rules": json.dumps([])})
+    r = client.post("/spawner/validate", json={"spawn_rules": []})
     assert r.status_code == 200
     body = r.json()
     assert body["valid"] is True

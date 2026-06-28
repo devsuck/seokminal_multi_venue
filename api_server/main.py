@@ -45,7 +45,7 @@ from backends.kis.client import KISClient
 from kr_universe.client import search_universe, get_universe as _get_kr_universe
 from condition_engine.parser import ConditionParser
 from condition_engine.evaluator import ConditionEvaluator
-from condition_engine.indicator_registry import IndicatorRegistry
+from condition_engine.indicator_registry import IndicatorRegistry, _BUILDERS as _INDICATOR_BUILDERS
 
 CATALOG_PATH = "./catalog"
 BOTS_FILE = Path("./bots.json")
@@ -2148,6 +2148,10 @@ class SpawnValidationError(BaseModel):
     error: str
 
 
+class SpawnValidateRequest(BaseModel):
+    spawn_rules: list[dict]
+
+
 class SpawnValidateResponse(BaseModel):
     valid: bool
     errors: list[SpawnValidationError]
@@ -2174,25 +2178,23 @@ class SpawnEvaluateResponse(BaseModel):
     trigger_events: list[TriggerEvent]
 
 
-@app.get("/spawner/validate", response_model=SpawnValidateResponse)
-def validate_spawn_rules(
-    spawn_rules: str = Query(..., description="URL-encoded JSON array of spawn rules"),
-) -> SpawnValidateResponse:
-    try:
-        rules_json: list[dict] = json.loads(spawn_rules)
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=422, detail=f"invalid JSON: {exc}") from exc
-
-    if not isinstance(rules_json, list):
-        raise HTTPException(status_code=422, detail="spawn_rules must be a JSON array")
-
+@app.post("/spawner/validate", response_model=SpawnValidateResponse)
+def validate_spawn_rules(req: SpawnValidateRequest) -> SpawnValidateResponse:
     errors: list[SpawnValidationError] = []
     infos: list[ConditionInfo] = []
 
-    for i, rule in enumerate(rules_json):
+    for i, rule in enumerate(req.spawn_rules):
         try:
             condition_dict = rule.get("condition", {})
             condition_set = ConditionParser.parse(condition_dict)
+            # Verify each indicator operand has a registry builder (catches
+            # cases where SUPPORTED_INDICATORS and _BUILDERS are out of sync)
+            for comparison in condition_set.comparisons:
+                for operand in [comparison.left, comparison.right]:
+                    if hasattr(operand, "indicator") and operand.indicator not in _INDICATOR_BUILDERS:
+                        raise ValueError(
+                            f"indicator {operand.indicator!r} has no registry builder"
+                        )
             indicators = sorted({
                 c.left.indicator
                 for c in condition_set.comparisons

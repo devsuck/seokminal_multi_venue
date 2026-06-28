@@ -2040,3 +2040,84 @@ async def search_us(q: str = Query(..., min_length=1)):
         if ib.isConnected():
             ib.disconnect()
     return USSearchResponse(query=q, results=results, count=len(results))
+
+
+# ── KIS Live Streaming ──────────────────────────────────────────────────────────
+
+from backends.kis.ws_client import KISWebSocketClient
+from backends.kis.ws_auth import get_approval_key
+
+
+def _parse_kis_tick(message: str) -> dict | None:
+    """Parse KIS H0STCNT0 real-time trade message into a JSON-serialisable dict.
+
+    Returns None for JSON ack/ping messages and non-trade TR IDs.
+
+    KIS sends two message types over the WebSocket:
+    - JSON objects (start with '{'): subscription acks and heartbeats — skip.
+    - Pipe-delimited strings: "{ctrl}|{tr_id}|{count}|{data_block}"
+      where data_block fields are '^'-separated.
+
+    H0STCNT0 data field indices (0-based):
+      0=code, 1=time(HHMMSS), 2=price, 3=change_abs, 4=change_sign,
+      5=change_rate_pct, 12=trade_volume, 13=total_volume
+    change_sign: '1'/'2'=up (+), '4'/'5'=down (-), '3'=flat (0)
+    """
+    if message.startswith("{"):
+        return None
+
+    parts = message.split("|")
+    if len(parts) < 4:
+        return None
+
+    tr_id = parts[1]
+    if tr_id != "H0STCNT0":
+        return None
+
+    fields = parts[3].split("^")
+    if len(fields) < 14:
+        return None
+
+    try:
+        change_sign = fields[4]
+        sign = 1 if change_sign in ("1", "2") else (-1 if change_sign in ("4", "5") else 0)
+        return {
+            "code": fields[0],
+            "time": fields[1],
+            "price": int(fields[2]),
+            "change": int(fields[3]) * sign,
+            "change_rate": float(fields[5]),
+            "trade_volume": int(fields[12]),
+            "total_volume": int(fields[13]),
+        }
+    except (ValueError, IndexError):
+        return None
+
+
+@app.websocket("/ws/live/{code}")
+async def ws_live(websocket: WebSocket, code: str) -> None:
+    await websocket.accept()
+
+    app_key = os.environ.get("KIS_APP_KEY", "")
+    app_secret = os.environ.get("KIS_APP_SECRET", "")
+    if not app_key or not app_secret:
+        await websocket.send_json({"error": "KIS credentials not configured"})
+        await websocket.close()
+        return
+
+    code = code.strip().upper()
+    try:
+        approval_key = get_approval_key(app_key, app_secret)
+        kis_ws_client = KISWebSocketClient(approval_key)
+        async for message in kis_ws_client.stream_trades(code):
+            parsed = _parse_kis_tick(message)
+            if parsed:
+                await websocket.send_json(parsed)
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        try:
+            await websocket.send_json({"error": str(exc)})
+            await websocket.close()
+        except Exception:
+            pass

@@ -482,3 +482,41 @@ def test_search_us_structure(mock_ib_cls):
 def test_search_us_missing_q_returns_422():
     r = client.get("/search/us")
     assert r.status_code == 422
+
+
+# ── _parse_kis_tick ─────────────────────────────────────────────────────────────
+
+from api_server.main import _parse_kis_tick
+
+_SAMPLE_TICK = (
+    "0|H0STCNT0|001|"
+    "005930^161430^70100^400^5^-0.57^70156^70500^70600^69700^70100^70100^3520^20547350"
+)
+
+
+def test_parse_kis_tick_parses_data():
+    result = _parse_kis_tick(_SAMPLE_TICK)
+    assert result is not None
+    assert result["code"] == "005930"
+    assert result["time"] == "161430"
+    assert result["price"] == 70100
+    assert result["change"] == -400      # sign=5 (down) → negative
+    assert result["trade_volume"] == 3520
+    assert result["total_volume"] == 20547350
+
+
+def test_parse_kis_tick_skips_json():
+    assert _parse_kis_tick('{"header": {"tr_id": "PINGPONG"}, "body": {}}') is None
+
+
+def test_parse_kis_tick_skips_wrong_tr_id():
+    assert _parse_kis_tick("0|OTHER_TR|001|data^more") is None
+
+
+# ── WS /ws/live/{code} — credential guard ─────────────────────────────────────
+
+def test_ws_live_no_credentials_sends_error():
+    with patch.dict("os.environ", {"KIS_APP_KEY": "", "KIS_APP_SECRET": ""}):
+        with client.websocket_connect("/ws/live/005930") as ws:
+            data = ws.receive_json()
+    assert data.get("error") == "KIS credentials not configured"

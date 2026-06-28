@@ -1996,3 +1996,47 @@ def get_kr_bars(
         for row in rows
     ]
     return KRBarsResponse(code=code, name=name, bars=bars, count=len(bars))
+
+
+# ── US Symbol Search ────────────────────────────────────────────────────────────
+
+from ib_async import IB
+
+
+class USSearchResult(BaseModel):
+    symbol: str
+    name: str
+    sec_type: str
+    exchange: str
+    currency: str
+
+
+class USSearchResponse(BaseModel):
+    query: str
+    results: list[USSearchResult]
+    count: int
+
+
+@app.get("/search/us", response_model=USSearchResponse)
+async def search_us(q: str = Query(..., min_length=1)):
+    q = q.strip()
+    ib = IB()
+    try:
+        await ib.connectAsync("127.0.0.1", 7497, clientId=random.randint(1, 899))
+        descs = await ib.reqMatchingSymbolsAsync(q)
+        results = [
+            USSearchResult(
+                symbol=d.contract.symbol,
+                name=d.contract.description or "",
+                sec_type=d.contract.secType,
+                exchange=d.contract.primaryExch or d.contract.exchange,
+                currency=d.contract.currency,
+            )
+            for d in descs
+        ]
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    finally:
+        if ib.isConnected():
+            ib.disconnect()
+    return USSearchResponse(query=q, results=results, count=len(results))

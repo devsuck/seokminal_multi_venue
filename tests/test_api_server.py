@@ -450,3 +450,35 @@ def test_get_kr_bars_no_credentials_returns_503():
     with patch.dict("os.environ", {"KIS_APP_KEY": "", "KIS_APP_SECRET": ""}):
         r = client.get("/kr/bars?code=005930")
     assert r.status_code == 503
+
+
+# ── /search/us ─────────────────────────────────────────────────────────────────
+
+@patch("api_server.main.IB")
+def test_search_us_structure(mock_ib_cls):
+    mock_ib = MagicMock()
+    mock_ib.connectAsync = AsyncMock()
+    mock_ib.isConnected.return_value = False
+
+    desc = MagicMock()
+    desc.contract.symbol = "AAPL"
+    desc.contract.description = "Apple Inc"
+    desc.contract.secType = "STK"
+    desc.contract.primaryExch = "NASDAQ"
+    desc.contract.exchange = "SMART"
+    desc.contract.currency = "USD"
+    mock_ib.reqMatchingSymbolsAsync = AsyncMock(return_value=[desc])
+    mock_ib_cls.return_value = mock_ib
+
+    r = client.get("/search/us?q=Apple")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["count"] == 1
+    assert data["results"][0]["symbol"] == "AAPL"
+    assert data["results"][0]["name"] == "Apple Inc"
+    assert data["results"][0]["sec_type"] == "STK"
+
+
+def test_search_us_missing_q_returns_422():
+    r = client.get("/search/us")
+    assert r.status_code == 422

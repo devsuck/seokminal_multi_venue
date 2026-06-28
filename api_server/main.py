@@ -2382,9 +2382,12 @@ def get_kr_order_status(
     return KROrderResponse(**result)
 
 
-# Note: /bots/all-live-status is declared after /bots/{bot_id} DELETE route.
-# FastAPI resolves fixed path segments before dynamic path parameters, so
-# "all-live-status" will NOT be captured as a bot_id — the literal path wins.
+# Note: /bots/all-live-status works because all dynamic bot GET routes are
+# 3-segment (e.g., /bots/{bot_id}/live-status). There is no 2-segment
+# GET /bots/{bot_id} route, so this endpoint is matched first. FastAPI matches
+# routes in declaration order, NOT literal-path-first. WARNING: Adding a
+# GET /bots/{bot_id} route before this endpoint would cause "all-live-status"
+# to be incorrectly captured as a bot_id.
 @app.get("/bots/all-live-status", response_model=AllBotsStatusResponse)
 def get_all_bots_live_status() -> AllBotsStatusResponse:
     bots = _load_bots()

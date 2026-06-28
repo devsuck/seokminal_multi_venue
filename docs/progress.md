@@ -1,0 +1,108 @@
+# Progress Log
+
+> 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
+> 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
+
+## 현재 상태 (마지막 업데이트: 2026-06-26 세션2)
+
+### 완료된 작업
+
+**Phase 1 — KIS 데이터/주문 (2026-06-21 ~ 06-22)**
+- KIS 일봉 데이터 수집 → `ParquetDataCatalog` 저장 (`data_ingestion.py`, `backends/kis/`)
+- KIS WebSocket 실시간 체결 스트리밍 (`live_trade_stream.py`, `backends/kis/ws_client.py`)
+- KIS 모의투자 주문 실행 (매수/매도/취소/조회) (`backends/kis/order_client.py`)
+
+**Phase 2 — IB 데이터/주문 (2026-06-22 ~ 06-24)**
+- IB 실시간 체결 스트리밍 (`live_trade_stream_ib.py`, `backends/ib/client.py`)
+- IB 페이퍼트레이딩 주문 실행 (`backends/ib/order_client.py`)
+- IB 히스토리컬 일봉 수집 → catalog (`data_ingestion_ib.py`)
+
+**Phase 3 — 조건 엔진 / 전략 스포너 (2026-06-23)**
+- JSON 조건 파서 + 평가기 (AND/OR 조합) (`condition_engine/`)
+- 조건 충족 시 전략 동적 스폰 (`strategy_spawner/`)
+
+**Phase 4 — 백테스트 / 분석 (2026-06-24)**
+- NautilusTrader BacktestEngine 래퍼 (`backtest_runner/`)
+- 종목 간 수익률 상관관계 행렬 (`correlation_analysis/`)
+
+**Phase 5 — 대시보드 API + 베타 분석 (2026-06-25)**
+- FastAPI 서버: `/bars`, `/backtest`, `/correlation` 엔드포인트 (`api_server/main.py`)
+- KOSPI 인덱스 + SPY ETF catalog 수집 (`data_ingestion_kospi.py`)
+- `beta_for_pair()` 함수 구현 (`beta_analysis/beta.py`) — beta, correlation 계산
+
+### 완료된 작업 (continued)
+
+**Phase 9 — 매크로 지표 + 기업 재무정보 (2026-06-25 ~ 06-26)**
+- FRED API 연동 (`fred/client.py`) — 14개 미국 거시지표 (`/fred/catalog`, `/fred/series`)
+- ECOS API 연동 (`ecos/client.py`) — 14개 한국 거시지표 (`/ecos/catalog`, `/ecos/series`)
+- 대시보드 US-MACRO / KR-MACRO 탭 분리 (`app/quant/page.tsx`)
+- KIS 토큰 캐시 (disk) 구현 (`backends/kis/auth.py`) — rate limit 우회
+- 통합 수집 CLI (`ingest.py`) — domestic/ib/index/batch/crno-search 서브커맨드
+- 금융위원회 기업재무정보 API (`corp_finance/client.py`, `/corp-finance/summary` 엔드포인트)
+  - 검증된 crno 8개: 삼성전자/현대차/기아/LG전자/LG화학/삼성SDI/NAVER/KB금융
+  - `ingest.py crno-search` — 매출액 기준 FSC DB에서 crno 자동 검색
+  - Quant > FACTOR 탭에 기업재무 패널 추가 (다년도 테이블 + 바 차트)
+
+**Phase 10 — 퀀트 지표 고도화 + 외부 데이터 소스 확장 (2026-06-26)**
+- 백테스트 응답에 Sortino/Volatility/WinRate/P-L Ratio/AvgWin/AvgLoss 추가 (`backtest_runner/runner.py`)
+- 몬테카를로 시뮬레이션 (`monte_carlo/simulator.py`) + `/monte-carlo` 엔드포인트
+- 레짐 필터 (`regime_filter/detector.py`) + `/regime` 엔드포인트
+- 금융위원회 crno 기반 기업재무 API 구현 (`corp_finance/client.py`, `/corp-finance/summary`)
+- KRX OpenAPI 클라이언트 (`krx/client.py`) — 구독 신청 후 사용 가능
+- SEC EDGAR 클라이언트 (`sec_edgar/client.py`) — 무료, 키 불필요
+  - `/edgar/summary`: 미국 기업 연도별 재무제표
+  - `/edgar/concept`: XBRL concept 시계열
+- 대시보드 대규모 개편:
+  - backtest 페이지: "empty state" UI (항상 표시, 빈 값 → RUN 시 채워짐)
+  - quant 페이지 탭 추가: MONTE CARLO, REGIME
+  - US-MACRO 탭 하단에 SEC EDGAR 재무제표 패널 추가
+  - `pyproject.toml`에 `krx*`, `sec_edgar*` 추가
+
+### 진행 중 / 다음 할 일
+
+- [ ] SK하이닉스 crno 미확인 (FSC DB: `python ingest.py crno-search --sale-trillion 44.6 --year 2022 --tolerance 2`)
+- [ ] 신한지주, POSCO홀딩스 crno 추가
+
+### 알아둘 것 / 블로커
+- `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` 셸 프로필에 영구 설정됨
+- API 서버는 `cd nautilus-multi-venue && uvicorn api_server.main:app --reload` 실행
+- CORS: `localhost:3000`만 허용
+- KRX API: `apikey` 헤더 사용, `data-dbg.krx.co.kr`은 테스트 서버(키 미승인시 401), 프로덕션은 포털 승인 후 별도 URL
+- SEC EDGAR: `User-Agent: "seokminal research bot"` + `From: tjrgns97502@naver.com` 헤더 필수
+- SEC EDGAR rate limit: 10 req/s → client에 0.11s throttle 내장됨
+- KSD API: `DATA_GO_KR_API_KEY` 사용 (별도 키 없음). 실제 엔드포인트:
+  - 배당: `1160100/GetStocDiviInfoService_V2/getDiviInfo_V2`
+  - 대차순위: `1160100/GetStocLendBorrInfoService_V2/getStLendAndBorrItemRank_V2`
+  - 권리일정: `1160100/GetStocRighScheService_V2/getRighExerReasSche_V2`
+  - 발행정보: `1160100/GetStocIssuInfoService_V3/getStocIssuInfo_V3`
+  - ⚠️ 금융위원회 KSD 서비스는 `/service/` prefix 없음 (기업재무는 `/service/` 있음)
+- KSD 대차순위: `basDt`로 특정 날짜 조회. 최근 영업일 데이터만 존재 (공휴일/주말 없음)
+
+---
+
+## 작업 히스토리
+
+### 2026-06-21
+- KIS 일봉 데이터 수집 파이프라인 구축
+- KIS WebSocket 실시간 스트리밍 구현
+
+### 2026-06-22
+- KIS 주문 실행 어댑터 구현
+- IB 실시간 체결 스트리밍 구현
+
+### 2026-06-23
+- IB 주문 실행 어댑터 구현
+- 조건 파서/평가기 엔진 구현
+- 전략 스포너 구현
+
+### 2026-06-24
+- IB 히스토리컬 데이터 수집 구현
+- 백테스트 자동화 구현
+- 상관관계 분석 구현
+
+### 2026-06-25
+- 대시보드 백엔드 FastAPI 서버 구현
+- KOSPI/SPY 인덱스 데이터 수집 구현
+- beta_analysis 모듈 구현 (`/beta` 엔드포인트 제외)
+- docs/progress.md 작업 루틴 세팅
+- pyproject.toml 패키지 누락 수정

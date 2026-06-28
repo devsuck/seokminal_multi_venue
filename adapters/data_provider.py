@@ -192,6 +192,20 @@ def map_ib_trade_tick(
     )
 
 
+def build_kosdaq_equity(code: str) -> Equity:
+    now_ns = dt_to_unix_nanos(dt.datetime.now(dt.timezone.utc))
+    return Equity(
+        instrument_id=InstrumentId.from_str(f"{code}.XKOS"),
+        raw_symbol=Symbol(code),
+        currency=KRW,
+        price_precision=0,
+        price_increment=Price.from_str("1"),
+        lot_size=Quantity.from_int(1),
+        ts_event=now_ns,
+        ts_init=now_ns,
+    )
+
+
 def map_ib_daily_bar(row: BarData, bar_type: BarType, price_precision: int) -> Bar:
     event_date = dt.datetime.combine(row.date, dt.time.min, tzinfo=dt.timezone.utc)
     ts_event = dt_to_unix_nanos(event_date)

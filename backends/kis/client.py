@@ -158,6 +158,7 @@ class KISClient:
         return response
 
 
+
 def _previous_day(date_str: str) -> str:
     import datetime as dt
 

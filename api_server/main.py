@@ -54,7 +54,7 @@ from condition_engine.indicator_registry import IndicatorRegistry, _BUILDERS as 
 CATALOG_PATH = "./catalog"
 BOTS_FILE = Path("./bots.json")
 
-app = FastAPI(title="Nautilus Multi-Venue Dashboard API")
+app = FastAPI(title="Seokminal Dashboard API")
 
 app.add_middleware(
     CORSMiddleware,

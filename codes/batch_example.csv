@@ -1,0 +1,28 @@
+# type,code,venue(optional)
+# domestic: 국내주식/ETF (J=KOSPI기본, K=KOSDAQ)
+# kosdaq: KOSDAQ 단축
+# index: 국내지수
+# ib: 해외주식 via Interactive Brokers (TWS/Gateway 실행 필요)
+
+# KOSPI 대형주
+domestic,005930
+domestic,000660
+domestic,035420
+
+# KOSDAQ
+kosdaq,247540
+kosdaq,091990
+
+# ETF
+domestic,069500
+domestic,360750
+
+# 지수
+index,0001
+index,1001
+
+# 해외 (IB TWS 실행 중일 때만)
+ib,AAPL,NASDAQ
+ib,NVDA,NASDAQ
+ib,MSFT,NASDAQ
+ib,JPM,NYSE

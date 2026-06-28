@@ -1,0 +1,11 @@
+# 미국 나스닥 빅테크
+AAPL
+MSFT
+NVDA
+GOOGL
+META
+AMZN
+TSLA
+AVGO
+AMD
+QCOM

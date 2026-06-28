@@ -2701,6 +2701,5 @@ def get_triggered_alerts() -> TriggeredAlertsResponse:
                 _triggered_alerts.append(entry)
                 if len(_triggered_alerts) > _MAX_TRIGGERED:
                     _triggered_alerts.pop(0)
-    return TriggeredAlertsResponse(
-        triggered=list(reversed(_triggered_alerts))
-    )
+        snapshot = list(reversed(_triggered_alerts))
+    return TriggeredAlertsResponse(triggered=snapshot)

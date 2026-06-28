@@ -41,6 +41,8 @@ from futures.pricer import futures_price, futures_calendar, futures_roll
 from forex.pricer import fx_forward, fx_curve, fx_carry
 from hyperliquid.client import get_meta_and_ctxs, get_candles, get_l2_book
 from backends.ib.client import IBClient
+from backends.kis.client import KISClient
+from kr_universe.client import search_universe, get_universe as _get_kr_universe
 
 CATALOG_PATH = "./catalog"
 BOTS_FILE = Path("./bots.json")
@@ -1904,9 +1906,6 @@ async def get_ib_bars(
 
 
 # ── KR Universe Search ──────────────────────────────────────────────────────────
-
-from kr_universe.client import search_universe, get_universe as _get_kr_universe
-from backends.kis.client import KISClient
 
 
 class KRSearchResult(BaseModel):

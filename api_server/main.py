@@ -36,6 +36,7 @@ from ksd.client import KSDClient, isin_from_code
 from options.pricer import bs_price, bs_greeks, implied_vol, bs_chain, bs_iv_surface
 from futures.pricer import futures_price, futures_calendar, futures_roll
 from forex.pricer import fx_forward, fx_curve, fx_carry
+from hyperliquid.client import get_all_mids, get_meta_and_ctxs, get_candles, get_l2_book
 
 CATALOG_PATH = "./catalog"
 BOTS_FILE = Path("./bots.json")
@@ -1677,4 +1678,129 @@ def get_forex_carry(
         rate_foreign=rate_foreign,
         days=days,
         **fc,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Crypto Analytics (Hyperliquid)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+import time as _time
+
+
+class CryptoAsset(BaseModel):
+    name: str
+    mid_price: float
+    mark_price: float
+    funding_rate_8h: float    # % per 8h (e.g. 0.01 = 0.01% per 8h)
+    funding_rate: float       # annualized % (funding_rate_8h * 3 * 365)
+    open_interest: float
+    day_change_pct: float
+    day_volume: float
+
+
+class CryptoAssetsResponse(BaseModel):
+    assets: list[CryptoAsset]
+    count: int
+
+
+class CryptoCandle(BaseModel):
+    time_ms: int
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+    num_trades: int
+
+
+class CryptoCandlesResponse(BaseModel):
+    coin: str
+    interval: str
+    candles: list[CryptoCandle]
+
+
+class BookLevel(BaseModel):
+    price: float
+    size: float
+    num_orders: int
+
+
+class CryptoBookResponse(BaseModel):
+    coin: str
+    bids: list[BookLevel]   # top 20, best (highest) first
+    asks: list[BookLevel]   # top 20, best (lowest) first
+    mid_price: float
+    spread: float
+    spread_pct: float
+
+
+@app.get("/crypto/assets", response_model=CryptoAssetsResponse)
+def get_crypto_assets() -> CryptoAssetsResponse:
+    mids = get_all_mids()
+    universe, ctxs = get_meta_and_ctxs()
+    assets = []
+    for meta, ctx in zip(universe, ctxs):
+        name = meta["name"]
+        mid_price = float(mids.get(name) or ctx.get("midPx") or "0")
+        prev_day_px = float(ctx.get("prevDayPx") or "0")
+        day_change_pct = ((mid_price - prev_day_px) / prev_day_px * 100) if prev_day_px else 0.0
+        funding_8h = float(ctx.get("funding") or "0")
+        assets.append(CryptoAsset(
+            name=name,
+            mid_price=round(mid_price, 6),
+            mark_price=round(float(ctx.get("markPx") or "0"), 6),
+            funding_rate_8h=round(funding_8h * 100, 6),
+            funding_rate=round(funding_8h * 100 * 3 * 365, 4),
+            open_interest=round(float(ctx.get("openInterest") or "0"), 4),
+            day_change_pct=round(day_change_pct, 4),
+            day_volume=round(float(ctx.get("dayNtlVlm") or "0"), 2),
+        ))
+    return CryptoAssetsResponse(assets=assets, count=len(assets))
+
+
+@app.get("/crypto/candles", response_model=CryptoCandlesResponse)
+def get_crypto_candles(
+    coin: str = Query("BTC"),
+    interval: str = Query("1d"),
+    days: int = Query(90, ge=1, le=365),
+) -> CryptoCandlesResponse:
+    end_ms = int(_time.time() * 1000)
+    start_ms = end_ms - days * 24 * 3600 * 1000
+    raw = get_candles(coin.upper(), interval, start_ms, end_ms)
+    candles = [
+        CryptoCandle(
+            time_ms=c["t"],
+            open=float(c["o"]),
+            high=float(c["h"]),
+            low=float(c["l"]),
+            close=float(c["c"]),
+            volume=float(c["v"]),
+            num_trades=int(c["n"]),
+        )
+        for c in raw
+    ]
+    return CryptoCandlesResponse(coin=coin.upper(), interval=interval, candles=candles)
+
+
+@app.get("/crypto/book", response_model=CryptoBookResponse)
+def get_crypto_book(
+    coin: str = Query("BTC"),
+) -> CryptoBookResponse:
+    raw = get_l2_book(coin.upper())
+    levels = raw.get("levels", [[], []])
+    bid_raw = levels[0] if len(levels) > 0 else []
+    ask_raw = levels[1] if len(levels) > 1 else []
+    bids = [BookLevel(price=float(l["px"]), size=float(l["sz"]), num_orders=int(l["n"])) for l in bid_raw[:20]]
+    asks = [BookLevel(price=float(l["px"]), size=float(l["sz"]), num_orders=int(l["n"])) for l in ask_raw[:20]]
+    mid_price = (bids[0].price + asks[0].price) / 2 if bids and asks else 0.0
+    spread = asks[0].price - bids[0].price if bids and asks else 0.0
+    spread_pct = (spread / mid_price * 100) if mid_price > 0 else 0.0
+    return CryptoBookResponse(
+        coin=coin.upper(),
+        bids=bids,
+        asks=asks,
+        mid_price=round(mid_price, 6),
+        spread=round(spread, 6),
+        spread_pct=round(spread_pct, 4),
     )

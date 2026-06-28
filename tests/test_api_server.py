@@ -1,5 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
+from unittest.mock import patch
 
 from api_server.main import app
 
@@ -211,3 +212,86 @@ def test_forex_carry_structure():
     data = r.json()
     assert "carry_rate" in data and "favorable" in data and "forward" in data
     assert data["favorable"] is True
+
+
+# ── Crypto (Hyperliquid) endpoints ────────────────────────────────────────────
+
+MOCK_HL_MIDS = {"BTC": "94500.0", "ETH": "3200.0"}
+
+MOCK_HL_META = [
+    {"name": "BTC", "szDecimals": 5, "maxLeverage": 50},
+    {"name": "ETH", "szDecimals": 4, "maxLeverage": 25},
+]
+
+MOCK_HL_CTXS = [
+    {
+        "funding": "0.0001",
+        "openInterest": "5000.0",
+        "prevDayPx": "93000.0",
+        "dayNtlVlm": "500000000.0",
+        "markPx": "94500.0",
+        "midPx": "94500.0",
+    },
+    {
+        "funding": "-0.00005",
+        "openInterest": "20000.0",
+        "prevDayPx": "3100.0",
+        "dayNtlVlm": "200000000.0",
+        "markPx": "3200.0",
+        "midPx": "3200.0",
+    },
+]
+
+MOCK_HL_CANDLES = [
+    {
+        "t": 1700000000000, "T": 1700086399000, "s": "BTC", "i": "1d",
+        "o": "93000.0", "c": "94500.0", "h": "95000.0", "l": "92000.0",
+        "v": "123.45", "n": 5678,
+    }
+]
+
+MOCK_HL_BOOK = {
+    "coin": "BTC",
+    "time": 1700000000000,
+    "levels": [
+        [{"px": "94490.0", "sz": "0.5", "n": 3}, {"px": "94480.0", "sz": "1.0", "n": 5}],
+        [{"px": "94510.0", "sz": "0.3", "n": 2}, {"px": "94520.0", "sz": "0.8", "n": 4}],
+    ],
+}
+
+
+@patch("api_server.main.get_meta_and_ctxs")
+@patch("api_server.main.get_all_mids")
+def test_crypto_assets_structure(mock_mids, mock_meta_ctxs):
+    mock_mids.return_value = MOCK_HL_MIDS
+    mock_meta_ctxs.return_value = (MOCK_HL_META, MOCK_HL_CTXS)
+    r = client.get("/crypto/assets")
+    assert r.status_code == 200
+    data = r.json()
+    assert "assets" in data and data["count"] == 2
+    asset = data["assets"][0]
+    assert asset["name"] == "BTC"
+    assert "mid_price" in asset and "funding_rate_8h" in asset and "day_change_pct" in asset
+
+
+@patch("api_server.main.get_candles")
+def test_crypto_candles_structure(mock_candles):
+    mock_candles.return_value = MOCK_HL_CANDLES
+    r = client.get("/crypto/candles?coin=BTC&interval=1d&days=30")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["coin"] == "BTC" and data["interval"] == "1d"
+    assert len(data["candles"]) == 1
+    candle = data["candles"][0]
+    assert "time_ms" in candle and "open" in candle and "close" in candle
+
+
+@patch("api_server.main.get_l2_book")
+def test_crypto_book_structure(mock_book):
+    mock_book.return_value = MOCK_HL_BOOK
+    r = client.get("/crypto/book?coin=BTC")
+    assert r.status_code == 200
+    data = r.json()
+    assert "bids" in data and "asks" in data and "mid_price" in data and "spread" in data
+    assert data["bids"][0]["price"] == pytest.approx(94490.0)
+    assert data["asks"][0]["price"] == pytest.approx(94510.0)

@@ -1984,17 +1984,20 @@ def get_kr_bars(
     except Exception:
         pass
 
-    bars = [
-        KRBar(
-            date=row["stck_bsop_date"],
-            open=int(row["stck_oprc"]),
-            high=int(row["stck_hgpr"]),
-            low=int(row["stck_lwpr"]),
-            close=int(row["stck_clpr"]),
-            volume=int(row["acml_vol"]),
-        )
-        for row in rows
-    ]
+    try:
+        bars = [
+            KRBar(
+                date=row["stck_bsop_date"],
+                open=int(row["stck_oprc"] or 0),
+                high=int(row["stck_hgpr"] or 0),
+                low=int(row["stck_lwpr"] or 0),
+                close=int(row["stck_clpr"] or 0),
+                volume=int(row["acml_vol"] or 0),
+            )
+            for row in rows
+        ]
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=400, detail=f"malformed KIS bar data: {exc}")
     return KRBarsResponse(code=code, name=name, bars=bars, count=len(bars))
 
 
@@ -2022,14 +2025,14 @@ async def search_us(q: str = Query(..., min_length=1)):
     q = q.strip()
     ib = IB()
     try:
-        await ib.connectAsync("127.0.0.1", 7497, clientId=random.randint(1, 899))
+        await ib.connectAsync("127.0.0.1", 7497, clientId=random.randint(450, 899))
         descs = await ib.reqMatchingSymbolsAsync(q)
         results = [
             USSearchResult(
                 symbol=d.contract.symbol,
                 name=d.contract.description or "",
                 sec_type=d.contract.secType,
-                exchange=d.contract.primaryExch or d.contract.exchange,
+                exchange=d.contract.primaryExch or d.contract.exchange or "",
                 currency=d.contract.currency,
             )
             for d in descs
@@ -2106,10 +2109,12 @@ async def ws_live(websocket: WebSocket, code: str) -> None:
         return
 
     code = code.strip().upper()
+    stream = None
     try:
         approval_key = get_approval_key(app_key, app_secret)
         kis_ws_client = KISWebSocketClient(approval_key)
-        async for message in kis_ws_client.stream_trades(code):
+        stream = kis_ws_client.stream_trades(code)
+        async for message in stream:
             parsed = _parse_kis_tick(message)
             if parsed:
                 await websocket.send_json(parsed)
@@ -2121,3 +2126,6 @@ async def ws_live(websocket: WebSocket, code: str) -> None:
             await websocket.close()
         except Exception:
             pass
+    finally:
+        if stream is not None:
+            await stream.aclose()

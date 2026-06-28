@@ -7,6 +7,7 @@ No API key required.
 from __future__ import annotations
 
 import io
+import threading
 import time
 
 import pandas as pd
@@ -17,6 +18,7 @@ _CACHE_TTL_SECONDS = 86400  # 24 hours
 
 _cache: list[dict] = []
 _cache_ts: float = 0.0
+_cache_lock = threading.Lock()
 
 
 def get_universe(
@@ -31,26 +33,31 @@ def get_universe(
     if _cache and time.time() - _cache_ts < _CACHE_TTL_SECONDS:
         return _cache
 
-    active_session = session or requests.Session()
-    r = active_session.get(
-        kind_url,
-        params={"method": "download", "searchType": 13},
-        headers={"Referer": "https://kind.krx.co.kr/"},
-        timeout=15,
-    )
-    r.raise_for_status()
-    df = pd.read_html(io.StringIO(r.text), encoding="euc-kr")[0]
-    df["종목코드"] = df["종목코드"].astype(str).str.zfill(6)
-    _cache = [
-        {
-            "code": str(row["종목코드"]),
-            "name": str(row["회사명"]),
-            "market": str(row["시장구분"]),
-        }
-        for _, row in df.iterrows()
-    ]
-    _cache_ts = time.time()
-    return _cache
+    with _cache_lock:
+        # Re-check after acquiring lock (another thread may have refreshed)
+        if _cache and time.time() - _cache_ts < _CACHE_TTL_SECONDS:
+            return _cache
+
+        active_session = session or requests.Session()
+        r = active_session.get(
+            kind_url,
+            params={"method": "download", "searchType": 13},
+            headers={"Referer": "https://kind.krx.co.kr/"},
+            timeout=15,
+        )
+        r.raise_for_status()
+        df = pd.read_html(io.StringIO(r.text), encoding="euc-kr")[0]
+        df["종목코드"] = df["종목코드"].astype(str).str.zfill(6)
+        _cache = [
+            {
+                "code": str(row["종목코드"]),
+                "name": str(row["회사명"]),
+                "market": str(row["시장구분"]),
+            }
+            for _, row in df.iterrows()
+        ]
+        _cache_ts = time.time()
+        return _cache
 
 
 def search_universe(q: str, max_results: int = 20) -> list[dict]:

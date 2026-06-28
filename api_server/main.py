@@ -6,6 +6,8 @@ import uuid
 from pathlib import Path
 from typing import Literal
 
+import requests
+
 import numpy as np
 
 from dotenv import load_dotenv
@@ -2341,6 +2343,8 @@ def place_kr_order(req: KROrderRequest) -> KROrderResponse:
             req.code, req.side, req.quantity, req.order_type, req.price
         )
         return KROrderResponse(**result)
+    except (requests.ConnectionError, requests.Timeout) as exc:
+        raise HTTPException(status_code=503, detail="KIS unreachable") from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -2357,6 +2361,8 @@ def cancel_kr_order(order_no: str, req: KRCancelRequest) -> KROrderResponse:
         order_client = KISOrderClient(app_key, app_secret, cano, acnt_prdt_cd)
         result = order_client.cancel_order(order_no, req.code, req.quantity)
         return KROrderResponse(**result)
+    except (requests.ConnectionError, requests.Timeout) as exc:
+        raise HTTPException(status_code=503, detail="KIS unreachable") from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -2375,6 +2381,8 @@ def get_kr_order_status(
     try:
         order_client = KISOrderClient(app_key, app_secret, cano, acnt_prdt_cd)
         result = order_client.get_order_status(date, order_no)
+    except (requests.ConnectionError, requests.Timeout) as exc:
+        raise HTTPException(status_code=503, detail="KIS unreachable") from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if result is None:

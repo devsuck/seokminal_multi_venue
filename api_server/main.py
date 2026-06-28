@@ -35,6 +35,7 @@ from sec_edgar.client import SECEdgarClient
 from ksd.client import KSDClient, isin_from_code
 from options.pricer import bs_price, bs_greeks, implied_vol, bs_chain, bs_iv_surface
 from futures.pricer import futures_price, futures_calendar, futures_roll
+from forex.pricer import fx_forward, fx_curve, fx_carry
 
 CATALOG_PATH = "./catalog"
 BOTS_FILE = Path("./bots.json")
@@ -1578,4 +1579,102 @@ def get_futures_roll(
         convenience_yield=convenience_yield,
         front_days=front_days,
         rolls=[FuturesRollRow(**r) for r in rolls],
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Forex Analytics
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class ForexForwardResponse(BaseModel):
+    spot: float
+    rate_domestic: float
+    rate_foreign: float
+    days: int
+    forward: float
+    forward_points: float
+    forward_points_pct: float
+    annualized_differential: float
+    market_structure: str
+
+
+class ForexCurveRow(BaseModel):
+    tenor_days: int
+    forward: float
+    forward_points: float
+    forward_points_pct: float
+    annualized_differential: float
+    market_structure: str
+
+
+class ForexCurveResponse(BaseModel):
+    spot: float
+    rate_domestic: float
+    rate_foreign: float
+    rows: list[ForexCurveRow]
+
+
+class ForexCarryResponse(BaseModel):
+    spot: float
+    rate_domestic: float
+    rate_foreign: float
+    days: int
+    forward: float
+    carry_rate: float
+    net_carry_pct: float
+    breakeven_move_pct: float
+    favorable: bool
+    uip_expected_move_pct: float
+
+
+@app.get("/forex/forward", response_model=ForexForwardResponse)
+def get_forex_forward(
+    spot: float = Query(..., gt=0),
+    rate_domestic: float = Query(0.05),
+    rate_foreign: float = Query(0.03),
+    days: int = Query(..., ge=0),
+) -> ForexForwardResponse:
+    T = days / 365.0
+    fp = fx_forward(spot, rate_domestic, rate_foreign, T)
+    return ForexForwardResponse(
+        spot=spot,
+        rate_domestic=rate_domestic,
+        rate_foreign=rate_foreign,
+        days=days,
+        **fp,
+    )
+
+
+@app.get("/forex/curve", response_model=ForexCurveResponse)
+def get_forex_curve(
+    spot: float = Query(..., gt=0),
+    rate_domestic: float = Query(0.05),
+    rate_foreign: float = Query(0.03),
+) -> ForexCurveResponse:
+    tenors = [7, 30, 60, 90, 180, 365]
+    rows = fx_curve(spot, rate_domestic, rate_foreign, tenors)
+    return ForexCurveResponse(
+        spot=spot,
+        rate_domestic=rate_domestic,
+        rate_foreign=rate_foreign,
+        rows=[ForexCurveRow(**r) for r in rows],
+    )
+
+
+@app.get("/forex/carry", response_model=ForexCarryResponse)
+def get_forex_carry(
+    spot: float = Query(..., gt=0),
+    rate_domestic: float = Query(0.05),
+    rate_foreign: float = Query(0.03),
+    days: int = Query(..., ge=1),
+) -> ForexCarryResponse:
+    T = days / 365.0
+    fc = fx_carry(spot, rate_domestic, rate_foreign, T)
+    return ForexCarryResponse(
+        spot=spot,
+        rate_domestic=rate_domestic,
+        rate_foreign=rate_foreign,
+        days=days,
+        **fc,
     )

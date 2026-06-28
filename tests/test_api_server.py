@@ -180,3 +180,34 @@ def test_futures_roll_structure():
     assert len(data["rolls"]) == 5
     roll = data["rolls"][0]
     assert "roll_cost" in roll and "annualized_roll_yield" in roll
+
+
+# ── Forex endpoints ───────────────────────────────────────────────────────────
+
+def test_forex_forward_premium():
+    """GET /forex/forward returns premium when r_domestic > r_foreign."""
+    r = client.get("/forex/forward?spot=1.10&rate_domestic=0.05&rate_foreign=0.03&days=90")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["forward"] > 1.10
+    assert data["market_structure"] == "premium"
+
+
+def test_forex_curve_structure():
+    """GET /forex/curve returns 6 rows with required keys."""
+    r = client.get("/forex/curve?spot=1.10&rate_domestic=0.05&rate_foreign=0.03")
+    assert r.status_code == 200
+    data = r.json()
+    assert "rows" in data
+    assert len(data["rows"]) == 6
+    row = data["rows"][0]
+    assert "tenor_days" in row and "forward" in row and "market_structure" in row
+
+
+def test_forex_carry_structure():
+    """GET /forex/carry returns carry analysis with required keys."""
+    r = client.get("/forex/carry?spot=1.10&rate_domestic=0.05&rate_foreign=0.03&days=365")
+    assert r.status_code == 200
+    data = r.json()
+    assert "carry_rate" in data and "favorable" in data and "forward" in data
+    assert data["favorable"] is True

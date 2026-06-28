@@ -2,6 +2,7 @@ import datetime as dt
 import json
 import os
 import random
+import threading
 import uuid
 from pathlib import Path
 from typing import Literal
@@ -2576,6 +2577,7 @@ _alert_rules: dict[str, AlertRuleOut] = {}
 _triggered_alerts: list[TriggeredAlertOut] = []
 _MAX_TRIGGERED = 200
 _DEDUP_SECONDS = 300
+_alert_lock = threading.Lock()
 
 
 def _evaluate_alert_condition(
@@ -2684,20 +2686,21 @@ def delete_alert_rule(rule_id: str) -> None:
 def get_triggered_alerts() -> TriggeredAlertsResponse:
     statuses = live_engine.get_all_statuses()
     now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
-    for rule in list(_alert_rules.values()):
-        triggered, detail = _evaluate_alert_condition(rule, statuses)
-        if triggered and not _recently_triggered(rule.id):
-            entry = TriggeredAlertOut(
-                rule_id=rule.id,
-                rule_label=rule.label,
-                condition_type=rule.condition_type,
-                bot_id=rule.bot_id,
-                detail=detail,
-                triggered_at=now_iso,
-            )
-            _triggered_alerts.append(entry)
-            if len(_triggered_alerts) > _MAX_TRIGGERED:
-                _triggered_alerts.pop(0)
+    with _alert_lock:
+        for rule in list(_alert_rules.values()):
+            triggered, detail = _evaluate_alert_condition(rule, statuses)
+            if triggered and not _recently_triggered(rule.id):
+                entry = TriggeredAlertOut(
+                    rule_id=rule.id,
+                    rule_label=rule.label,
+                    condition_type=rule.condition_type,
+                    bot_id=rule.bot_id,
+                    detail=detail,
+                    triggered_at=now_iso,
+                )
+                _triggered_alerts.append(entry)
+                if len(_triggered_alerts) > _MAX_TRIGGERED:
+                    _triggered_alerts.pop(0)
     return TriggeredAlertsResponse(
         triggered=list(reversed(_triggered_alerts))
     )

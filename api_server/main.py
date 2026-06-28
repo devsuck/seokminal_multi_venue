@@ -2428,12 +2428,12 @@ async def place_us_order(req: USOrderRequest) -> USOrderResponse:
         raise HTTPException(status_code=400, detail=f"invalid order_type: {req.order_type!r}")
     if req.order_type == "LIMIT" and req.limit_price is None:
         raise HTTPException(status_code=400, detail="limit_price required for LIMIT order")
+    ib_client = IBOrderClient(
+        host=os.environ.get("IB_HOST", "127.0.0.1"),
+        port=int(os.environ.get("IB_PORT", "7497")),
+        client_id=int(os.environ.get("IB_MANUAL_ORDER_CLIENT_ID", "10")),
+    )
     try:
-        ib_client = IBOrderClient(
-            host=os.environ.get("IB_HOST", "127.0.0.1"),
-            port=int(os.environ.get("IB_PORT", "7497")),
-            client_id=int(os.environ.get("IB_MANUAL_ORDER_CLIENT_ID", "10")),
-        )
         result = await ib_client.place_order(
             req.symbol, req.side, req.quantity, req.order_type, req.limit_price
         )
@@ -2442,40 +2442,48 @@ async def place_us_order(req: USOrderRequest) -> USOrderResponse:
         raise HTTPException(status_code=503, detail="IB TWS not reachable") from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        await ib_client.close()
 
 
 @app.post("/orders/us/{order_id}/cancel", response_model=USOrderResponse)
 async def cancel_us_order(order_id: int) -> USOrderResponse:
+    ib_client = IBOrderClient(
+        host=os.environ.get("IB_HOST", "127.0.0.1"),
+        port=int(os.environ.get("IB_PORT", "7497")),
+        client_id=int(os.environ.get("IB_MANUAL_ORDER_CLIENT_ID", "10")),
+    )
     try:
-        ib_client = IBOrderClient(
-            host=os.environ.get("IB_HOST", "127.0.0.1"),
-            port=int(os.environ.get("IB_PORT", "7497")),
-            client_id=int(os.environ.get("IB_MANUAL_ORDER_CLIENT_ID", "10")),
-        )
         result = await ib_client.cancel_order(order_id)
         return USOrderResponse(**result)
     except (ConnectionRefusedError, OSError) as exc:
         raise HTTPException(status_code=503, detail="IB TWS not reachable") from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        await ib_client.close()
 
 
 @app.get("/orders/us/{order_id}/status", response_model=USOrderResponse)
 async def get_us_order_status(order_id: int) -> USOrderResponse:
+    ib_client = IBOrderClient(
+        host=os.environ.get("IB_HOST", "127.0.0.1"),
+        port=int(os.environ.get("IB_PORT", "7497")),
+        client_id=int(os.environ.get("IB_MANUAL_ORDER_CLIENT_ID", "10")),
+    )
     try:
-        ib_client = IBOrderClient(
-            host=os.environ.get("IB_HOST", "127.0.0.1"),
-            port=int(os.environ.get("IB_PORT", "7497")),
-            client_id=int(os.environ.get("IB_MANUAL_ORDER_CLIENT_ID", "10")),
-        )
         result = await ib_client.get_order_status(order_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail=f"IB order {order_id!r} not found")
+        return USOrderResponse(**result)
+    except HTTPException:
+        raise
     except (ConnectionRefusedError, OSError) as exc:
         raise HTTPException(status_code=503, detail="IB TWS not reachable") from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if result is None:
-        raise HTTPException(status_code=404, detail=f"IB order {order_id!r} not found")
-    return USOrderResponse(**result)
+    finally:
+        await ib_client.close()
 
 
 # Note: /bots/all-live-status works because all dynamic bot GET routes are

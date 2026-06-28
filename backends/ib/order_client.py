@@ -72,3 +72,7 @@ class IBOrderClient:
             "filled": trade.orderStatus.filled,
             "remaining": trade.orderStatus.remaining,
         }
+
+    async def close(self) -> None:
+        if self._ib.isConnected():
+            self._ib.disconnect()

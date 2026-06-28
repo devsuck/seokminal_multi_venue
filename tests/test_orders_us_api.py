@@ -27,6 +27,7 @@ def test_place_us_order_success(mock_cls):
     mock_inst.place_order = AsyncMock(return_value={
         "order_id": 42, "status": "PendingSubmit", "filled": 0.0, "remaining": 1.0,
     })
+    mock_inst.close = AsyncMock()
     mock_cls.return_value = mock_inst
 
     r = client.post("/orders/us", json={
@@ -46,6 +47,7 @@ def test_cancel_us_order_success(mock_cls):
     mock_inst.cancel_order = AsyncMock(return_value={
         "order_id": 42, "status": "ApiCancelled", "filled": 0.0, "remaining": 1.0,
     })
+    mock_inst.close = AsyncMock()
     mock_cls.return_value = mock_inst
 
     r = client.post("/orders/us/42/cancel")
@@ -61,6 +63,7 @@ def test_get_us_order_status_found(mock_cls):
     mock_inst.get_order_status = AsyncMock(return_value={
         "order_id": 42, "status": "Filled", "filled": 1.0, "remaining": 0.0,
     })
+    mock_inst.close = AsyncMock()
     mock_cls.return_value = mock_inst
 
     r = client.get("/orders/us/42/status")
@@ -74,6 +77,7 @@ def test_get_us_order_status_found(mock_cls):
 def test_get_us_order_status_not_found_returns_404(mock_cls):
     mock_inst = MagicMock()
     mock_inst.get_order_status = AsyncMock(return_value=None)
+    mock_inst.close = AsyncMock()
     mock_cls.return_value = mock_inst
 
     r = client.get("/orders/us/9999/status")

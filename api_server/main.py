@@ -45,6 +45,7 @@ from hyperliquid.client import get_meta_and_ctxs, get_candles, get_l2_book
 from backends.ib.client import IBClient
 from backends.kis.client import KISClient
 from backends.kis.order_client import KISOrderClient
+from backends.ib.order_client import IBOrderClient
 from kr_universe.client import search_universe, get_universe as _get_kr_universe
 from condition_engine.parser import ConditionParser
 from condition_engine.evaluator import ConditionEvaluator
@@ -2307,6 +2308,21 @@ class KRCancelRequest(BaseModel):
     quantity: int
 
 
+class USOrderRequest(BaseModel):
+    symbol: str           # e.g. "AAPL"
+    side: str             # "BUY" | "SELL"
+    quantity: int
+    order_type: str       # "MARKET" | "LIMIT"
+    limit_price: float | None = None  # required for LIMIT
+
+
+class USOrderResponse(BaseModel):
+    order_id: int
+    status: str
+    filled: float
+    remaining: float
+
+
 class BotLiveEntry(BaseModel):
     bot_id: str
     name: str
@@ -2388,6 +2404,64 @@ def get_kr_order_status(
     if result is None:
         raise HTTPException(status_code=404, detail=f"order {order_no!r} not found for date {date!r}")
     return KROrderResponse(**result)
+
+
+@app.post("/orders/us", response_model=USOrderResponse)
+async def place_us_order(req: USOrderRequest) -> USOrderResponse:
+    if req.side not in ("BUY", "SELL"):
+        raise HTTPException(status_code=400, detail=f"invalid side: {req.side!r}")
+    if req.order_type not in ("MARKET", "LIMIT"):
+        raise HTTPException(status_code=400, detail=f"invalid order_type: {req.order_type!r}")
+    if req.order_type == "LIMIT" and req.limit_price is None:
+        raise HTTPException(status_code=400, detail="limit_price required for LIMIT order")
+    try:
+        ib_client = IBOrderClient(
+            host=os.environ.get("IB_HOST", "127.0.0.1"),
+            port=int(os.environ.get("IB_PORT", "7497")),
+            client_id=int(os.environ.get("IB_MANUAL_ORDER_CLIENT_ID", "10")),
+        )
+        result = await ib_client.place_order(
+            req.symbol, req.side, req.quantity, req.order_type, req.limit_price
+        )
+        return USOrderResponse(**result)
+    except (ConnectionRefusedError, OSError) as exc:
+        raise HTTPException(status_code=503, detail="IB TWS not reachable") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/orders/us/{order_id}/cancel", response_model=USOrderResponse)
+async def cancel_us_order(order_id: int) -> USOrderResponse:
+    try:
+        ib_client = IBOrderClient(
+            host=os.environ.get("IB_HOST", "127.0.0.1"),
+            port=int(os.environ.get("IB_PORT", "7497")),
+            client_id=int(os.environ.get("IB_MANUAL_ORDER_CLIENT_ID", "10")),
+        )
+        result = await ib_client.cancel_order(order_id)
+        return USOrderResponse(**result)
+    except (ConnectionRefusedError, OSError) as exc:
+        raise HTTPException(status_code=503, detail="IB TWS not reachable") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/orders/us/{order_id}/status", response_model=USOrderResponse)
+async def get_us_order_status(order_id: int) -> USOrderResponse:
+    try:
+        ib_client = IBOrderClient(
+            host=os.environ.get("IB_HOST", "127.0.0.1"),
+            port=int(os.environ.get("IB_PORT", "7497")),
+            client_id=int(os.environ.get("IB_MANUAL_ORDER_CLIENT_ID", "10")),
+        )
+        result = await ib_client.get_order_status(order_id)
+    except (ConnectionRefusedError, OSError) as exc:
+        raise HTTPException(status_code=503, detail="IB TWS not reachable") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"IB order {order_id!r} not found")
+    return USOrderResponse(**result)
 
 
 # Note: /bots/all-live-status works because all dynamic bot GET routes are

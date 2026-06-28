@@ -42,6 +42,7 @@ from forex.pricer import fx_forward, fx_curve, fx_carry
 from hyperliquid.client import get_meta_and_ctxs, get_candles, get_l2_book
 from backends.ib.client import IBClient
 from backends.kis.client import KISClient
+from backends.kis.order_client import KISOrderClient
 from kr_universe.client import search_universe, get_universe as _get_kr_universe
 from condition_engine.parser import ConditionParser
 from condition_engine.evaluator import ConditionEvaluator
@@ -2280,3 +2281,143 @@ def evaluate_spawn_rules(req: SpawnEvaluateRequest) -> SpawnEvaluateResponse:
         bar_count=len(bars),
         trigger_events=trigger_events,
     )
+
+
+# ── Orders ────────────────────────────────────────────────────────────────────
+
+class KROrderRequest(BaseModel):
+    code: str
+    side: str           # "BUY" | "SELL"
+    quantity: int
+    order_type: str     # "MARKET" | "LIMIT"
+    price: int | None = None  # required for LIMIT
+
+
+class KROrderResponse(BaseModel):
+    order_id: str
+    status: str
+    filled: float
+    remaining: float
+
+
+class KRCancelRequest(BaseModel):
+    code: str
+    quantity: int
+
+
+class BotLiveEntry(BaseModel):
+    bot_id: str
+    name: str
+    instrument_id: str
+    running: bool
+    position: str
+    qty: float
+    last_price: float | None
+    last_signal: str | None
+    error: str | None
+
+
+class AllBotsStatusResponse(BaseModel):
+    bots: list[BotLiveEntry]
+
+
+@app.post("/orders/kr", response_model=KROrderResponse)
+def place_kr_order(req: KROrderRequest) -> KROrderResponse:
+    app_key = os.environ.get("KIS_APP_KEY", "")
+    app_secret = os.environ.get("KIS_APP_SECRET", "")
+    cano = os.environ.get("KIS_CANO", "")
+    acnt_prdt_cd = os.environ.get("KIS_ACNT_PRDT_CD", "")
+    if not all([app_key, app_secret, cano, acnt_prdt_cd]):
+        raise HTTPException(status_code=503, detail="KIS credentials not configured")
+    if req.side not in ("BUY", "SELL"):
+        raise HTTPException(status_code=400, detail=f"invalid side: {req.side!r}")
+    if req.order_type not in ("MARKET", "LIMIT"):
+        raise HTTPException(status_code=400, detail=f"invalid order_type: {req.order_type!r}")
+    if req.order_type == "LIMIT" and req.price is None:
+        raise HTTPException(status_code=400, detail="price required for LIMIT order")
+    try:
+        order_client = KISOrderClient(app_key, app_secret, cano, acnt_prdt_cd)
+        result = order_client.place_order(
+            req.code, req.side, req.quantity, req.order_type, req.price
+        )
+        return KROrderResponse(**result)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/orders/kr/{order_no}/cancel", response_model=KROrderResponse)
+def cancel_kr_order(order_no: str, req: KRCancelRequest) -> KROrderResponse:
+    app_key = os.environ.get("KIS_APP_KEY", "")
+    app_secret = os.environ.get("KIS_APP_SECRET", "")
+    cano = os.environ.get("KIS_CANO", "")
+    acnt_prdt_cd = os.environ.get("KIS_ACNT_PRDT_CD", "")
+    if not all([app_key, app_secret, cano, acnt_prdt_cd]):
+        raise HTTPException(status_code=503, detail="KIS credentials not configured")
+    try:
+        order_client = KISOrderClient(app_key, app_secret, cano, acnt_prdt_cd)
+        result = order_client.cancel_order(order_no, req.code, req.quantity)
+        return KROrderResponse(**result)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/orders/kr/{order_no}/status", response_model=KROrderResponse)
+def get_kr_order_status(
+    order_no: str,
+    date: str = Query(..., description="Order date YYYYMMDD"),
+) -> KROrderResponse:
+    app_key = os.environ.get("KIS_APP_KEY", "")
+    app_secret = os.environ.get("KIS_APP_SECRET", "")
+    cano = os.environ.get("KIS_CANO", "")
+    acnt_prdt_cd = os.environ.get("KIS_ACNT_PRDT_CD", "")
+    if not all([app_key, app_secret, cano, acnt_prdt_cd]):
+        raise HTTPException(status_code=503, detail="KIS credentials not configured")
+    try:
+        order_client = KISOrderClient(app_key, app_secret, cano, acnt_prdt_cd)
+        result = order_client.get_order_status(date, order_no)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"order {order_no!r} not found for date {date!r}")
+    return KROrderResponse(**result)
+
+
+# Note: /bots/all-live-status is declared after /bots/{bot_id} DELETE route.
+# FastAPI resolves fixed path segments before dynamic path parameters, so
+# "all-live-status" will NOT be captured as a bot_id — the literal path wins.
+@app.get("/bots/all-live-status", response_model=AllBotsStatusResponse)
+def get_all_bots_live_status() -> AllBotsStatusResponse:
+    bots = _load_bots()
+    all_statuses = live_engine.get_all_statuses()
+    entries = []
+    for bot_id, bot_data in bots.items():
+        status = all_statuses.get(bot_id)
+        if status is not None:
+            entries.append(
+                BotLiveEntry(
+                    bot_id=bot_id,
+                    name=bot_data["name"],
+                    instrument_id=bot_data["instrument_id"],
+                    running=True,
+                    position=status.position,
+                    qty=status.qty,
+                    last_price=status.last_price,
+                    last_signal=status.last_signal,
+                    error=status.error,
+                )
+            )
+        else:
+            entries.append(
+                BotLiveEntry(
+                    bot_id=bot_id,
+                    name=bot_data["name"],
+                    instrument_id=bot_data["instrument_id"],
+                    running=False,
+                    position="FLAT",
+                    qty=0.0,
+                    last_price=None,
+                    last_signal=None,
+                    error=None,
+                )
+            )
+    return AllBotsStatusResponse(bots=entries)

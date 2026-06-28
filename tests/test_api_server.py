@@ -105,3 +105,45 @@ def test_correlation_single_instrument_returns_400():
         },
     )
     assert response.status_code == 400
+
+
+# ── Options endpoints ─────────────────────────────────────────────────────────
+
+def test_options_greeks_call():
+    """GET /options/greeks returns delta/gamma/theta/vega/rho/price."""
+    r = client.get("/options/greeks?option_type=call&spot=100&strike=100&expiry_days=30&rate=0.05&vol=0.2")
+    assert r.status_code == 200
+    data = r.json()
+    assert 0 < data["delta"] < 1
+    assert data["gamma"] > 0
+    assert data["price"] > 0
+
+
+def test_options_greeks_put():
+    """GET /options/greeks returns negative delta for put."""
+    r = client.get("/options/greeks?option_type=put&spot=100&strike=100&expiry_days=30&rate=0.05&vol=0.2")
+    assert r.status_code == 200
+    data = r.json()
+    assert -1 < data["delta"] < 0
+
+
+def test_options_chain_structure():
+    """GET /options/chain returns list with required keys."""
+    r = client.get("/options/chain?spot=100&expiry_days=30&rate=0.05&vol=0.2")
+    assert r.status_code == 200
+    data = r.json()
+    assert "rows" in data
+    assert len(data["rows"]) > 0
+    row = data["rows"][0]
+    assert "strike" in row and "call_price" in row and "put_price" in row
+
+
+def test_options_iv_surface_shape():
+    """GET /options/iv-surface returns 9x7 grid."""
+    r = client.get("/options/iv-surface?spot=100&rate=0.05&atm_vol=0.2")
+    assert r.status_code == 200
+    data = r.json()
+    assert len(data["strikes"]) == 9
+    assert len(data["expiry_days"]) == 7
+    assert len(data["iv_surface"]) == 9
+    assert len(data["iv_surface"][0]) == 7

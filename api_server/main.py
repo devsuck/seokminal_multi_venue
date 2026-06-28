@@ -1,6 +1,14 @@
 import datetime as dt
+import json
+import uuid
+from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+import numpy as np
+
+from dotenv import load_dotenv
+load_dotenv()
+
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
@@ -8,16 +16,33 @@ from pydantic import BaseModel
 
 from adapters.data_provider import bar_type_for
 from backtest_runner.runner import run_backtest
+from beta_analysis.beta import beta_for_pair
 from correlation_analysis.correlation import corr_matrix
+from correlation_analysis.returns import compute_returns
+from risk_analysis.metrics import compute_risk_metrics
+from risk_analysis.rolling import rolling_beta as compute_rolling_beta
+from risk_analysis.portfolio import markowitz_optimize
+from risk_analysis.timeseries import compute_timeseries
+from live_engine.engine import engine as live_engine, make_broker
+from live_engine.broker_interface import BotStatus
+from fred.client import FREDClient, SERIES_CATALOG as FRED_CATALOG
+from ecos.client import ECOSClient, SERIES_CATALOG as ECOS_CATALOG
+from corp_finance.client import CorpFinanceClient, STOCK_CRNO_MAP, parse_financials
+from monte_carlo.simulator import run_monte_carlo
+from regime_filter.detector import detect_regime
+from krx.client import KRXClient
+from sec_edgar.client import SECEdgarClient
+from ksd.client import KSDClient, isin_from_code
 
 CATALOG_PATH = "./catalog"
+BOTS_FILE = Path("./bots.json")
 
 app = FastAPI(title="Nautilus Multi-Venue Dashboard API")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -79,15 +104,33 @@ def get_bars(
     )
 
 
+class TradeRecord(BaseModel):
+    entry_ts_ns: int
+    exit_ts_ns: int | None
+    entry_price: float
+    exit_price: float | None
+    side: str
+    pnl: float | None
+    qty: float
+
+
 class BacktestResponse(BaseModel):
     sharpe_ratio: float | None
+    sortino_ratio: float | None = None
     max_drawdown: float | None
+    volatility: float | None = None
+    beta: float | None = None
     total_pnl: float | None
     total_pnl_pct: float | None
+    win_rate: float | None = None
+    profit_loss_ratio: float | None = None
+    avg_win: float | None = None
+    avg_loss: float | None = None
     bar_count: int
+    trades: list[TradeRecord] = []
 
 
-SUPPORTED_STRATEGIES = {"ema_cross"}
+SUPPORTED_STRATEGIES = {"ema_cross", "gated"}
 
 
 @app.get("/backtest", response_model=BacktestResponse)
@@ -99,6 +142,8 @@ def get_backtest(
     fast: int = Query(10),
     slow: int = Query(20),
     trade_size: int = Query(10),
+    benchmark_id: str | None = Query(None, description="베타 계산용 벤치마크 (e.g. 005930.XKRX, SPY.ARCA)"),
+    spawn_rules: str | None = Query(None, description="복합 전략용 spawn_rules JSON (strategy=gated 일 때 필수)"),
 ) -> BacktestResponse:
     if strategy not in SUPPORTED_STRATEGIES:
         raise HTTPException(
@@ -110,23 +155,31 @@ def get_backtest(
     end_ns = date_to_ns(end.isoformat())
     bar_type_str = str(bar_type_for(InstrumentId.from_str(instrument_id)))
 
-    spawn_rules_json = [
-        {
-            "condition": {"combinator": "AND", "conditions": []},
-            "strategy": {
-                "class": "backtest_runner.ema_cross_flat:EMACrossFlat",
-                "params": {
-                    "instrument_id": instrument_id,
-                    "bar_type": bar_type_str,
-                    "trade_size": trade_size,
-                    "fast_ema_period": fast,
-                    "slow_ema_period": slow,
-                    "request_bars": False,
-                    "subscribe_trade_ticks": False,
+    if strategy == "gated":
+        if not spawn_rules:
+            raise HTTPException(status_code=400, detail="spawn_rules required for gated strategy")
+        try:
+            spawn_rules_json = json.loads(spawn_rules)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=400, detail=f"invalid spawn_rules JSON: {exc}") from exc
+    else:  # ema_cross
+        spawn_rules_json = [
+            {
+                "condition": {"combinator": "AND", "conditions": []},
+                "strategy": {
+                    "class": "backtest_runner.ema_cross_flat:EMACrossFlat",
+                    "params": {
+                        "instrument_id": instrument_id,
+                        "bar_type": bar_type_str,
+                        "trade_size": trade_size,
+                        "fast_ema_period": fast,
+                        "slow_ema_period": slow,
+                        "request_bars": False,
+                        "subscribe_trade_ticks": False,
+                    },
                 },
-            },
-        }
-    ]
+            }
+        ]
 
     try:
         report = run_backtest(
@@ -140,13 +193,47 @@ def get_backtest(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    beta_val: float | None = None
+    if benchmark_id:
+        try:
+            start_ns = date_to_ns(start.isoformat())
+            end_ns = date_to_ns(end.isoformat())
+            bench_bar_str = str(bar_type_for(InstrumentId.from_str(benchmark_id)))
+            beta_result = beta_for_pair(
+                inst_id=instrument_id,
+                inst_bar_type=bar_type_str,
+                bench_id=benchmark_id,
+                bench_bar_type=bench_bar_str,
+                start_ns=start_ns,
+                end_ns=end_ns,
+                catalog_path=CATALOG_PATH,
+            )
+            beta_val = beta_result["beta"]
+        except Exception:
+            pass
+
     return BacktestResponse(
         sharpe_ratio=report["sharpe_ratio"],
+        sortino_ratio=report.get("sortino_ratio"),
         max_drawdown=report["max_drawdown"],
+        volatility=report.get("volatility"),
+        beta=beta_val,
         total_pnl=report["total_pnl"],
         total_pnl_pct=report["total_pnl_pct"],
+        win_rate=report.get("win_rate"),
+        profit_loss_ratio=report.get("profit_loss_ratio"),
+        avg_win=report.get("avg_win"),
+        avg_loss=report.get("avg_loss"),
         bar_count=report["bar_count"],
+        trades=[TradeRecord(**t) for t in report.get("trades", [])],
     )
+
+
+class BetaResponse(BaseModel):
+    instrument_id: str
+    benchmark_id: str
+    beta: float
+    correlation: float
 
 
 class CorrelationPair(BaseModel):
@@ -198,3 +285,1191 @@ def get_correlation(
         pairs.append(CorrelationPair(a=a, b=b, correlation=correlation))
 
     return CorrelationResponse(pairs=pairs)
+
+
+@app.get("/beta", response_model=BetaResponse)
+def get_beta(
+    instrument_id: str = Query(...),
+    benchmark_id: str = Query(...),
+    start: dt.date = Query(...),
+    end: dt.date = Query(...),
+) -> BetaResponse:
+    start_ns = date_to_ns(start.isoformat())
+    end_ns = date_to_ns(end.isoformat())
+
+    try:
+        result = beta_for_pair(
+            instrument_id=instrument_id,
+            benchmark_id=benchmark_id,
+            start_ns=start_ns,
+            end_ns=end_ns,
+            catalog_path=CATALOG_PATH,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return BetaResponse(
+        instrument_id=result["instrument_id"],
+        benchmark_id=result["benchmark_id"],
+        beta=result["beta"],
+        correlation=result["correlation"],
+    )
+
+
+# ── /risk ──────────────────────────────────────────────────────────────────────
+
+class RiskMetricsResponse(BaseModel):
+    instrument_id: str
+    sharpe_ratio: float | None
+    sortino_ratio: float | None
+    volatility: float | None
+    max_drawdown: float | None
+    var_95: float | None
+    calmar_ratio: float | None
+    alpha: float | None
+    r_squared: float | None
+    annualized_return: float | None
+    observation_count: int
+
+
+@app.get("/risk", response_model=RiskMetricsResponse)
+def get_risk(
+    instrument_id: str = Query(...),
+    benchmark_id: str | None = Query(None),
+    start: dt.date = Query(...),
+    end: dt.date = Query(...),
+) -> RiskMetricsResponse:
+    start_ns = date_to_ns(start.isoformat())
+    end_ns = date_to_ns(end.isoformat())
+    catalog = ParquetDataCatalog(CATALOG_PATH)
+
+    bar_type_str = str(bar_type_for(InstrumentId.from_str(instrument_id)))
+    all_bars = catalog.bars(bar_types=[bar_type_str])
+    bars = [b for b in all_bars if start_ns <= b.ts_event <= end_ns]
+    if not bars:
+        raise HTTPException(status_code=400, detail=f"no bars found for {instrument_id!r}")
+
+    inst_returns_map = compute_returns(bars)
+    inst_returns = [inst_returns_map[ts] for ts in sorted(inst_returns_map)]
+
+    bench_returns_aligned: list[float] | None = None
+    if benchmark_id:
+        bench_bar_type_str = str(bar_type_for(InstrumentId.from_str(benchmark_id)))
+        bench_all = catalog.bars(bar_types=[bench_bar_type_str])
+        bench_bars = [b for b in bench_all if start_ns <= b.ts_event <= end_ns]
+        if bench_bars:
+            bench_map = compute_returns(bench_bars)
+            common = sorted(set(inst_returns_map) & set(bench_map))
+            if len(common) >= 2:
+                inst_returns = [inst_returns_map[d] for d in common]
+                bench_returns_aligned = [bench_map[d] for d in common]
+
+    try:
+        metrics = compute_risk_metrics(inst_returns, bench_returns_aligned)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return RiskMetricsResponse(instrument_id=instrument_id, **metrics)
+
+
+# ── /rolling-beta ──────────────────────────────────────────────────────────────
+
+class RollingBetaPoint(BaseModel):
+    ts_ns: int
+    beta: float
+    correlation: float
+
+
+class RollingBetaResponse(BaseModel):
+    instrument_id: str
+    benchmark_id: str
+    window: int
+    points: list[RollingBetaPoint]
+
+
+@app.get("/rolling-beta", response_model=RollingBetaResponse)
+def get_rolling_beta(
+    instrument_id: str = Query(...),
+    benchmark_id: str = Query(...),
+    start: dt.date = Query(...),
+    end: dt.date = Query(...),
+    window: int = Query(30),
+) -> RollingBetaResponse:
+    start_ns = date_to_ns(start.isoformat())
+    end_ns = date_to_ns(end.isoformat())
+    catalog = ParquetDataCatalog(CATALOG_PATH)
+
+    def _get_returns(iid: str) -> dict[int, float]:
+        bt = str(bar_type_for(InstrumentId.from_str(iid)))
+        bars = [b for b in catalog.bars(bar_types=[bt]) if start_ns <= b.ts_event <= end_ns]
+        if not bars:
+            raise HTTPException(status_code=400, detail=f"no bars found for {iid!r}")
+        return compute_returns(bars)
+
+    try:
+        inst_map = _get_returns(instrument_id)
+        bench_map = _get_returns(benchmark_id)
+        points = compute_rolling_beta(inst_map, bench_map, window=window)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return RollingBetaResponse(
+        instrument_id=instrument_id,
+        benchmark_id=benchmark_id,
+        window=window,
+        points=[RollingBetaPoint(**p) for p in points],
+    )
+
+
+# ── /timeseries ────────────────────────────────────────────────────────────────
+
+class TimeSeriesPoint(BaseModel):
+    ts_ns: int
+    daily_return: float
+    cumulative_return: float
+    drawdown: float
+    rolling_sharpe: float | None
+    benchmark_cumulative: float | None
+
+
+class TimeSeriesResponse(BaseModel):
+    instrument_id: str
+    points: list[TimeSeriesPoint]
+
+
+@app.get("/timeseries", response_model=TimeSeriesResponse)
+def get_timeseries(
+    instrument_id: str = Query(...),
+    start: dt.date = Query(...),
+    end: dt.date = Query(...),
+    benchmark_id: str | None = Query(None),
+    rolling_window: int = Query(60),
+) -> TimeSeriesResponse:
+    start_ns = date_to_ns(start.isoformat())
+    end_ns = date_to_ns(end.isoformat())
+    catalog = ParquetDataCatalog(CATALOG_PATH)
+
+    bar_type_str = str(bar_type_for(InstrumentId.from_str(instrument_id)))
+    all_bars = catalog.bars(bar_types=[bar_type_str])
+    bars = [b for b in all_bars if start_ns <= b.ts_event <= end_ns]
+    if not bars:
+        raise HTTPException(status_code=400, detail=f"no bars for {instrument_id!r}")
+
+    inst_map = compute_returns(bars)
+
+    bench_map = None
+    if benchmark_id:
+        bench_bt = str(bar_type_for(InstrumentId.from_str(benchmark_id)))
+        bench_bars = [b for b in catalog.bars(bar_types=[bench_bt]) if start_ns <= b.ts_event <= end_ns]
+        if bench_bars:
+            bench_map = compute_returns(bench_bars)
+
+    points = compute_timeseries(inst_map, bench_map, rolling_window=rolling_window)
+    return TimeSeriesResponse(
+        instrument_id=instrument_id,
+        points=[TimeSeriesPoint(**p) for p in points],
+    )
+
+
+# ── /portfolio/optimize ────────────────────────────────────────────────────────
+
+class PortfolioWeights(BaseModel):
+    weights: dict[str, float]
+    expected_return: float
+    volatility: float
+    sharpe: float | None = None
+
+
+class FrontierPoint(BaseModel):
+    expected_return: float
+    volatility: float
+
+
+class PortfolioOptimizeResponse(BaseModel):
+    instruments: list[str]
+    min_variance: PortfolioWeights
+    max_sharpe: PortfolioWeights
+    efficient_frontier: list[FrontierPoint]
+
+
+@app.get("/portfolio/optimize", response_model=PortfolioOptimizeResponse)
+def get_portfolio_optimize(
+    instrument_ids: str = Query(...),
+    start: dt.date = Query(...),
+    end: dt.date = Query(...),
+) -> PortfolioOptimizeResponse:
+    ids = [i.strip() for i in instrument_ids.split(",")]
+    if len(ids) < 2:
+        raise HTTPException(status_code=400, detail="need at least 2 instrument_ids")
+
+    start_ns = date_to_ns(start.isoformat())
+    end_ns = date_to_ns(end.isoformat())
+    catalog = ParquetDataCatalog(CATALOG_PATH)
+
+    returns_maps: dict[str, dict[int, float]] = {}
+    for iid in ids:
+        bt = str(bar_type_for(InstrumentId.from_str(iid)))
+        bars = [b for b in catalog.bars(bar_types=[bt]) if start_ns <= b.ts_event <= end_ns]
+        if not bars:
+            raise HTTPException(status_code=400, detail=f"no bars found for {iid!r}")
+        returns_maps[iid] = compute_returns(bars)
+
+    common_dates = sorted(
+        set.intersection(*[set(m.keys()) for m in returns_maps.values()])
+    )
+    if len(common_dates) < 30:
+        raise HTTPException(
+            status_code=400,
+            detail=f"need at least 30 common dates, got {len(common_dates)}"
+        )
+
+    aligned: dict[str, list[float]] = {
+        iid: [returns_maps[iid][d] for d in common_dates] for iid in ids
+    }
+
+    try:
+        result = markowitz_optimize(aligned)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return PortfolioOptimizeResponse(
+        instruments=result["instruments"],
+        min_variance=PortfolioWeights(**result["min_variance"]),
+        max_sharpe=PortfolioWeights(**result["max_sharpe"]),
+        efficient_frontier=[FrontierPoint(**p) for p in result["efficient_frontier"]],
+    )
+
+
+# ── /bots ──────────────────────────────────────────────────────────────────────
+
+class BotConfig(BaseModel):
+    name: str
+    strategy: str = "ema_cross"
+    instrument_id: str
+    fast_ema: int = 10
+    slow_ema: int = 20
+    trade_size: int = 10
+
+
+class BotRecord(BaseModel):
+    id: str
+    name: str
+    strategy: str
+    instrument_id: str
+    fast_ema: int
+    slow_ema: int
+    trade_size: int
+    status: str  # "stopped" | "running" | "error"
+    created_at: str
+
+
+def _load_bots() -> dict[str, dict]:
+    if BOTS_FILE.exists():
+        return json.loads(BOTS_FILE.read_text())
+    return {}
+
+
+def _save_bots(bots: dict[str, dict]) -> None:
+    BOTS_FILE.write_text(json.dumps(bots, indent=2))
+
+
+@app.get("/bots", response_model=list[BotRecord])
+def list_bots() -> list[BotRecord]:
+    bots = _load_bots()
+    return [BotRecord(**v) for v in bots.values()]
+
+
+@app.post("/bots", response_model=BotRecord, status_code=201)
+def create_bot(config: BotConfig) -> BotRecord:
+    bots = _load_bots()
+    bot_id = str(uuid.uuid4())[:8]
+    record = {
+        "id": bot_id,
+        "name": config.name,
+        "strategy": config.strategy,
+        "instrument_id": config.instrument_id,
+        "fast_ema": config.fast_ema,
+        "slow_ema": config.slow_ema,
+        "trade_size": config.trade_size,
+        "status": "stopped",
+        "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+    }
+    bots[bot_id] = record
+    _save_bots(bots)
+    return BotRecord(**record)
+
+
+@app.post("/bots/{bot_id}/start", response_model=BotRecord)
+async def start_bot(bot_id: str) -> BotRecord:
+    bots = _load_bots()
+    if bot_id not in bots:
+        raise HTTPException(status_code=404, detail=f"bot {bot_id!r} not found")
+
+    if not live_engine.is_running(bot_id):
+        b = bots[bot_id]
+        try:
+            broker = make_broker(b["instrument_id"])
+            await live_engine.start(
+                bot_id=bot_id,
+                instrument_id=b["instrument_id"],
+                fast_ema=b["fast_ema"],
+                slow_ema=b["slow_ema"],
+                trade_size=b["trade_size"],
+                broker=broker,
+            )
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing env var {exc} — fill in .env file with broker credentials",
+            ) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    bots[bot_id]["status"] = "running"
+    _save_bots(bots)
+    return BotRecord(**bots[bot_id])
+
+
+@app.post("/bots/{bot_id}/stop", response_model=BotRecord)
+async def stop_bot(bot_id: str) -> BotRecord:
+    bots = _load_bots()
+    if bot_id not in bots:
+        raise HTTPException(status_code=404, detail=f"bot {bot_id!r} not found")
+
+    await live_engine.stop(bot_id)
+
+    bots[bot_id]["status"] = "stopped"
+    _save_bots(bots)
+    return BotRecord(**bots[bot_id])
+
+
+# ── Bot live status ────────────────────────────────────────────────────────────
+
+class LiveBotStatusResponse(BaseModel):
+    bot_id: str
+    running: bool
+    position: str
+    qty: float
+    last_price: float | None
+    last_signal: str | None
+    recent_orders: list[dict]
+    error: str | None
+
+
+@app.get("/bots/{bot_id}/live-status", response_model=LiveBotStatusResponse)
+def get_live_bot_status(bot_id: str) -> LiveBotStatusResponse:
+    status = live_engine.get_status(bot_id)
+    if status is None:
+        bots = _load_bots()
+        if bot_id not in bots:
+            raise HTTPException(status_code=404, detail=f"bot {bot_id!r} not found")
+        return LiveBotStatusResponse(
+            bot_id=bot_id, running=False, position="FLAT", qty=0,
+            last_price=None, last_signal=None, recent_orders=[], error=None,
+        )
+    return LiveBotStatusResponse(
+        bot_id=status.bot_id,
+        running=status.running,
+        position=status.position,
+        qty=status.qty,
+        last_price=status.last_price,
+        last_signal=status.last_signal,
+        recent_orders=[
+            {"order_id": o.order_id, "status": o.status, "filled": o.filled}
+            for o in status.orders
+        ],
+        error=status.error,
+    )
+
+
+# ── WebSocket: real-time price feed ───────────────────────────────────────────
+
+@app.websocket("/ws/bots/{bot_id}/prices")
+async def ws_bot_prices(websocket: WebSocket, bot_id: str) -> None:
+    await websocket.accept()
+    await live_engine.subscribe(bot_id, websocket)
+    try:
+        while True:
+            await websocket.receive_text()  # keep alive; data pushed by engine
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await live_engine.unsubscribe(bot_id, websocket)
+
+
+@app.delete("/bots/{bot_id}", status_code=204)
+def delete_bot(bot_id: str) -> None:
+    bots = _load_bots()
+    if bot_id not in bots:
+        raise HTTPException(status_code=404, detail=f"bot {bot_id!r} not found")
+    del bots[bot_id]
+    _save_bots(bots)
+
+
+# ── /fred ──────────────────────────────────────────────────────────────────────
+
+class FREDObservation(BaseModel):
+    date: str
+    value: float | None
+
+
+class FREDSeriesResponse(BaseModel):
+    series_id: str
+    label: str
+    unit: str
+    category: str
+    observations: list[FREDObservation]
+
+
+class FREDCatalogItem(BaseModel):
+    series_id: str
+    label: str
+    unit: str
+    category: str
+
+
+@app.get("/fred/catalog", response_model=list[FREDCatalogItem])
+def get_fred_catalog() -> list[FREDCatalogItem]:
+    return [
+        FREDCatalogItem(series_id=sid, **meta)
+        for sid, meta in FRED_CATALOG.items()
+    ]
+
+
+@app.get("/fred/series", response_model=FREDSeriesResponse)
+def get_fred_series(
+    series_id: str = Query(...),
+    start: dt.date = Query(...),
+    end: dt.date = Query(...),
+) -> FREDSeriesResponse:
+    meta = FRED_CATALOG.get(series_id, {"label": series_id, "unit": "", "category": "custom"})
+    try:
+        client = FREDClient()
+        observations = client.get_series(series_id, start.isoformat(), end.isoformat())
+    except KeyError:
+        raise HTTPException(status_code=500, detail="FRED_API_KEY not set in .env")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return FREDSeriesResponse(
+        series_id=series_id,
+        label=meta["label"],
+        unit=meta["unit"],
+        category=meta["category"],
+        observations=[FREDObservation(**o) for o in observations],
+    )
+
+
+# ── /ecos ──────────────────────────────────────────────────────────────────────
+
+class ECOSObservation(BaseModel):
+    date: str
+    value: float | None
+
+
+class ECOSSeriesResponse(BaseModel):
+    series_id: str
+    label: str
+    unit: str
+    category: str
+    observations: list[ECOSObservation]
+
+
+class ECOSCatalogItem(BaseModel):
+    series_id: str
+    label: str
+    unit: str
+    category: str
+
+
+@app.get("/ecos/catalog", response_model=list[ECOSCatalogItem])
+def get_ecos_catalog() -> list[ECOSCatalogItem]:
+    return [
+        ECOSCatalogItem(series_id=sid, label=m["label"], unit=m["unit"], category=m["category"])
+        for sid, m in ECOS_CATALOG.items()
+    ]
+
+
+@app.get("/ecos/series", response_model=ECOSSeriesResponse)
+def get_ecos_series(
+    series_id: str = Query(...),
+    start: str = Query(...),
+    end: str = Query(...),
+) -> ECOSSeriesResponse:
+    meta = ECOS_CATALOG.get(series_id)
+    if meta is None:
+        raise HTTPException(status_code=404, detail=f"Unknown ECOS series: {series_id!r}")
+    try:
+        client = ECOSClient()
+        observations = client.get_series_by_id(series_id, start, end)
+    except KeyError:
+        raise HTTPException(status_code=500, detail="ECOS_API_KEY not set in .env")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return ECOSSeriesResponse(
+        series_id=series_id,
+        label=meta["label"],
+        unit=meta["unit"],
+        category=meta["category"],
+        observations=[ECOSObservation(**o) for o in observations],
+    )
+
+
+# ── /corp-finance ──────────────────────────────────────────────────────────────
+
+class CorpFinancialYear(BaseModel):
+    biz_year: str
+    report_type: str
+    currency: str
+    sale_amt: int
+    op_profit: int
+    net_profit: int
+    total_assets: int
+    total_debt: int
+    total_equity: int
+    paid_in_capital: int
+    op_margin_pct: float | None
+    net_margin_pct: float | None
+    roe_pct: float | None
+    debt_ratio_pct: float
+
+
+class CorpFinanceSummaryResponse(BaseModel):
+    stock_code: str
+    crno: str
+    years: list[CorpFinancialYear]
+
+
+class CorpCrnoItem(BaseModel):
+    stock_code: str
+    crno: str
+
+
+@app.get("/corp-finance/crno-catalog", response_model=list[CorpCrnoItem])
+def get_crno_catalog() -> list[CorpCrnoItem]:
+    return [CorpCrnoItem(stock_code=k, crno=v) for k, v in STOCK_CRNO_MAP.items()]
+
+
+@app.get("/corp-finance/summary", response_model=CorpFinanceSummaryResponse)
+def get_corp_finance_summary(
+    stock_code: str = Query(..., description="종목코드 (예: 005930)"),
+    crno: str | None = Query(None, description="법인등록번호 (stock_code 맵에 없을 때 직접 입력)"),
+    start_year: int = Query(2020),
+    end_year: int = Query(2023),
+    fncl_dcd: str = Query("110", description="110=연결, 120=별도"),
+) -> CorpFinanceSummaryResponse:
+    resolved_crno = crno or STOCK_CRNO_MAP.get(stock_code)
+    if not resolved_crno:
+        raise HTTPException(
+            status_code=404,
+            detail=f"crno not found for {stock_code!r}. Add via STOCK_CRNO_MAP or pass crno= param.",
+        )
+    try:
+        client = CorpFinanceClient()
+    except KeyError:
+        raise HTTPException(status_code=500, detail="DATA_GO_KR_API_KEY not set in .env")
+
+    raw_items = client.get_multiyear(resolved_crno, start_year, end_year, fncl_dcd)
+    if not raw_items:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No financial data for crno={resolved_crno} ({start_year}~{end_year})",
+        )
+
+    return CorpFinanceSummaryResponse(
+        stock_code=stock_code,
+        crno=resolved_crno,
+        years=[CorpFinancialYear(**parse_financials(item)) for item in raw_items],
+    )
+
+
+# ── /monte-carlo ──────────────────────────────────────────────────────────────
+
+class MCPaths(BaseModel):
+    p5: list[float]
+    p25: list[float]
+    p50: list[float]
+    p75: list[float]
+    p95: list[float]
+
+
+class MonteCarloResponse(BaseModel):
+    instrument_id: str
+    n_simulations: int
+    horizon_days: int
+    day_indices: list[int]
+    paths: MCPaths
+    terminal_mean: float
+    terminal_median: float
+    terminal_p5: float
+    terminal_p95: float
+    prob_profit: float
+    prob_loss_20pct: float
+    ann_return_mean: float
+    ann_return_p5: float
+    ann_return_p95: float
+    max_dd_mean: float
+    max_dd_p95: float
+
+
+@app.get("/monte-carlo", response_model=MonteCarloResponse)
+def get_monte_carlo(
+    instrument_id: str = Query(...),
+    start: dt.date = Query(...),
+    end: dt.date = Query(...),
+    horizon_days: int = Query(252, ge=20, le=1260),
+    n_simulations: int = Query(1000, ge=100, le=5000),
+    benchmark_id: str | None = Query(None),
+) -> MonteCarloResponse:
+    start_ns = date_to_ns(start.isoformat())
+    end_ns = date_to_ns(end.isoformat())
+    catalog = ParquetDataCatalog(CATALOG_PATH)
+    bar_type_str = str(bar_type_for(InstrumentId.from_str(instrument_id)))
+    all_bars = catalog.bars(bar_types=[bar_type_str])
+    bars = sorted([b for b in all_bars if start_ns <= b.ts_event <= end_ns], key=lambda b: b.ts_event)
+    if len(bars) < 11:
+        raise HTTPException(status_code=400, detail=f"need >=11 bars, got {len(bars)}")
+
+    returns = []
+    for i in range(1, len(bars)):
+        prev = float(bars[i - 1].close)
+        curr = float(bars[i].close)
+        if prev > 0:
+            returns.append((curr - prev) / prev)
+
+    try:
+        result = run_monte_carlo(returns, horizon_days=horizon_days, n_simulations=n_simulations)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return MonteCarloResponse(
+        instrument_id=instrument_id,
+        n_simulations=result["n_simulations"],
+        horizon_days=result["horizon_days"],
+        day_indices=result["day_indices"],
+        paths=MCPaths(**result["paths"]),
+        terminal_mean=result["terminal_mean"],
+        terminal_median=result["terminal_median"],
+        terminal_p5=result["terminal_p5"],
+        terminal_p95=result["terminal_p95"],
+        prob_profit=result["prob_profit"],
+        prob_loss_20pct=result["prob_loss_20pct"],
+        ann_return_mean=result["ann_return_mean"],
+        ann_return_p5=result["ann_return_p5"],
+        ann_return_p95=result["ann_return_p95"],
+        max_dd_mean=result["max_dd_mean"],
+        max_dd_p95=result["max_dd_p95"],
+    )
+
+
+# ── /regime ────────────────────────────────────────────────────────────────────
+
+class RegimePoint(BaseModel):
+    date_index: int
+    vol: float
+    sma: float
+    price: float
+    regime: str
+
+
+class RegimeResponse(BaseModel):
+    instrument_id: str
+    current_regime: str
+    current_vol: float | None
+    current_sma: float | None
+    vol_threshold: float
+    sma_period: int
+    vol_period: int
+    regime_distribution: dict[str, float]
+    regimes: list[RegimePoint]
+
+
+@app.get("/regime", response_model=RegimeResponse)
+def get_regime(
+    instrument_id: str = Query(...),
+    start: dt.date = Query(...),
+    end: dt.date = Query(...),
+    sma_period: int = Query(50, ge=5, le=200),
+    vol_period: int = Query(20, ge=5, le=60),
+    vol_threshold: float | None = Query(None),
+) -> RegimeResponse:
+    start_ns = date_to_ns(start.isoformat())
+    end_ns = date_to_ns(end.isoformat())
+    catalog = ParquetDataCatalog(CATALOG_PATH)
+    bar_type_str = str(bar_type_for(InstrumentId.from_str(instrument_id)))
+    all_bars = catalog.bars(bar_types=[bar_type_str])
+    bars = sorted([b for b in all_bars if start_ns <= b.ts_event <= end_ns], key=lambda b: b.ts_event)
+    if len(bars) < sma_period + 2:
+        raise HTTPException(status_code=400, detail=f"need >={sma_period + 2} bars, got {len(bars)}")
+
+    closes = [float(b.close) for b in bars]
+    try:
+        result = detect_regime(closes, sma_period=sma_period, vol_period=vol_period, vol_threshold=vol_threshold)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return RegimeResponse(
+        instrument_id=instrument_id,
+        current_regime=result["current_regime"],
+        current_vol=result["current_vol"],
+        current_sma=result["current_sma"],
+        vol_threshold=result["vol_threshold"],
+        sma_period=result["sma_period"],
+        vol_period=result["vol_period"],
+        regime_distribution=result["regime_distribution"],
+        regimes=[RegimePoint(**r) for r in result["regimes"]],
+    )
+
+
+# ── /krx ───────────────────────────────────────────────────────────────────────
+
+class KRXIndexRow(BaseModel):
+    bas_dd: str
+    idx_nm: str | None = None
+    clpr: float | None = None
+    vs: float | None = None
+    flt_rt: float | None = None
+    opn_prc: float | None = None
+    hgpr: float | None = None
+    lwpr: float | None = None
+    acc_trdvol: float | None = None
+    raw: dict
+
+
+class KRXIndexResponse(BaseModel):
+    bas_dd: str
+    index_type: str
+    rows: list[KRXIndexRow]
+
+
+@app.get("/krx/index", response_model=KRXIndexResponse)
+def get_krx_index(
+    bas_dd: str = Query(..., description="기준일 YYYYMMDD"),
+    index_type: str = Query("KOSPI", description="KRX | KOSPI | KOSDAQ"),
+) -> KRXIndexResponse:
+    import os
+    key = os.environ.get("KRX_API_KEY")
+    if not key:
+        raise HTTPException(status_code=500, detail="KRX_API_KEY not set in .env")
+    try:
+        client = KRXClient(api_key=key)
+        rows_raw = client.get_index_daily(bas_dd, index_type)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    rows = []
+    for r in rows_raw:
+        def _f(k: str) -> float | None:
+            try: return float(str(r.get(k, "")).replace(",", ""))
+            except (TypeError, ValueError): return None
+        rows.append(KRXIndexRow(
+            bas_dd=r.get("basDd", bas_dd),
+            idx_nm=r.get("idxNm") or r.get("idx_nm"),
+            clpr=_f("clpr") or _f("cls_prc"),
+            vs=_f("vs"),
+            flt_rt=_f("fltRt") or _f("flt_rt"),
+            opn_prc=_f("opnPrc") or _f("opn_prc"),
+            hgpr=_f("hgpr"),
+            lwpr=_f("lwpr"),
+            acc_trdvol=_f("accTrdvol") or _f("acc_trdvol"),
+            raw=r,
+        ))
+    return KRXIndexResponse(bas_dd=bas_dd, index_type=index_type, rows=rows)
+
+
+class KRXStockBaseRow(BaseModel):
+    isu_cd: str | None = None
+    isu_nm: str | None = None
+    mkt_nm: str | None = None
+    mktcap: float | None = None
+    list_shrs: float | None = None
+    raw: dict
+
+
+class KRXStockBaseResponse(BaseModel):
+    market: str
+    rows: list[KRXStockBaseRow]
+
+
+@app.get("/krx/stock-base", response_model=KRXStockBaseResponse)
+def get_krx_stock_base(
+    market: str = Query("KOSPI", description="KOSPI | KOSDAQ"),
+) -> KRXStockBaseResponse:
+    import os
+    key = os.environ.get("KRX_API_KEY")
+    if not key:
+        raise HTTPException(status_code=500, detail="KRX_API_KEY not set in .env")
+    try:
+        client = KRXClient(api_key=key)
+        rows_raw = client.get_stock_base_info(market)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    rows = []
+    for r in rows_raw:
+        def _f(k: str) -> float | None:
+            try: return float(str(r.get(k, "")).replace(",", ""))
+            except (TypeError, ValueError): return None
+        rows.append(KRXStockBaseRow(
+            isu_cd=r.get("isuCd") or r.get("isu_cd"),
+            isu_nm=r.get("isuNm") or r.get("isu_nm"),
+            mkt_nm=r.get("mktNm") or r.get("mkt_nm"),
+            mktcap=_f("mktcap") or _f("mkt_cap"),
+            list_shrs=_f("listShrs") or _f("list_shrs"),
+            raw=r,
+        ))
+    return KRXStockBaseResponse(market=market, rows=rows)
+
+
+# ── /edgar ─────────────────────────────────────────────────────────────────────
+
+class EdgarAnnualRow(BaseModel):
+    year: int
+    revenue: float | None
+    gross_profit: float | None
+    op_income: float | None
+    net_income: float | None
+    total_assets: float | None
+    equity: float | None
+    long_term_debt: float | None
+    eps_diluted: float | None
+    op_margin_pct: float | None
+    net_margin_pct: float | None
+    roe_pct: float | None
+
+
+class EdgarSummaryResponse(BaseModel):
+    ticker: str
+    cik: str
+    rows: list[EdgarAnnualRow]
+
+
+@app.get("/edgar/summary", response_model=EdgarSummaryResponse)
+def get_edgar_summary(
+    ticker: str = Query(..., description="US ticker (예: AAPL)"),
+    start_year: int = Query(2019),
+    end_year: int = Query(2024),
+) -> EdgarSummaryResponse:
+    try:
+        client = SECEdgarClient()
+        cik = client.get_cik(ticker.upper())
+        rows_raw = client.get_annual_summary(ticker.upper(), start_year, end_year)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return EdgarSummaryResponse(
+        ticker=ticker.upper(),
+        cik=cik,
+        rows=[EdgarAnnualRow(**r) for r in rows_raw],
+    )
+
+
+class EdgarConceptRow(BaseModel):
+    end: str
+    val: float
+    form: str | None
+    filed: str | None
+    unit: str
+
+
+class EdgarConceptResponse(BaseModel):
+    ticker: str
+    cik: str
+    concept: str
+    rows: list[EdgarConceptRow]
+
+
+@app.get("/edgar/concept", response_model=EdgarConceptResponse)
+def get_edgar_concept(
+    ticker: str = Query(...),
+    concept: str = Query(..., description="XBRL concept (예: Revenues, NetIncomeLoss)"),
+    annual_only: bool = Query(True),
+) -> EdgarConceptResponse:
+    try:
+        client = SECEdgarClient()
+        cik = client.get_cik(ticker.upper())
+        rows_raw = client.get_concept(cik, concept, annual_only=annual_only)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return EdgarConceptResponse(
+        ticker=ticker.upper(),
+        cik=cik,
+        concept=concept,
+        rows=[EdgarConceptRow(**r) for r in rows_raw],
+    )
+
+
+# ── /ksd ───────────────────────────────────────────────────────────────────────
+
+def _ksd_client() -> KSDClient:
+    try:
+        return KSDClient()
+    except KeyError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class KSDDividendRow(BaseModel):
+    raw: dict
+    isin_cd: str | None = None
+    isin_cd_nm: str | None = None
+    dvdn_bas_dt: str | None = None        # 배당기준일
+    cash_dvdn_pay_dt: str | None = None   # 현금배당지급일
+    stck_genr_dvdn_amt: str | None = None # 주당배당금
+    stck_genr_cash_dvdn_rt: str | None = None  # 현금배당률
+    stck_dvdn_rcd: str | None = None      # 배당사유코드
+    stck_dvdn_rcd_nm: str | None = None   # 배당사유명
+    scrs_itms_kcd_nm: str | None = None   # 주식종류(보통주/우선주)
+
+
+class KSDDividendResponse(BaseModel):
+    isin_cd: str
+    rows: list[KSDDividendRow]
+
+
+@app.get("/ksd/dividend", response_model=KSDDividendResponse)
+def get_ksd_dividend(
+    stock_code: str = Query(..., description="종목코드 (6자리) 또는 ISIN (12자리)"),
+    begin_dt: str | None = Query(None, description="시작일 YYYYMMDD"),
+    end_dt: str | None = Query(None, description="종료일 YYYYMMDD"),
+) -> KSDDividendResponse:
+    isin = isin_from_code(stock_code)
+    try:
+        rows_raw = _ksd_client().get_dividend(isin_cd=isin, begin_dt=begin_dt, end_dt=end_dt)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    def _row(r: dict) -> KSDDividendRow:
+        return KSDDividendRow(
+            raw=r,
+            isin_cd=r.get("isinCd"),
+            isin_cd_nm=r.get("isinCdNm"),
+            dvdn_bas_dt=r.get("dvdnBasDt"),
+            cash_dvdn_pay_dt=r.get("cashDvdnPayDt"),
+            stck_genr_dvdn_amt=r.get("stckGenrDvdnAmt"),
+            stck_genr_cash_dvdn_rt=r.get("stckGenrCashDvdnRt"),
+            stck_dvdn_rcd=r.get("stckDvdnRcd"),
+            stck_dvdn_rcd_nm=r.get("stckDvdnRcdNm"),
+            scrs_itms_kcd_nm=r.get("scrsItmsKcdNm"),
+        )
+    return KSDDividendResponse(isin_cd=isin, rows=[_row(r) for r in rows_raw])
+
+
+class KSDBorrowRow(BaseModel):
+    raw: dict
+    rank: int | None = None
+    isin_cd: str | None = None
+    isin_cd_nm: str | None = None
+    bas_dt: str | None = None
+    lnb_ccl_stck_cnt: str | None = None   # 대차체결주식수
+    lnb_rman_stck_cnt: str | None = None  # 대차잔여주식수
+    lnb_bal: str | None = None            # 대차잔액
+
+
+class KSDBorrowResponse(BaseModel):
+    bas_dt: str
+    rows: list[KSDBorrowRow]
+
+
+@app.get("/ksd/borrow-rank", response_model=KSDBorrowResponse)
+def get_ksd_borrow_rank(
+    bas_dt: str = Query(..., description="기준일 YYYYMMDD"),
+    top_n: int = Query(30, ge=1, le=100),
+) -> KSDBorrowResponse:
+    try:
+        rows_raw = _ksd_client().get_borrowing_rank(bas_dt, top_n)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return KSDBorrowResponse(
+        bas_dt=bas_dt,
+        rows=[KSDBorrowRow(
+            raw=r, rank=i + 1,
+            isin_cd=r.get("isinCd"), isin_cd_nm=r.get("isinCdNm"),
+            bas_dt=r.get("basDt"),
+            lnb_ccl_stck_cnt=r.get("lnbCclStckCnt"),
+            lnb_rman_stck_cnt=r.get("lnbRmanStckCnt"),
+            lnb_bal=r.get("lnbBal"),
+        ) for i, r in enumerate(rows_raw)],
+    )
+
+
+class KSDRightsRow(BaseModel):
+    raw: dict
+    bas_dt: str | None = None
+    crno: str | None = None
+    stck_issu_cmpy_nm: str | None = None   # 주식발행회사명
+    stck_issu_rcd_nm: str | None = None    # 발행사유명
+    rgt_exert_rcd: str | None = None       # 권리행사사유코드
+    rgt_exert_rcd_nm: str | None = None    # 권리행사사유명
+    rgt_exert_sttg_dt: str | None = None   # 권리행사 시작일
+    rgt_exert_ed_dt: str | None = None     # 권리행사 종료일
+    nmls_lck_sttg_dt: str | None = None    # 명부폐쇄 시작일
+    nmls_lck_ed_dt: str | None = None      # 명부폐쇄 종료일
+
+
+class KSDRightsResponse(BaseModel):
+    rows: list[KSDRightsRow]
+
+
+@app.get("/ksd/rights-schedule", response_model=KSDRightsResponse)
+def get_ksd_rights_schedule(
+    bas_dt: str | None = Query(None, description="기준일 YYYYMMDD"),
+    begin_dt: str | None = Query(None, description="시작일 YYYYMMDD"),
+    end_dt: str | None = Query(None, description="종료일 YYYYMMDD"),
+    crno: str | None = Query(None, description="법인등록번호"),
+) -> KSDRightsResponse:
+    try:
+        rows_raw = _ksd_client().get_rights_schedule(
+            bas_dt=bas_dt, begin_dt=begin_dt, end_dt=end_dt, crno=crno
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return KSDRightsResponse(rows=[
+        KSDRightsRow(
+            raw=r,
+            bas_dt=r.get("basDt"),
+            crno=r.get("crno"),
+            stck_issu_cmpy_nm=r.get("stckIssuCmpyNm"),
+            stck_issu_rcd_nm=r.get("stckIssuRcdNm"),
+            rgt_exert_rcd=r.get("rgtExertRcd"),
+            rgt_exert_rcd_nm=r.get("rgtExertRcdNm"),
+            rgt_exert_sttg_dt=r.get("rgtExertSttgDt"),
+            rgt_exert_ed_dt=r.get("rgtExertEdDt"),
+            nmls_lck_sttg_dt=r.get("nmlsLckSttgDt"),
+            nmls_lck_ed_dt=r.get("nmlsLckEdDt"),
+        )
+        for r in rows_raw
+    ])
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Options Analytics
+# ═══════════════════════════════════════════════════════════════════════════════
+
+from options.pricer import bs_price, bs_greeks, implied_vol, bs_chain, bs_iv_surface
+
+
+class OptionsGreeksResponse(BaseModel):
+    option_type: str
+    spot: float
+    strike: float
+    expiry_days: int
+    rate: float
+    vol: float
+    price: float
+    intrinsic_value: float
+    time_value: float
+    delta: float
+    gamma: float
+    theta: float
+    vega: float
+    rho: float
+
+
+class OptionsChainRow(BaseModel):
+    strike: float
+    call_price: float
+    call_delta: float
+    call_gamma: float
+    call_theta: float
+    call_vega: float
+    put_price: float
+    put_delta: float
+    put_gamma: float
+    put_theta: float
+    put_vega: float
+
+
+class OptionsChainResponse(BaseModel):
+    spot: float
+    expiry_days: int
+    rate: float
+    vol: float
+    rows: list[OptionsChainRow]
+
+
+class OptionsIvSurfaceResponse(BaseModel):
+    spot: float
+    rate: float
+    atm_vol: float
+    strikes: list[float]
+    expiry_days: list[int]
+    iv_surface: list[list[float]]
+
+
+@app.get("/options/greeks", response_model=OptionsGreeksResponse)
+def get_options_greeks(
+    option_type: str = Query(..., description="call or put"),
+    spot: float = Query(..., gt=0),
+    strike: float = Query(..., gt=0),
+    expiry_days: int = Query(..., ge=0),
+    rate: float = Query(0.05),
+    vol: float = Query(..., gt=0),
+) -> OptionsGreeksResponse:
+    if option_type not in ("call", "put"):
+        raise HTTPException(status_code=400, detail="option_type must be 'call' or 'put'")
+    T = expiry_days / 365.0
+    price = bs_price(spot, strike, T, rate, vol, option_type)
+    greeks = bs_greeks(spot, strike, T, rate, vol, option_type)
+    intrinsic = max(0.0, spot - strike) if option_type == "call" else max(0.0, strike - spot)
+    return OptionsGreeksResponse(
+        option_type=option_type,
+        spot=spot,
+        strike=strike,
+        expiry_days=expiry_days,
+        rate=rate,
+        vol=vol,
+        price=round(price, 4),
+        intrinsic_value=round(intrinsic, 4),
+        time_value=round(price - intrinsic, 4),
+        **{k: round(v, 6) for k, v in greeks.items()},
+    )
+
+
+@app.get("/options/chain", response_model=OptionsChainResponse)
+def get_options_chain(
+    spot: float = Query(..., gt=0),
+    expiry_days: int = Query(..., ge=1),
+    rate: float = Query(0.05),
+    vol: float = Query(..., gt=0),
+    strikes: str | None = Query(None, description="Comma-separated strikes. Default: 9 strikes ±20% of spot."),
+) -> OptionsChainResponse:
+    if strikes:
+        try:
+            ks = [float(s.strip()) for s in strikes.split(",") if s.strip()]
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid strikes format") from exc
+    else:
+        ks = [round(spot * m, 2) for m in np.linspace(0.80, 1.20, 9)]
+    rows = bs_chain(spot, expiry_days, rate, vol, ks)
+    return OptionsChainResponse(
+        spot=spot,
+        expiry_days=expiry_days,
+        rate=rate,
+        vol=vol,
+        rows=[OptionsChainRow(**r) for r in rows],
+    )
+
+
+@app.get("/options/iv-surface", response_model=OptionsIvSurfaceResponse)
+def get_options_iv_surface(
+    spot: float = Query(..., gt=0),
+    rate: float = Query(0.05),
+    atm_vol: float = Query(..., gt=0),
+    skew: float = Query(0.1),
+    smile: float = Query(0.3),
+) -> OptionsIvSurfaceResponse:
+    result = bs_iv_surface(spot, rate, atm_vol, skew, smile)
+    return OptionsIvSurfaceResponse(
+        spot=spot,
+        rate=rate,
+        atm_vol=atm_vol,
+        **result,
+    )

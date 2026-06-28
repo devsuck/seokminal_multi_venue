@@ -2,7 +2,7 @@
 from collections.abc import AsyncIterator
 
 from ib_async import IB
-from ib_async.contract import Stock
+from ib_async.contract import Crypto, Forex, Future, Option, Stock
 from ib_async.objects import BarData, TickByTickAllLast
 
 TICK_TYPE = "AllLast"
@@ -50,5 +50,100 @@ class IBClient:
                 f"no historical daily bars returned for {symbol} "
                 f"(end_date={end_date!r}, duration={duration!r}) -- "
                 "check IB market data permissions"
+            )
+        return bars
+
+    async def get_daily_bars_forex(self, pair: str, end_date: str, duration: str) -> list[BarData]:
+        await self._ib.connectAsync(self._host, self._port, self._client_id)
+        contract = Forex(pair)
+        await self._ib.qualifyContractsAsync(contract)
+        bars = await self._ib.reqHistoricalDataAsync(
+            contract,
+            endDateTime=end_date,
+            durationStr=duration,
+            barSizeSetting=DAILY_BAR_SIZE,
+            whatToShow="MIDPOINT",
+            useRTH=True,
+        )
+        if not bars:
+            raise ValueError(
+                f"no historical daily bars returned for {pair!r} forex pair -- "
+                "check IB market data permissions"
+            )
+        return bars
+
+    async def get_daily_bars_future(
+        self, symbol: str, exchange: str, expiry: str, end_date: str, duration: str
+    ) -> list[BarData]:
+        await self._ib.connectAsync(self._host, self._port, self._client_id)
+        contract = Future(symbol, expiry, exchange)
+        await self._ib.qualifyContractsAsync(contract)
+        bars = await self._ib.reqHistoricalDataAsync(
+            contract,
+            endDateTime=end_date,
+            durationStr=duration,
+            barSizeSetting=DAILY_BAR_SIZE,
+            whatToShow=DAILY_WHAT_TO_SHOW,
+            useRTH=True,
+        )
+        if not bars:
+            raise ValueError(
+                f"no historical daily bars returned for {symbol!r} future "
+                f"(exchange={exchange!r}, expiry={expiry!r}) -- "
+                "check IB market data permissions"
+            )
+        return bars
+
+    async def get_daily_bars_option(
+        self,
+        symbol: str,
+        expiry: str,
+        strike: float,
+        right: str,
+        end_date: str,
+        duration: str,
+    ) -> list[BarData]:
+        await self._ib.connectAsync(self._host, self._port, self._client_id)
+        contract = Option(
+            symbol=symbol,
+            lastTradeDateOrContractMonth=expiry,
+            strike=strike,
+            right=right,
+            exchange="SMART",
+            currency="USD",
+        )
+        await self._ib.qualifyContractsAsync(contract)
+        bars = await self._ib.reqHistoricalDataAsync(
+            contract,
+            endDateTime=end_date,
+            durationStr=duration,
+            barSizeSetting=DAILY_BAR_SIZE,
+            whatToShow=DAILY_WHAT_TO_SHOW,
+            useRTH=True,
+        )
+        if not bars:
+            raise ValueError(
+                f"no historical daily bars returned for {symbol!r} {right} option "
+                f"(expiry={expiry!r}, strike={strike}) -- "
+                "check IB market data permissions"
+            )
+        return bars
+
+    async def get_daily_bars_crypto(self, symbol: str, end_date: str, duration: str) -> list[BarData]:
+        await self._ib.connectAsync(self._host, self._port, self._client_id)
+        contract = Crypto(symbol=symbol, exchange="PAXOS", currency="USD")
+        await self._ib.qualifyContractsAsync(contract)
+        bars = await self._ib.reqHistoricalDataAsync(
+            contract,
+            endDateTime=end_date,
+            durationStr=duration,
+            barSizeSetting=DAILY_BAR_SIZE,
+            whatToShow=DAILY_WHAT_TO_SHOW,
+            useRTH=False,
+        )
+        if not bars:
+            raise ValueError(
+                f"no historical daily bars returned for {symbol!r} crypto -- "
+                "check IB market data permissions (BTC/ETH/LTC/BCH/XRP/SOL supported via PAXOS)"
             )
         return bars

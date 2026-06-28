@@ -108,3 +108,80 @@ async def test_get_daily_bars_raises_value_error_on_empty_response():
 
     with pytest.raises(ValueError, match="AAPL"):
         await client.get_daily_bars("AAPL", end_date="", duration="1 Y")
+
+
+# ── New contract type tests ───────────────────────────────────────────────────
+
+async def test_get_daily_bars_forex_returns_bars():
+    bar = BarData(date=dt.date(2025, 1, 2), open=1.09, high=1.095, low=1.088, close=1.092, volume=0.0)
+    fake_ib = FakeIB(historical_bars=[bar])
+    client = IBClient(ib=fake_ib)
+    bars = await client.get_daily_bars_forex("EURUSD", end_date="", duration="1 Y")
+    assert bars == [bar]
+    assert fake_ib.qualify_calls == [("EUR", "IDEALPRO", "USD")]
+
+
+async def test_get_daily_bars_forex_raises_on_empty():
+    fake_ib = FakeIB(historical_bars=[])
+    client = IBClient(ib=fake_ib)
+    with pytest.raises(ValueError, match="EURUSD"):
+        await client.get_daily_bars_forex("EURUSD", end_date="", duration="1 Y")
+
+
+async def test_get_daily_bars_forex_uses_midpoint():
+    bar = BarData(date=dt.date(2025, 1, 2), open=1.09, high=1.095, low=1.088, close=1.092, volume=0.0)
+    fake_ib = FakeIB(historical_bars=[bar])
+    client = IBClient(ib=fake_ib)
+    await client.get_daily_bars_forex("EURUSD", end_date="", duration="1 Y")
+    # historical_calls tuple index 6 is whatToShow
+    assert fake_ib.historical_calls[0][6] == "MIDPOINT"
+
+
+async def test_get_daily_bars_future_returns_bars():
+    bar = BarData(date=dt.date(2025, 1, 2), open=5900.0, high=5920.0, low=5880.0, close=5910.0, volume=12345.0)
+    fake_ib = FakeIB(historical_bars=[bar])
+    client = IBClient(ib=fake_ib)
+    bars = await client.get_daily_bars_future("ES", "CME", "202509", end_date="", duration="1 Y")
+    assert bars == [bar]
+    assert fake_ib.qualify_calls == [("ES", "CME", "")]
+
+
+async def test_get_daily_bars_future_raises_on_empty():
+    fake_ib = FakeIB(historical_bars=[])
+    client = IBClient(ib=fake_ib)
+    with pytest.raises(ValueError, match="ES"):
+        await client.get_daily_bars_future("ES", "CME", "202509", end_date="", duration="1 Y")
+
+
+async def test_get_daily_bars_option_returns_bars():
+    bar = BarData(date=dt.date(2025, 1, 2), open=5.5, high=6.0, low=5.0, close=5.8, volume=500.0)
+    fake_ib = FakeIB(historical_bars=[bar])
+    client = IBClient(ib=fake_ib)
+    bars = await client.get_daily_bars_option("SPY", "20251219", 500.0, "C", end_date="", duration="90 D")
+    assert bars == [bar]
+    assert fake_ib.qualify_calls == [("SPY", "SMART", "USD")]
+
+
+async def test_get_daily_bars_option_raises_on_empty():
+    fake_ib = FakeIB(historical_bars=[])
+    client = IBClient(ib=fake_ib)
+    with pytest.raises(ValueError, match="SPY"):
+        await client.get_daily_bars_option("SPY", "20251219", 500.0, "C", end_date="", duration="90 D")
+
+
+async def test_get_daily_bars_crypto_returns_bars():
+    bar = BarData(date=dt.date(2025, 1, 2), open=94000.0, high=95500.0, low=93000.0, close=95000.0, volume=1234.5)
+    fake_ib = FakeIB(historical_bars=[bar])
+    client = IBClient(ib=fake_ib)
+    bars = await client.get_daily_bars_crypto("BTC", end_date="", duration="1 Y")
+    assert bars == [bar]
+    assert fake_ib.qualify_calls == [("BTC", "PAXOS", "USD")]
+
+
+async def test_get_daily_bars_crypto_uses_rth_false():
+    bar = BarData(date=dt.date(2025, 1, 2), open=94000.0, high=95500.0, low=93000.0, close=95000.0, volume=1234.5)
+    fake_ib = FakeIB(historical_bars=[bar])
+    client = IBClient(ib=fake_ib)
+    await client.get_daily_bars_crypto("BTC", end_date="", duration="1 Y")
+    # historical_calls tuple index 7 is useRTH
+    assert fake_ib.historical_calls[0][7] is False

@@ -2288,6 +2288,18 @@ def evaluate_spawn_rules(req: SpawnEvaluateRequest) -> SpawnEvaluateResponse:
 
 # ── Orders ────────────────────────────────────────────────────────────────────
 
+
+def _compute_unrealized_pnl(
+    position: str,
+    qty: float,
+    last_price: float | None,
+    entry_price: float | None,
+) -> float | None:
+    if entry_price is None or last_price is None or position == "FLAT":
+        return None
+    return (last_price - entry_price) * qty * (1.0 if position == "LONG" else -1.0)
+
+
 class KROrderRequest(BaseModel):
     code: str
     side: str           # "BUY" | "SELL"
@@ -2333,6 +2345,8 @@ class BotLiveEntry(BaseModel):
     last_price: float | None
     last_signal: str | None
     error: str | None
+    entry_price: float | None = None
+    unrealized_pnl: float | None = None
 
 
 class AllBotsStatusResponse(BaseModel):
@@ -2478,6 +2492,9 @@ def get_all_bots_live_status() -> AllBotsStatusResponse:
     for bot_id, bot_data in bots.items():
         status = all_statuses.get(bot_id)
         if status is not None:
+            pnl = _compute_unrealized_pnl(
+                status.position, status.qty, status.last_price, status.entry_price
+            )
             entries.append(
                 BotLiveEntry(
                     bot_id=bot_id,
@@ -2489,6 +2506,8 @@ def get_all_bots_live_status() -> AllBotsStatusResponse:
                     last_price=status.last_price,
                     last_signal=status.last_signal,
                     error=status.error,
+                    entry_price=status.entry_price,
+                    unrealized_pnl=pnl,
                 )
             )
         else:
@@ -2503,6 +2522,8 @@ def get_all_bots_live_status() -> AllBotsStatusResponse:
                     last_price=None,
                     last_signal=None,
                     error=None,
+                    entry_price=None,
+                    unrealized_pnl=None,
                 )
             )
     return AllBotsStatusResponse(bots=entries)

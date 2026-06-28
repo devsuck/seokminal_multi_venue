@@ -293,3 +293,63 @@ def test_crypto_book_structure(mock_book):
     assert "bids" in data and "asks" in data and "mid_price" in data and "spread" in data
     assert data["bids"][0]["price"] == pytest.approx(94490.0)
     assert data["asks"][0]["price"] == pytest.approx(94510.0)
+
+
+# ── IB bars endpoint ─────────────────────────────────────────────────────────
+
+from unittest.mock import AsyncMock, MagicMock
+
+
+def _make_mock_ib_bar(date_str="20250102"):
+    bar = MagicMock()
+    bar.date = date_str
+    bar.open = 150.0
+    bar.high = 155.0
+    bar.low = 148.0
+    bar.close = 152.0
+    bar.volume = 1_000_000.0
+    return bar
+
+
+@patch("api_server.main.IBClient")
+def test_ib_bars_stock_structure(mock_cls):
+    inst = MagicMock()
+    inst.get_daily_bars = AsyncMock(return_value=[_make_mock_ib_bar()])
+    inst._ib.isConnected.return_value = False
+    mock_cls.return_value = inst
+    r = client.get("/ib/bars?symbol=AAPL&asset_type=stock")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["symbol"] == "AAPL.STOCK"
+    assert data["asset_type"] == "stock"
+    assert data["count"] == 1
+    bar = data["bars"][0]
+    assert "ts_ms" in bar and "open" in bar and "close" in bar
+
+
+@patch("api_server.main.IBClient")
+def test_ib_bars_forex_structure(mock_cls):
+    inst = MagicMock()
+    inst.get_daily_bars_forex = AsyncMock(return_value=[_make_mock_ib_bar()])
+    inst._ib.isConnected.return_value = False
+    mock_cls.return_value = inst
+    r = client.get("/ib/bars?symbol=EURUSD&asset_type=forex")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["symbol"] == "EURUSD.FOREX"
+    assert data["asset_type"] == "forex"
+
+
+def test_ib_bars_invalid_asset_type_returns_422():
+    r = client.get("/ib/bars?symbol=AAPL&asset_type=bond")
+    assert r.status_code == 422
+
+
+@patch("api_server.main.IBClient")
+def test_ib_bars_ib_error_returns_400(mock_cls):
+    inst = MagicMock()
+    inst.get_daily_bars = AsyncMock(side_effect=ValueError("no bars returned for FAKE"))
+    inst._ib.isConnected.return_value = False
+    mock_cls.return_value = inst
+    r = client.get("/ib/bars?symbol=FAKE&asset_type=stock")
+    assert r.status_code == 400

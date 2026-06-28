@@ -38,6 +38,7 @@ from options.pricer import bs_price, bs_greeks, implied_vol, bs_chain, bs_iv_sur
 from futures.pricer import futures_price, futures_calendar, futures_roll
 from forex.pricer import fx_forward, fx_curve, fx_carry
 from hyperliquid.client import get_meta_and_ctxs, get_candles, get_l2_book
+from backends.ib.client import IBClient
 
 CATALOG_PATH = "./catalog"
 BOTS_FILE = Path("./bots.json")
@@ -1813,3 +1814,88 @@ def get_crypto_book(
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# IB Market Data
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class IBBarOut(BaseModel):
+    ts_ms: int
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+
+
+class IBBarsResponse(BaseModel):
+    symbol: str
+    asset_type: str
+    bars: list[IBBarOut]
+    count: int
+
+
+def _bar_date_to_ms(date) -> int:
+    if isinstance(date, str):
+        fmt = "%Y%m%d" if len(date) == 8 and date.isdigit() else "%Y-%m-%d"
+        d = dt.datetime.strptime(date, fmt)
+    elif isinstance(date, dt.datetime):
+        d = date
+    else:
+        d = dt.datetime.combine(date, dt.time.min)
+    return int(d.timestamp() * 1000)
+
+
+@app.get("/ib/bars", response_model=IBBarsResponse)
+async def get_ib_bars(
+    symbol: str = Query(...),
+    asset_type: Literal["stock", "forex", "future", "option", "crypto"] = Query("stock"),
+    end_date: str = Query(""),
+    duration: str = Query("1 Y"),
+    exchange: str = Query(""),
+    expiry: str = Query(""),
+    strike: float = Query(0.0),
+    right: Literal["C", "P"] = Query("C"),
+) -> IBBarsResponse:
+    ib_client = IBClient()
+    try:
+        sym = symbol.strip().upper()
+        if asset_type == "stock":
+            raw = await ib_client.get_daily_bars(sym, end_date, duration)
+            label = f"{sym}.STOCK"
+        elif asset_type == "forex":
+            raw = await ib_client.get_daily_bars_forex(sym, end_date, duration)
+            label = f"{sym}.FOREX"
+        elif asset_type == "future":
+            raw = await ib_client.get_daily_bars_future(
+                sym, exchange.strip().upper(), expiry.strip(), end_date, duration
+            )
+            label = f"{sym}.{exchange.strip().upper()}.FUTURE"
+        elif asset_type == "option":
+            raw = await ib_client.get_daily_bars_option(
+                sym, expiry.strip(), strike, right, end_date, duration
+            )
+            label = f"{sym}.{expiry.strip()}.{strike}.{right}.OPTION"
+        else:
+            raw = await ib_client.get_daily_bars_crypto(sym, end_date, duration)
+            label = f"{sym}.CRYPTO"
+        bars = [
+            IBBarOut(
+                ts_ms=_bar_date_to_ms(b.date),
+                open=float(b.open),
+                high=float(b.high),
+                low=float(b.low),
+                close=float(b.close),
+                volume=float(b.volume),
+            )
+            for b in raw
+        ]
+        return IBBarsResponse(symbol=label, asset_type=asset_type, bars=bars, count=len(bars))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        if ib_client._ib.isConnected():
+            ib_client._ib.disconnect()

@@ -147,3 +147,36 @@ def test_options_iv_surface_shape():
     assert len(data["expiry_days"]) == 7
     assert len(data["iv_surface"]) == 9
     assert len(data["iv_surface"][0]) == 7
+
+
+# ── Futures endpoints ─────────────────────────────────────────────────────────
+
+def test_futures_price_contango():
+    """GET /futures/price returns contango when r > q."""
+    r = client.get("/futures/price?spot=100&rate=0.05&convenience_yield=0.02&expiry_days=30")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["price"] > 100
+    assert data["market_structure"] == "contango"
+
+
+def test_futures_calendar_structure():
+    """GET /futures/calendar returns 7 rows with required keys."""
+    r = client.get("/futures/calendar?spot=100&rate=0.05&convenience_yield=0.02")
+    assert r.status_code == 200
+    data = r.json()
+    assert "rows" in data
+    assert len(data["rows"]) == 7
+    row = data["rows"][0]
+    assert "expiry_days" in row and "price" in row and "market_structure" in row
+
+
+def test_futures_roll_structure():
+    """GET /futures/roll returns list of rolls with required keys."""
+    r = client.get("/futures/roll?spot=100&rate=0.05&convenience_yield=0.02&front_days=30")
+    assert r.status_code == 200
+    data = r.json()
+    assert "rolls" in data
+    assert len(data["rolls"]) == 5
+    roll = data["rolls"][0]
+    assert "roll_cost" in roll and "annualized_roll_yield" in roll

@@ -34,6 +34,7 @@ from krx.client import KRXClient
 from sec_edgar.client import SECEdgarClient
 from ksd.client import KSDClient, isin_from_code
 from options.pricer import bs_price, bs_greeks, implied_vol, bs_chain, bs_iv_surface
+from futures.pricer import futures_price, futures_calendar, futures_roll
 
 CATALOG_PATH = "./catalog"
 BOTS_FILE = Path("./bots.json")
@@ -1471,4 +1472,110 @@ def get_options_iv_surface(
         rate=rate,
         atm_vol=atm_vol,
         **result,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Futures Analytics
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class FuturesPriceResponse(BaseModel):
+    spot: float
+    rate: float
+    convenience_yield: float
+    expiry_days: int
+    price: float
+    basis: float
+    basis_pct: float
+    annualized_carry: float
+    market_structure: str
+
+
+class FuturesCalendarRow(BaseModel):
+    expiry_days: int
+    price: float
+    basis: float
+    basis_pct: float
+    annualized_carry: float
+    market_structure: str
+
+
+class FuturesCalendarResponse(BaseModel):
+    spot: float
+    rate: float
+    convenience_yield: float
+    rows: list[FuturesCalendarRow]
+
+
+class FuturesRollRow(BaseModel):
+    front_days: int
+    back_days: int
+    front_price: float
+    back_price: float
+    roll_cost: float
+    roll_cost_pct: float
+    annualized_roll_yield: float
+    days_to_roll: int
+
+
+class FuturesRollResponse(BaseModel):
+    spot: float
+    rate: float
+    convenience_yield: float
+    front_days: int
+    rolls: list[FuturesRollRow]
+
+
+@app.get("/futures/price", response_model=FuturesPriceResponse)
+def get_futures_price(
+    spot: float = Query(..., gt=0),
+    rate: float = Query(0.05),
+    convenience_yield: float = Query(0.02),
+    expiry_days: int = Query(..., ge=0),
+) -> FuturesPriceResponse:
+    T = expiry_days / 365.0
+    fp = futures_price(spot, rate, convenience_yield, T)
+    return FuturesPriceResponse(
+        spot=spot,
+        rate=rate,
+        convenience_yield=convenience_yield,
+        expiry_days=expiry_days,
+        **fp,
+    )
+
+
+@app.get("/futures/calendar", response_model=FuturesCalendarResponse)
+def get_futures_calendar(
+    spot: float = Query(..., gt=0),
+    rate: float = Query(0.05),
+    convenience_yield: float = Query(0.02),
+) -> FuturesCalendarResponse:
+    expiry_days = [30, 60, 90, 120, 180, 252, 360]
+    rows = futures_calendar(spot, rate, convenience_yield, expiry_days)
+    return FuturesCalendarResponse(
+        spot=spot,
+        rate=rate,
+        convenience_yield=convenience_yield,
+        rows=[FuturesCalendarRow(**r) for r in rows],
+    )
+
+
+@app.get("/futures/roll", response_model=FuturesRollResponse)
+def get_futures_roll(
+    spot: float = Query(..., gt=0),
+    rate: float = Query(0.05),
+    convenience_yield: float = Query(0.02),
+    front_days: int = Query(30, ge=1),
+) -> FuturesRollResponse:
+    back_days_list = [d for d in [60, 90, 120, 180, 252] if d > front_days]
+    if not back_days_list:
+        raise HTTPException(status_code=400, detail="front_days must be less than 252")
+    rolls = [futures_roll(spot, rate, convenience_yield, front_days, bd) for bd in back_days_list]
+    return FuturesRollResponse(
+        spot=spot,
+        rate=rate,
+        convenience_yield=convenience_yield,
+        front_days=front_days,
+        rolls=[FuturesRollRow(**r) for r in rolls],
     )

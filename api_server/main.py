@@ -43,6 +43,9 @@ from hyperliquid.client import get_meta_and_ctxs, get_candles, get_l2_book
 from backends.ib.client import IBClient
 from backends.kis.client import KISClient
 from kr_universe.client import search_universe, get_universe as _get_kr_universe
+from condition_engine.parser import ConditionParser
+from condition_engine.evaluator import ConditionEvaluator
+from condition_engine.indicator_registry import IndicatorRegistry
 
 CATALOG_PATH = "./catalog"
 BOTS_FILE = Path("./bots.json")
@@ -2129,3 +2132,149 @@ async def ws_live(websocket: WebSocket, code: str) -> None:
     finally:
         if stream is not None:
             await stream.aclose()
+
+
+# ── Spawner ───────────────────────────────────────────────────────────────────
+
+class ConditionInfo(BaseModel):
+    rule_index: int
+    combinator: str
+    condition_count: int
+    indicators: list[str]
+
+
+class SpawnValidationError(BaseModel):
+    rule_index: int
+    error: str
+
+
+class SpawnValidateResponse(BaseModel):
+    valid: bool
+    errors: list[SpawnValidationError]
+    rules: list[ConditionInfo]
+
+
+class TriggerEvent(BaseModel):
+    rule_index: int
+    trigger_date: str  # YYYY-MM-DD
+
+
+class SpawnEvaluateRequest(BaseModel):
+    spawn_rules: list[dict]
+    instrument_id: str
+    start: str  # YYYY-MM-DD
+    end: str    # YYYY-MM-DD
+
+
+class SpawnEvaluateResponse(BaseModel):
+    instrument_id: str
+    start: str
+    end: str
+    bar_count: int
+    trigger_events: list[TriggerEvent]
+
+
+@app.get("/spawner/validate", response_model=SpawnValidateResponse)
+def validate_spawn_rules(
+    spawn_rules: str = Query(..., description="URL-encoded JSON array of spawn rules"),
+) -> SpawnValidateResponse:
+    try:
+        rules_json: list[dict] = json.loads(spawn_rules)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=422, detail=f"invalid JSON: {exc}") from exc
+
+    if not isinstance(rules_json, list):
+        raise HTTPException(status_code=422, detail="spawn_rules must be a JSON array")
+
+    errors: list[SpawnValidationError] = []
+    infos: list[ConditionInfo] = []
+
+    for i, rule in enumerate(rules_json):
+        try:
+            condition_dict = rule.get("condition", {})
+            condition_set = ConditionParser.parse(condition_dict)
+            indicators = sorted({
+                c.left.indicator
+                for c in condition_set.comparisons
+                if hasattr(c.left, "indicator")
+            } | {
+                c.right.indicator
+                for c in condition_set.comparisons
+                if hasattr(c.right, "indicator")
+            })
+            infos.append(
+                ConditionInfo(
+                    rule_index=i,
+                    combinator=condition_set.combinator,
+                    condition_count=len(condition_set.comparisons),
+                    indicators=indicators,
+                )
+            )
+        except (ValueError, KeyError) as exc:
+            errors.append(SpawnValidationError(rule_index=i, error=str(exc)))
+
+    return SpawnValidateResponse(valid=not errors, errors=errors, rules=infos)
+
+
+@app.post("/spawner/evaluate", response_model=SpawnEvaluateResponse)
+def evaluate_spawn_rules(req: SpawnEvaluateRequest) -> SpawnEvaluateResponse:
+    # Parse all conditions first (fail fast on invalid rules)
+    condition_sets = []
+    for i, rule in enumerate(req.spawn_rules):
+        try:
+            condition_sets.append(ConditionParser.parse(rule.get("condition", {})))
+        except (ValueError, KeyError) as exc:
+            raise HTTPException(status_code=422, detail=f"rule {i}: {exc}") from exc
+
+    # Fetch bars from catalog
+    try:
+        instrument_id = InstrumentId.from_str(req.instrument_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"invalid instrument_id: {exc}") from exc
+
+    start_ns = date_to_ns(req.start)
+    end_ns = date_to_ns(req.end)
+
+    catalog = ParquetDataCatalog(CATALOG_PATH)
+    bar_type_str = str(bar_type_for(instrument_id))
+    all_bars = catalog.bars(bar_types=[bar_type_str])
+    bars = [b for b in all_bars if start_ns <= b.ts_event <= end_ns]
+
+    if not bars:
+        raise HTTPException(
+            status_code=400,
+            detail=f"no bars found for {req.instrument_id!r} in [{req.start}, {req.end}]",
+        )
+
+    # Build one evaluator per rule
+    evaluators = [
+        {
+            "rule_index": i,
+            "evaluator": ConditionEvaluator(cs, IndicatorRegistry()),
+            "triggered": False,
+        }
+        for i, cs in enumerate(condition_sets)
+    ]
+
+    trigger_events: list[TriggerEvent] = []
+    for bar in bars:
+        for entry in evaluators:
+            if entry["triggered"]:
+                continue
+            entry["evaluator"].on_bar(bar)
+            if entry["evaluator"].evaluate():
+                entry["triggered"] = True
+                trigger_date = dt.datetime.fromtimestamp(
+                    bar.ts_event / 1e9, tz=dt.timezone.utc
+                ).strftime("%Y-%m-%d")
+                trigger_events.append(
+                    TriggerEvent(rule_index=entry["rule_index"], trigger_date=trigger_date)
+                )
+
+    return SpawnEvaluateResponse(
+        instrument_id=req.instrument_id,
+        start=req.start,
+        end=req.end,
+        bar_count=len(bars),
+        trigger_events=trigger_events,
+    )

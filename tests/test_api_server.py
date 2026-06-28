@@ -261,9 +261,7 @@ MOCK_HL_BOOK = {
 
 
 @patch("api_server.main.get_meta_and_ctxs")
-@patch("api_server.main.get_all_mids")
-def test_crypto_assets_structure(mock_mids, mock_meta_ctxs):
-    mock_mids.return_value = MOCK_HL_MIDS
+def test_crypto_assets_structure(mock_meta_ctxs):
     mock_meta_ctxs.return_value = (MOCK_HL_META, MOCK_HL_CTXS)
     r = client.get("/crypto/assets")
     assert r.status_code == 200

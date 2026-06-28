@@ -26,6 +26,8 @@ def get_meta_and_ctxs() -> tuple[list[dict], list[dict]]:
     resp = requests.post(HL_URL, json={"type": "metaAndAssetCtxs"}, timeout=10)
     resp.raise_for_status()
     data = resp.json()
+    if not isinstance(data, list) or len(data) < 2 or "universe" not in data[0]:
+        raise ValueError(f"Unexpected metaAndAssetCtxs response: {data!r:.100}")
     return data[0]["universe"], data[1]
 
 

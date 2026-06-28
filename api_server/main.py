@@ -1,5 +1,6 @@
 import datetime as dt
 import json
+import os
 import random
 import uuid
 from pathlib import Path
@@ -1900,3 +1901,99 @@ async def get_ib_bars(
     finally:
         if ib_client._ib.isConnected():
             ib_client._ib.disconnect()
+
+
+# ── KR Universe Search ──────────────────────────────────────────────────────────
+
+from kr_universe.client import search_universe, get_universe as _get_kr_universe
+from backends.kis.client import KISClient
+
+
+class KRSearchResult(BaseModel):
+    code: str
+    name: str
+    market: str
+
+
+class KRSearchResponse(BaseModel):
+    query: str
+    results: list[KRSearchResult]
+    count: int
+
+
+@app.get("/search/kr", response_model=KRSearchResponse)
+def search_kr(q: str = Query(..., min_length=1)):
+    try:
+        results = search_universe(q.strip())
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return KRSearchResponse(
+        query=q,
+        results=[KRSearchResult(**r) for r in results],
+        count=len(results),
+    )
+
+
+# ── KR On-demand OHLCV ──────────────────────────────────────────────────────────
+
+
+class KRBar(BaseModel):
+    date: str
+    open: int
+    high: int
+    low: int
+    close: int
+    volume: int
+
+
+class KRBarsResponse(BaseModel):
+    code: str
+    name: str
+    bars: list[KRBar]
+    count: int
+
+
+@app.get("/kr/bars", response_model=KRBarsResponse)
+def get_kr_bars(
+    code: str = Query(..., min_length=1, max_length=6),
+    days: int = Query(default=365, ge=1, le=3650),
+):
+    code = code.strip().zfill(6)
+    app_key = os.environ.get("KIS_APP_KEY", "")
+    app_secret = os.environ.get("KIS_APP_SECRET", "")
+    if not app_key or not app_secret:
+        raise HTTPException(status_code=503, detail="KIS credentials not configured")
+
+    end_date = dt.date.today().strftime("%Y%m%d")
+    start_date = (dt.date.today() - dt.timedelta(days=days)).strftime("%Y%m%d")
+
+    try:
+        kis_client = KISClient(app_key=app_key, app_secret=app_secret)
+        rows = kis_client.get_daily_price(code, start_date, end_date)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"no bars found for code={code!r}")
+
+    name = code
+    try:
+        universe = _get_kr_universe()
+        match = next((item for item in universe if item["code"] == code), None)
+        if match:
+            name = match["name"]
+    except Exception:
+        pass
+
+    bars = [
+        KRBar(
+            date=row["stck_bsop_date"],
+            open=int(row["stck_oprc"]),
+            high=int(row["stck_hgpr"]),
+            low=int(row["stck_lwpr"]),
+            close=int(row["stck_clpr"]),
+            volume=int(row["acml_vol"]),
+        )
+        for row in rows
+    ]
+    return KRBarsResponse(code=code, name=name, bars=bars, count=len(bars))

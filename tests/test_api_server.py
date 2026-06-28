@@ -392,3 +392,61 @@ def test_ib_bars_crypto_structure(mock_cls):
     data = r.json()
     assert data["symbol"] == "BTC.CRYPTO"
     assert data["asset_type"] == "crypto"
+
+
+# ── /search/kr ─────────────────────────────────────────────────────────────────
+
+def test_search_kr_returns_results():
+    with patch("api_server.main.search_universe") as mock_search:
+        mock_search.return_value = [
+            {"code": "005930", "name": "삼성전자", "market": "유가증권"},
+            {"code": "006400", "name": "삼성SDI", "market": "유가증권"},
+        ]
+        r = client.get("/search/kr?q=삼성")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["count"] == 2
+    assert data["results"][0]["code"] == "005930"
+    assert data["results"][0]["name"] == "삼성전자"
+
+
+def test_search_kr_missing_q_returns_422():
+    r = client.get("/search/kr")
+    assert r.status_code == 422
+
+
+# ── /kr/bars ───────────────────────────────────────────────────────────────────
+
+def _make_kis_row(date: str = "20250102") -> dict:
+    return {
+        "stck_bsop_date": date,
+        "stck_oprc": "70000",
+        "stck_hgpr": "71000",
+        "stck_lwpr": "69500",
+        "stck_clpr": "70500",
+        "acml_vol": "5000000",
+    }
+
+
+@patch("api_server.main.KISClient")
+def test_get_kr_bars_structure(mock_cls):
+    inst = MagicMock()
+    inst.get_daily_price.return_value = [_make_kis_row()]
+    mock_cls.return_value = inst
+    with patch.dict("os.environ", {"KIS_APP_KEY": "key", "KIS_APP_SECRET": "secret"}):
+        r = client.get("/kr/bars?code=005930&days=365")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["code"] == "005930"
+    assert len(data["bars"]) == 1
+    bar = data["bars"][0]
+    assert bar["date"] == "20250102"
+    assert bar["open"] == 70000
+    assert bar["close"] == 70500
+    assert bar["volume"] == 5000000
+
+
+def test_get_kr_bars_no_credentials_returns_503():
+    with patch.dict("os.environ", {"KIS_APP_KEY": "", "KIS_APP_SECRET": ""}):
+        r = client.get("/kr/bars?code=005930")
+    assert r.status_code == 503

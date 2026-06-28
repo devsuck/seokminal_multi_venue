@@ -2535,3 +2535,169 @@ def get_all_bots_live_status() -> AllBotsStatusResponse:
                 )
             )
     return AllBotsStatusResponse(bots=entries)
+
+
+# ── Alert System ──────────────────────────────────────────────
+_ALERT_CONDITION_TYPES = frozenset({
+    "price_above", "price_below", "pnl_above", "pnl_below",
+    "bot_error", "bot_stopped",
+})
+_THRESHOLD_REQUIRED = frozenset({"price_above", "price_below", "pnl_above", "pnl_below"})
+
+class CreateAlertRuleRequest(BaseModel):
+    label: str
+    condition_type: str
+    bot_id: str
+    threshold: float | None = None
+
+class AlertRuleOut(BaseModel):
+    id: str
+    label: str
+    condition_type: str
+    bot_id: str
+    threshold: float | None
+    created_at: str
+
+class AlertRulesResponse(BaseModel):
+    rules: list[AlertRuleOut]
+
+class TriggeredAlertOut(BaseModel):
+    rule_id: str
+    rule_label: str
+    condition_type: str
+    bot_id: str
+    detail: str
+    triggered_at: str
+
+class TriggeredAlertsResponse(BaseModel):
+    triggered: list[TriggeredAlertOut]
+
+_alert_rules: dict[str, AlertRuleOut] = {}
+_triggered_alerts: list[TriggeredAlertOut] = []
+_MAX_TRIGGERED = 200
+_DEDUP_SECONDS = 300
+
+
+def _evaluate_alert_condition(
+    rule: AlertRuleOut,
+    statuses: dict[str, "BotStatus"],
+) -> tuple[bool, str]:
+    status = statuses.get(rule.bot_id)
+    t = rule.threshold
+
+    if rule.condition_type == "price_above":
+        if status is None or status.last_price is None:
+            return False, ""
+        if status.last_price > t:
+            return True, f"price {status.last_price:.4f} > {t:.4f}"
+        return False, ""
+
+    if rule.condition_type == "price_below":
+        if status is None or status.last_price is None:
+            return False, ""
+        if status.last_price < t:
+            return True, f"price {status.last_price:.4f} < {t:.4f}"
+        return False, ""
+
+    if rule.condition_type == "pnl_above":
+        if status is None:
+            return False, ""
+        pnl = _compute_unrealized_pnl(
+            status.position, status.qty, status.last_price, status.entry_price
+        )
+        if pnl is None:
+            return False, ""
+        if pnl > t:
+            return True, f"unrealized PnL {pnl:.2f} > {t:.2f}"
+        return False, ""
+
+    if rule.condition_type == "pnl_below":
+        if status is None:
+            return False, ""
+        pnl = _compute_unrealized_pnl(
+            status.position, status.qty, status.last_price, status.entry_price
+        )
+        if pnl is None:
+            return False, ""
+        if pnl < t:
+            return True, f"unrealized PnL {pnl:.2f} < {t:.2f}"
+        return False, ""
+
+    if rule.condition_type == "bot_error":
+        if status is None:
+            return False, ""
+        if status.error:
+            return True, f"error: {status.error}"
+        return False, ""
+
+    if rule.condition_type == "bot_stopped":
+        if status is None:
+            return True, "bot not running"
+        return False, ""
+
+    return False, ""
+
+
+def _recently_triggered(rule_id: str) -> bool:
+    cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=_DEDUP_SECONDS)
+    for entry in _triggered_alerts:
+        if entry.rule_id == rule_id:
+            try:
+                if dt.datetime.fromisoformat(entry.triggered_at) > cutoff:
+                    return True
+            except ValueError:
+                pass
+    return False
+
+
+@app.post("/alerts/rules", response_model=AlertRuleOut, status_code=201)
+def create_alert_rule(req: CreateAlertRuleRequest) -> AlertRuleOut:
+    if req.condition_type not in _ALERT_CONDITION_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unknown condition_type: {req.condition_type!r}")
+    if req.condition_type in _THRESHOLD_REQUIRED and req.threshold is None:
+        raise HTTPException(status_code=400, detail="threshold required for this condition_type")
+    rule = AlertRuleOut(
+        id=str(uuid.uuid4()),
+        label=req.label,
+        condition_type=req.condition_type,
+        bot_id=req.bot_id,
+        threshold=req.threshold,
+        created_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+    )
+    _alert_rules[rule.id] = rule
+    return rule
+
+
+@app.get("/alerts/rules", response_model=AlertRulesResponse)
+def list_alert_rules() -> AlertRulesResponse:
+    return AlertRulesResponse(rules=list(_alert_rules.values()))
+
+
+@app.delete("/alerts/rules/{rule_id}", status_code=204)
+def delete_alert_rule(rule_id: str) -> None:
+    if rule_id not in _alert_rules:
+        raise HTTPException(status_code=404, detail=f"Alert rule {rule_id!r} not found")
+    del _alert_rules[rule_id]
+
+
+@app.get("/alerts/triggered", response_model=TriggeredAlertsResponse)
+def get_triggered_alerts() -> TriggeredAlertsResponse:
+    statuses = live_engine.get_all_statuses()
+    now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
+    for rule in list(_alert_rules.values()):
+        triggered, detail = _evaluate_alert_condition(rule, statuses)
+        if triggered and not _recently_triggered(rule.id):
+            entry = TriggeredAlertOut(
+                rule_id=rule.id,
+                rule_label=rule.label,
+                condition_type=rule.condition_type,
+                bot_id=rule.bot_id,
+                detail=detail,
+                triggered_at=now_iso,
+            )
+            _triggered_alerts.append(entry)
+            if len(_triggered_alerts) > _MAX_TRIGGERED:
+                _triggered_alerts.pop(0)
+    return TriggeredAlertsResponse(
+        triggered=list(reversed(_triggered_alerts))
+    )

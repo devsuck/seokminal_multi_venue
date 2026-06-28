@@ -33,6 +33,7 @@ from regime_filter.detector import detect_regime
 from krx.client import KRXClient
 from sec_edgar.client import SECEdgarClient
 from ksd.client import KSDClient, isin_from_code
+from options.pricer import bs_price, bs_greeks, implied_vol, bs_chain, bs_iv_surface
 
 CATALOG_PATH = "./catalog"
 BOTS_FILE = Path("./bots.json")
@@ -1352,8 +1353,6 @@ def get_ksd_rights_schedule(
 # ═══════════════════════════════════════════════════════════════════════════════
 # Options Analytics
 # ═══════════════════════════════════════════════════════════════════════════════
-
-from options.pricer import bs_price, bs_greeks, implied_vol, bs_chain, bs_iv_surface
 
 
 class OptionsGreeksResponse(BaseModel):

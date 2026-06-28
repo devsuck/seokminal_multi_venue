@@ -1,5 +1,6 @@
 import datetime as dt
 import json
+import random
 import uuid
 from pathlib import Path
 from typing import Literal
@@ -1839,11 +1840,11 @@ class IBBarsResponse(BaseModel):
 def _bar_date_to_ms(date) -> int:
     if isinstance(date, str):
         fmt = "%Y%m%d" if len(date) == 8 and date.isdigit() else "%Y-%m-%d"
-        d = dt.datetime.strptime(date, fmt)
+        d = dt.datetime.strptime(date, fmt).replace(tzinfo=dt.timezone.utc)
     elif isinstance(date, dt.datetime):
-        d = date
+        d = date if date.tzinfo else date.replace(tzinfo=dt.timezone.utc)
     else:
-        d = dt.datetime.combine(date, dt.time.min)
+        d = dt.datetime.combine(date, dt.time.min, tzinfo=dt.timezone.utc)
     return int(d.timestamp() * 1000)
 
 
@@ -1858,7 +1859,7 @@ async def get_ib_bars(
     strike: float = Query(0.0),
     right: Literal["C", "P"] = Query("C"),
 ) -> IBBarsResponse:
-    ib_client = IBClient()
+    ib_client = IBClient(client_id=random.randint(1, 899))
     try:
         sym = symbol.strip().upper()
         if asset_type == "stock":

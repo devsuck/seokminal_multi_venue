@@ -353,3 +353,42 @@ def test_ib_bars_ib_error_returns_400(mock_cls):
     mock_cls.return_value = inst
     r = client.get("/ib/bars?symbol=FAKE&asset_type=stock")
     assert r.status_code == 400
+
+
+@patch("api_server.main.IBClient")
+def test_ib_bars_future_structure(mock_cls):
+    inst = MagicMock()
+    inst.get_daily_bars_future = AsyncMock(return_value=[_make_mock_ib_bar()])
+    inst._ib.isConnected.return_value = False
+    mock_cls.return_value = inst
+    r = client.get("/ib/bars?symbol=ES&asset_type=future&exchange=CME&expiry=202509")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["symbol"] == "ES.CME.FUTURE"
+    assert data["asset_type"] == "future"
+
+
+@patch("api_server.main.IBClient")
+def test_ib_bars_option_structure(mock_cls):
+    inst = MagicMock()
+    inst.get_daily_bars_option = AsyncMock(return_value=[_make_mock_ib_bar()])
+    inst._ib.isConnected.return_value = False
+    mock_cls.return_value = inst
+    r = client.get("/ib/bars?symbol=SPY&asset_type=option&expiry=20270101&strike=500&right=C")
+    assert r.status_code == 200
+    data = r.json()
+    assert "OPTION" in data["symbol"]
+    assert data["asset_type"] == "option"
+
+
+@patch("api_server.main.IBClient")
+def test_ib_bars_crypto_structure(mock_cls):
+    inst = MagicMock()
+    inst.get_daily_bars_crypto = AsyncMock(return_value=[_make_mock_ib_bar()])
+    inst._ib.isConnected.return_value = False
+    mock_cls.return_value = inst
+    r = client.get("/ib/bars?symbol=BTC&asset_type=crypto")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["symbol"] == "BTC.CRYPTO"
+    assert data["asset_type"] == "crypto"

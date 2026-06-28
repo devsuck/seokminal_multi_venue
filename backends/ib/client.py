@@ -63,7 +63,7 @@ class IBClient:
             durationStr=duration,
             barSizeSetting=DAILY_BAR_SIZE,
             whatToShow="MIDPOINT",
-            useRTH=True,
+            useRTH=False,
         )
         if not bars:
             raise ValueError(

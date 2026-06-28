@@ -128,13 +128,14 @@ async def test_get_daily_bars_forex_raises_on_empty():
         await client.get_daily_bars_forex("EURUSD", end_date="", duration="1 Y")
 
 
-async def test_get_daily_bars_forex_uses_midpoint():
+async def test_get_daily_bars_forex_uses_midpoint_and_rth_false():
     bar = BarData(date=dt.date(2025, 1, 2), open=1.09, high=1.095, low=1.088, close=1.092, volume=0.0)
     fake_ib = FakeIB(historical_bars=[bar])
     client = IBClient(ib=fake_ib)
     await client.get_daily_bars_forex("EURUSD", end_date="", duration="1 Y")
-    # historical_calls tuple index 6 is whatToShow
+    # historical_calls tuple: (symbol, exchange, currency, endDateTime, durationStr, barSizeSetting, whatToShow, useRTH)
     assert fake_ib.historical_calls[0][6] == "MIDPOINT"
+    assert fake_ib.historical_calls[0][7] is False
 
 
 async def test_get_daily_bars_future_returns_bars():

@@ -52,8 +52,6 @@ def compute_features(closes: list[float]) -> list[list[float] | None]:
     rsi14 = _rsi(closes, 14)
     ema12 = _ema(closes, 12)
     ema26 = _ema(closes, 26)
-    ema12_s = _ema(closes, 12)
-    ema26_s = _ema(closes, 26)
 
     # MACD line
     macd: list[float | None] = [

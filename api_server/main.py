@@ -21,6 +21,7 @@ from nautilus_trader.persistence.catalog import ParquetDataCatalog
 from pydantic import BaseModel
 
 from adapters.data_provider import bar_type_for
+from ai_strategy.advisor import recommend_strategy
 from backtest_runner.runner import run_backtest
 from backtest_runner.simple_runner import run_simple_backtest
 from beta_analysis.beta import beta_for_pair
@@ -1951,6 +1952,55 @@ def get_forex_carry(
         rate_foreign=rate_foreign,
         days=days,
         **fc,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AI Strategy Advisor
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class AiRecommendResponse(BaseModel):
+    instrument_id: str
+    strategy: str
+    params: dict
+    reasoning: str
+
+
+@app.get("/ai/strategy-recommend", response_model=AiRecommendResponse)
+def ai_strategy_recommend(
+    instrument_id: str = Query(...),
+    start: dt.date = Query(...),
+    end: dt.date = Query(...),
+) -> AiRecommendResponse:
+    start_ns = date_to_ns(start.isoformat())
+    end_ns = date_to_ns(end.isoformat())
+
+    try:
+        bar_type_str = str(bar_type_for(InstrumentId.from_str(instrument_id)))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"invalid instrument_id: {exc}") from exc
+
+    catalog = ParquetDataCatalog(CATALOG_PATH)
+    all_bars = catalog.bars(bar_types=[bar_type_str])
+    bars = [b for b in all_bars if start_ns <= b.ts_event <= end_ns]
+
+    if not bars:
+        raise HTTPException(
+            status_code=400,
+            detail=f"no bars found for {instrument_id!r} in [{start}, {end}]",
+        )
+
+    try:
+        result = recommend_strategy(bars, instrument_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"AI recommendation failed: {exc}") from exc
+
+    return AiRecommendResponse(
+        instrument_id=instrument_id,
+        strategy=result["strategy"],
+        params=result["params"],
+        reasoning=result["reasoning"],
     )
 
 

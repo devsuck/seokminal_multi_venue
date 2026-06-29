@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from adapters.data_provider import bar_type_for
 from backtest_runner.runner import run_backtest
+from backtest_runner.simple_runner import run_simple_backtest
 from beta_analysis.beta import beta_for_pair
 from correlation_analysis.correlation import corr_matrix
 from correlation_analysis.returns import compute_returns
@@ -148,7 +149,68 @@ class BacktestResponse(BaseModel):
     trades: list[TradeRecord] = []
 
 
-SUPPORTED_STRATEGIES = {"ema_cross", "gated"}
+SUPPORTED_STRATEGIES = {"ema_cross", "gated", "macd", "rsi"}
+
+
+class BestParamsResponse(BaseModel):
+    best_params: dict
+    best_sharpe: float | None
+    combinations_tested: int
+
+
+@app.get("/backtest/optimize", response_model=BestParamsResponse)
+def optimize_backtest(
+    instrument_id: str = Query(...),
+    start: dt.date = Query(...),
+    end: dt.date = Query(...),
+    strategy: str = Query(..., description="'macd' or 'rsi'"),
+) -> BestParamsResponse:
+    if strategy not in {"macd", "rsi"}:
+        raise HTTPException(status_code=400, detail="optimize only supports 'macd' or 'rsi'")
+
+    start_ns = date_to_ns(start.isoformat())
+    end_ns = date_to_ns(end.isoformat())
+    bar_type_str = str(bar_type_for(InstrumentId.from_str(instrument_id)))
+    catalog = ParquetDataCatalog(CATALOG_PATH)
+    all_bars = catalog.bars(bar_types=[bar_type_str])
+    bars = [b for b in all_bars if start_ns <= b.ts_event <= end_ns]
+    if not bars:
+        raise HTTPException(status_code=400, detail=f"no bars found for {instrument_id!r}")
+
+    if strategy == "macd":
+        grid = [
+            {"fast": f, "slow": s, "signal_period": sig, "trade_size": 10}
+            for f in [8, 10, 12]
+            for s in [20, 24, 26]
+            for sig in [7, 9, 11]
+            if f < s
+        ]
+    else:  # rsi
+        grid = [
+            {"period": p, "oversold": float(os), "overbought": float(ob), "trade_size": 10}
+            for p in [10, 14, 18]
+            for os in [25, 30, 35]
+            for ob in [65, 70, 75]
+        ]
+
+    best_sharpe: float | None = None
+    best_params: dict = grid[0]
+
+    for params in grid:
+        try:
+            report = run_simple_backtest(bars, strategy, params)
+            sh = report.get("sharpe_ratio")
+            if sh is not None and (best_sharpe is None or sh > best_sharpe):
+                best_sharpe = sh
+                best_params = dict(params)
+        except Exception:
+            continue
+
+    return BestParamsResponse(
+        best_params=best_params,
+        best_sharpe=best_sharpe,
+        combinations_tested=len(grid),
+    )
 
 
 @app.get("/backtest", response_model=BacktestResponse)
@@ -162,6 +224,12 @@ def get_backtest(
     trade_size: int = Query(10),
     benchmark_id: str | None = Query(None, description="베타 계산용 벤치마크 (e.g. 005930.XKRX, SPY.ARCA)"),
     spawn_rules: str | None = Query(None, description="복합 전략용 spawn_rules JSON (strategy=gated 일 때 필수)"),
+    # MACD params
+    signal_period: int = Query(9, description="MACD signal EMA period"),
+    # RSI params
+    period: int = Query(14, description="RSI period"),
+    oversold: float = Query(30.0, description="RSI oversold threshold"),
+    overbought: float = Query(70.0, description="RSI overbought threshold"),
 ) -> BacktestResponse:
     if strategy not in SUPPORTED_STRATEGIES:
         raise HTTPException(
@@ -172,6 +240,37 @@ def get_backtest(
     start_ns = date_to_ns(start.isoformat())
     end_ns = date_to_ns(end.isoformat())
     bar_type_str = str(bar_type_for(InstrumentId.from_str(instrument_id)))
+
+    # Route MACD and RSI to the pure-Python simple runner
+    if strategy in {"macd", "rsi"}:
+        catalog = ParquetDataCatalog(CATALOG_PATH)
+        all_bars = catalog.bars(bar_types=[bar_type_str])
+        simple_bars = [b for b in all_bars if start_ns <= b.ts_event <= end_ns]
+        if not simple_bars:
+            raise HTTPException(status_code=400, detail=f"no bars found for {instrument_id!r}")
+        if strategy == "macd":
+            simple_params = {"fast": fast, "slow": slow, "signal_period": signal_period, "trade_size": trade_size}
+        else:
+            simple_params = {"period": period, "oversold": oversold, "overbought": overbought, "trade_size": trade_size}
+        try:
+            report = run_simple_backtest(simple_bars, strategy, simple_params)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return BacktestResponse(
+            sharpe_ratio=report["sharpe_ratio"],
+            sortino_ratio=report.get("sortino_ratio"),
+            max_drawdown=report.get("max_drawdown"),
+            volatility=report.get("volatility"),
+            beta=None,
+            total_pnl=report.get("total_pnl"),
+            total_pnl_pct=report.get("total_pnl_pct"),
+            win_rate=report.get("win_rate"),
+            profit_loss_ratio=report.get("profit_loss_ratio"),
+            avg_win=report.get("avg_win"),
+            avg_loss=report.get("avg_loss"),
+            bar_count=report["bar_count"],
+            trades=[TradeRecord(**t) for t in report.get("trades", [])],
+        )
 
     if strategy == "gated":
         if not spawn_rules:

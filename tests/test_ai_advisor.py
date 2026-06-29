@@ -14,22 +14,20 @@ def _fake_bars(n=50):
     return [bar] * n
 
 
-def _mock_anthropic_response(strategy="macd", params=None, reasoning="Test reasoning."):
+def _mock_groq_response(strategy="macd", params=None, reasoning="Test reasoning."):
     if params is None:
         params = {"fast": 12, "slow": 26, "signal_period": 9}
     import json
     mock_client = MagicMock()
-    mock_message = MagicMock()
-    mock_content = MagicMock()
-    mock_content.text = json.dumps({"strategy": strategy, "params": params, "reasoning": reasoning})
-    mock_message.content = [mock_content]
-    mock_client.messages.create.return_value = mock_message
+    mock_choice = MagicMock()
+    mock_choice.message.content = json.dumps({"strategy": strategy, "params": params, "reasoning": reasoning})
+    mock_client.chat.completions.create.return_value = MagicMock(choices=[mock_choice])
     return mock_client
 
 
 def test_recommend_strategy_returns_required_keys():
     bars = _fake_bars(50)
-    with patch("ai_strategy.advisor.anthropic.Anthropic", return_value=_mock_anthropic_response()):
+    with patch("ai_strategy.advisor.OpenAI", return_value=_mock_groq_response()):
         result = recommend_strategy(bars, "AAPL.NASDAQ")
     assert "strategy" in result
     assert "params" in result

@@ -1,13 +1,14 @@
-"""AI-powered strategy advisor using Claude."""
+"""AI-powered strategy advisor using Groq."""
 from __future__ import annotations
 
 import json
+import os
 import statistics
 
-import anthropic
+from openai import OpenAI
 
 _VALID_STRATEGIES = {"ema_cross", "macd", "rsi"}
-_MODEL = "claude-haiku-4-5-20251001"
+_MODEL = "llama-3.1-8b-instant"
 
 
 def recommend_strategy(bars: list, instrument_id: str) -> dict:
@@ -50,14 +51,17 @@ For ema_cross: params = {{"fast": <int>, "slow": <int>}}
 For macd: params = {{"fast": <int>, "slow": <int>, "signal_period": <int>}}
 For rsi: params = {{"period": <int>, "oversold": <float>, "overbought": <float>}}"""
 
-    client = anthropic.Anthropic()
-    message = client.messages.create(
+    client = OpenAI(
+        base_url="https://api.groq.com/openai/v1",
+        api_key=os.environ["GROQ_API_KEY"],
+    )
+    message = client.chat.completions.create(
         model=_MODEL,
         max_tokens=300,
         messages=[{"role": "user", "content": prompt}],
     )
 
-    text = message.content[0].text.strip()
+    text = message.choices[0].message.content.strip()
     # Strip markdown code fences if model adds them despite instructions
     if "```" in text:
         parts = text.split("```")

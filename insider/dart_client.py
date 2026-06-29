@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 
@@ -101,3 +102,66 @@ def _parse_float(s: str) -> float:
         return float(s.replace(",", ""))
     except (ValueError, AttributeError):
         return 0.0
+
+
+# ── Recent feed (all companies) ────────────────────────────────────────────────
+
+def get_recent_kr_insider_feed(days: int = 30, max_corps: int = 20) -> list[dict]:
+    """
+    Recent KR insider disclosures across all KOSPI/KOSDAQ companies.
+    Step 1: OpenDART /list.json for recent 임원·주요주주 소유보고서
+    Step 2: Parallel elestock fetch per unique corp
+    """
+    import datetime as _dt
+    end_de = _dt.date.today().strftime("%Y%m%d")
+    bgn_de = (_dt.date.today() - _dt.timedelta(days=days)).strftime("%Y%m%d")
+
+    list_r = requests.get(
+        f"{DART_BASE}/list.json",
+        params={
+            "crtfc_key": _key(),
+            "bgn_de": bgn_de,
+            "end_de": end_de,
+            "pblntf_ty": "B",
+            "pblntf_detail_ty": "B001",
+            "sort": "date",
+            "sort_mth": "desc",
+            "page_no": 1,
+            "page_count": 60,
+        },
+        timeout=_TIMEOUT,
+    )
+    list_r.raise_for_status()
+    data = list_r.json()
+    if data.get("status") != "000":
+        return []
+
+    # Deduplicate by corp_code, keep first (most recent) occurrence
+    seen: dict[str, dict] = {}
+    for disc in data.get("list", []):
+        code = disc.get("corp_code", "")
+        if code and code not in seen:
+            seen[code] = {
+                "corp_code": code,
+                "corp_name": disc.get("corp_name", ""),
+                "stock_code": disc.get("stock_code", ""),
+            }
+        if len(seen) >= max_corps:
+            break
+
+    def _fetch(corp: dict) -> list[dict]:
+        rows = get_executive_stock_changes(corp["corp_code"], bgn_de, end_de)
+        for r in rows:
+            r["stock_code"] = corp["stock_code"]
+        return rows
+
+    results: list[dict] = []
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        futures = {pool.submit(_fetch, corp): corp for corp in seen.values()}
+        for fut in as_completed(futures, timeout=45):
+            try:
+                results.extend(fut.result())
+            except Exception:
+                pass
+
+    return sorted(results, key=lambda x: x.get("rcept_dt", ""), reverse=True)

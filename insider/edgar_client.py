@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 
 import requests
@@ -168,3 +169,60 @@ def _parse_form4(xml_text: str, filing_date: str, issuer_ticker: str) -> list[di
     except ET.ParseError:
         pass
     return results
+
+
+# ── Recent feed (all companies) ────────────────────────────────────────────────
+
+_SEARCH_BASE = "https://efts.sec.gov/LATEST/search-index"
+
+
+def get_recent_form4_feed(days: int = 7, max_filings: int = 40) -> list[dict]:
+    """
+    Fetch recent Form 4 P/S transactions across all companies via EDGAR full-text search.
+    Parses up to max_filings filings in parallel.
+    """
+    end_dt = datetime.date.today()
+    start_dt = end_dt - datetime.timedelta(days=days)
+
+    r = requests.get(
+        _SEARCH_BASE,
+        params={
+            "forms": "4",
+            "dateRange": "custom",
+            "startdt": start_dt.isoformat(),
+            "enddt": end_dt.isoformat(),
+        },
+        headers=_HEADERS,
+        timeout=_TIMEOUT,
+    )
+    r.raise_for_status()
+    hits = r.json().get("hits", {}).get("hits", [])[:max_filings]
+
+    def _parse_hit(hit: dict) -> list[dict]:
+        src = hit.get("_source", {})
+        acc = src.get("accession_no", "")
+        file_date = src.get("file_date", "")
+        entity = src.get("entity_name", "")
+        if not acc or not file_date:
+            return []
+        # CIK is the numeric prefix of accession number
+        try:
+            cik_int = int(acc.split("-")[0])
+        except (ValueError, IndexError):
+            return []
+        txns = _fetch_filing_transactions(cik_int, acc, file_date, "")
+        for t in txns:
+            if not t.get("issuer"):
+                t["issuer"] = entity.title()
+        return txns
+
+    results: list[dict] = []
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = {pool.submit(_parse_hit, h): h for h in hits}
+        for fut in as_completed(futures, timeout=30):
+            try:
+                results.extend(fut.result())
+            except Exception:
+                pass
+
+    return sorted(results, key=lambda x: x.get("filing_date", ""), reverse=True)

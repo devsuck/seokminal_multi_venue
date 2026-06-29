@@ -3211,8 +3211,8 @@ def get_triggered_alerts() -> TriggeredAlertsResponse:
 
 # ── /insider ───────────────────────────────────────────────────────────────────
 
-from insider.dart_client import search_company as _dart_search, get_executive_stock_changes as _dart_trades
-from insider.edgar_client import get_form4_transactions as _edgar_trades
+from insider.dart_client import search_company as _dart_search, get_executive_stock_changes as _dart_trades, get_recent_kr_insider_feed as _dart_recent
+from insider.edgar_client import get_form4_transactions as _edgar_trades, get_recent_form4_feed as _edgar_recent
 
 
 class DartCompany(BaseModel):
@@ -3300,6 +3300,58 @@ def insider_us(
             shares_owned_after=r.get("shares_owned_after"),
             ticker=r.get("ticker"),
             issuer=r.get("issuer"),
+        )
+        for r in rows
+    ]
+
+
+@app.get("/insider/us/recent", response_model=list[InsiderTrade])
+def insider_us_recent(
+    days: int = Query(7, ge=1, le=30),
+    max_filings: int = Query(40, ge=5, le=100),
+) -> list[InsiderTrade]:
+    try:
+        rows = _edgar_recent(days=days, max_filings=max_filings)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"SEC EDGAR error: {exc}") from exc
+    return [
+        InsiderTrade(
+            trade_date=r["transaction_date"],
+            reporter=r["reporter"],
+            trade_type=r["trade_type"],
+            shares=r.get("shares"),
+            price_per_share=r.get("price_per_share"),
+            value_usd=r.get("value_usd"),
+            shares_owned_after=r.get("shares_owned_after"),
+            ticker=r.get("ticker"),
+            issuer=r.get("issuer"),
+        )
+        for r in rows
+    ]
+
+
+@app.get("/insider/kr/recent", response_model=list[InsiderTrade])
+def insider_kr_recent(
+    days: int = Query(30, ge=1, le=180),
+    max_corps: int = Query(20, ge=5, le=50),
+) -> list[InsiderTrade]:
+    try:
+        rows = _dart_recent(days=days, max_corps=max_corps)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"OpenDART error: {exc}") from exc
+    return [
+        InsiderTrade(
+            trade_date=r["rcept_dt"],
+            reporter=r["reporter"],
+            trade_type=r["trade_type"],
+            shares_change=r["shares_change"],
+            shares_total=r["shares_total"],
+            ownership_pct=r["ownership_pct"],
+            report_type=r["report_type"],
+            corp_name=r["corp_name"],
+            ticker=r.get("stock_code"),
         )
         for r in rows
     ]

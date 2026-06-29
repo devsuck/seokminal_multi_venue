@@ -3680,21 +3680,24 @@ class HLOrderRequest(BaseModel):
     coin: str
     is_buy: bool
     size: float
-    order_type: str = "market"       # "market" | "limit"
+    order_type: str = "market"
     limit_px: float | None = None
     reduce_only: bool = False
     slippage: float = 0.05
+    paper: bool = False
 
 
 class HLCancelRequest(BaseModel):
     coin: str
     oid: int
+    paper: bool = False
 
 
 class HLCloseRequest(BaseModel):
     coin: str
     size: float | None = None
     slippage: float = 0.05
+    paper: bool = False
 
 
 def _hl_trader():
@@ -3706,10 +3709,10 @@ def _hl_trader():
 
 
 @app.get("/hl/positions")
-def hl_positions() -> dict:
+def hl_positions(paper: bool = False) -> dict:
     get_positions, *_ = _hl_trader()
     try:
-        return get_positions()
+        return get_positions(paper=paper)
     except ValueError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:
@@ -3736,8 +3739,9 @@ def hl_place_order(req: HLOrderRequest) -> dict:
             limit_px=req.limit_px,
             reduce_only=req.reduce_only,
             slippage=req.slippage,
+            paper=req.paper,
         )
-        return {"status": "ok", "result": result}
+        return {"status": "ok", "paper": req.paper, "result": result}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
@@ -3748,7 +3752,7 @@ def hl_place_order(req: HLOrderRequest) -> dict:
 def hl_cancel_order(req: HLCancelRequest) -> dict:
     _, _, cancel_order, _ = _hl_trader()
     try:
-        result = cancel_order(coin=req.coin, oid=req.oid)
+        result = cancel_order(coin=req.coin, oid=req.oid, paper=req.paper)
         return {"status": "ok", "result": result}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"HL cancel failed: {e}") from e
@@ -3758,7 +3762,7 @@ def hl_cancel_order(req: HLCancelRequest) -> dict:
 def hl_close_position(req: HLCloseRequest) -> dict:
     _, _, _, close_position = _hl_trader()
     try:
-        result = close_position(coin=req.coin, size=req.size, slippage=req.slippage)
+        result = close_position(coin=req.coin, size=req.size, slippage=req.slippage, paper=req.paper)
         return {"status": "ok", "result": result}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"HL close failed: {e}") from e

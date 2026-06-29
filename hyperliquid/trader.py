@@ -8,15 +8,19 @@ import sys
 from pathlib import Path
 from typing import Any
 
+MAINNET_URL = "https://api.hyperliquid.xyz"
+TESTNET_URL = "https://api.hyperliquid-testnet.xyz"
+
+
+def _api_url(paper: bool) -> str:
+    return TESTNET_URL if paper else MAINNET_URL
+
 
 def _sdk_imports():
     """Import SDK classes with local package shadow temporarily removed."""
     local_pkg_parent = str(Path(__file__).parent.parent.resolve())
-
-    # Remove paths whose `hyperliquid/` would resolve to our local dir
     filtered = [p for p in sys.path if Path(p).resolve() != Path(local_pkg_parent).resolve()]
 
-    # Clear any already-cached local hyperliquid modules
     stale = [k for k in sys.modules if k == "hyperliquid" or k.startswith("hyperliquid.")]
     for k in stale:
         del sys.modules[k]
@@ -24,15 +28,12 @@ def _sdk_imports():
     orig_path = sys.path[:]
     sys.path = filtered
     try:
-        from hyperliquid.exchange import Exchange       # type: ignore
-        from hyperliquid.info import Info               # type: ignore
-        from hyperliquid.utils.constants import MAINNET_API_URL  # type: ignore
-        return Exchange, Info, MAINNET_API_URL
+        from hyperliquid.exchange import Exchange  # type: ignore
+        from hyperliquid.info import Info          # type: ignore
+        return Exchange, Info
     finally:
         sys.path = orig_path
-        # Remove SDK modules from cache so next call re-imports cleanly
-        to_purge = [k for k in sys.modules if k == "hyperliquid" or k.startswith("hyperliquid.")]
-        for k in to_purge:
+        for k in [k for k in sys.modules if k == "hyperliquid" or k.startswith("hyperliquid.")]:
             del sys.modules[k]
 
 
@@ -55,28 +56,30 @@ def _wallet():
     return Account.from_key(_private_key())
 
 
-def get_positions() -> dict[str, Any]:
-    Exchange, Info, MAINNET_API_URL = _sdk_imports()
-    info = Info(MAINNET_API_URL, skip_ws=True)
+def get_positions(paper: bool = False) -> dict[str, Any]:
+    Exchange, Info = _sdk_imports()
+    url = _api_url(paper)
+    info = Info(url, skip_ws=True)
     account = _account_address()
     state = info.user_state(account)
-    spot_state = info.spot_user_state(account)
     open_orders = info.open_orders(account)
 
-    # Unified account: account value = perp margin + spot USDC
-    usdc_spot = next(
-        (float(b["total"]) for b in spot_state.get("balances", []) if b["coin"] == "USDC"),
-        0.0,
-    )
-    margin_summary = state.get("marginSummary", {})
+    usdc_spot = 0.0
+    if not paper:
+        spot_state = info.spot_user_state(account)
+        usdc_spot = next(
+            (float(b["total"]) for b in spot_state.get("balances", []) if b["coin"] == "USDC"),
+            0.0,
+        )
+
+    margin_summary = dict(state.get("marginSummary", {}))
     perp_value = float(margin_summary.get("accountValue", 0))
-    combined_value = perp_value + usdc_spot
-    margin_summary = dict(margin_summary)
-    margin_summary["accountValue"] = str(combined_value)
+    margin_summary["accountValue"] = str(perp_value + usdc_spot)
     margin_summary["spotUsdcBalance"] = str(usdc_spot)
 
     return {
         "address": account,
+        "paper": paper,
         "margin_summary": margin_summary,
         "cross_margin_summary": state.get("crossMarginSummary", {}),
         "asset_positions": state.get("assetPositions", []),
@@ -92,10 +95,11 @@ def place_order(
     limit_px: float | None = None,
     reduce_only: bool = False,
     slippage: float = 0.05,
+    paper: bool = False,
 ) -> dict[str, Any]:
-    Exchange, _, MAINNET_API_URL = _sdk_imports()
+    Exchange, _ = _sdk_imports()
     wallet = _wallet()
-    exchange = Exchange(wallet, MAINNET_API_URL)
+    exchange = Exchange(wallet, _api_url(paper))
 
     if order_type == "market":
         return exchange.market_open(coin.upper(), is_buy, size,
@@ -109,15 +113,16 @@ def place_order(
         raise ValueError(f"Unknown order_type: {order_type}")
 
 
-def cancel_order(coin: str, oid: int) -> dict[str, Any]:
-    Exchange, _, MAINNET_API_URL = _sdk_imports()
+def cancel_order(coin: str, oid: int, paper: bool = False) -> dict[str, Any]:
+    Exchange, _ = _sdk_imports()
     wallet = _wallet()
-    exchange = Exchange(wallet, MAINNET_API_URL)
+    exchange = Exchange(wallet, _api_url(paper))
     return exchange.cancel(coin.upper(), oid)
 
 
-def close_position(coin: str, size: float | None = None, slippage: float = 0.05) -> dict[str, Any]:
-    Exchange, _, MAINNET_API_URL = _sdk_imports()
+def close_position(coin: str, size: float | None = None,
+                   slippage: float = 0.05, paper: bool = False) -> dict[str, Any]:
+    Exchange, _ = _sdk_imports()
     wallet = _wallet()
-    exchange = Exchange(wallet, MAINNET_API_URL)
+    exchange = Exchange(wallet, _api_url(paper))
     return exchange.market_close(coin.upper(), sz=size, slippage=slippage)

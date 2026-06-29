@@ -95,3 +95,18 @@ def test_generate_xgb_signals_test_window_has_signals():
     test_signals = signals[train_n:]
     # At least some BUY or SELL in test window
     assert any(s != "HOLD" for s in test_signals)
+
+
+def test_run_simple_backtest_xgb():
+    from backtest_runner.simple_runner import run_simple_backtest
+    bars = _make_bars(150)
+    result = run_simple_backtest(bars, "xgb", {
+        "train_ratio": 0.7,
+        "n_estimators": 10,
+        "max_depth": 3,
+        "learning_rate": 0.1,
+        "trade_size": 10,
+    })
+    assert "total_pnl" in result
+    assert "sharpe_ratio" in result
+    assert "num_trades" in result

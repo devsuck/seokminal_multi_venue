@@ -265,6 +265,7 @@ def _compute_stats(closes: list[float], ts_events: list[int], trades: list[dict]
 
     return {
         "bar_count": len(closes),
+        "num_trades": len(trades),
         "sharpe_ratio": sharpe,
         "sortino_ratio": sortino,
         "max_drawdown": max_drawdown,
@@ -282,7 +283,7 @@ def _compute_stats(closes: list[float], ts_events: list[int], trades: list[dict]
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def run_simple_backtest(bars: list, strategy: str, params: dict) -> dict:
-    """Run MACD, RSI, or EMA Cross backtest on the given bars. Returns same dict format as run_backtest."""
+    """Run MACD, RSI, EMA Cross, or XGBoost backtest on the given bars. Returns same dict format as run_backtest."""
     closes = [float(b.close) for b in bars]
     ts_events = [b.ts_event for b in bars]
     trade_size = int(params.get("trade_size", 10))
@@ -307,6 +308,9 @@ def run_simple_backtest(bars: list, strategy: str, params: dict) -> dict:
             fast=int(params.get("fast", 12)),
             slow=int(params.get("slow", 26)),
         )
+    elif strategy == "xgb":
+        from xgb_strategy.runner import generate_xgb_signals
+        signals = generate_xgb_signals(bars, params)
     else:
         raise ValueError(f"unknown strategy {strategy!r}")
 

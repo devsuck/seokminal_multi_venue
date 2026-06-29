@@ -67,6 +67,11 @@ app.add_middleware(
 )
 
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
 def date_to_ns(date_str: str) -> int:
     parsed = dt.date.fromisoformat(date_str)
     event_date = dt.datetime.combine(parsed, dt.time.min, tzinfo=dt.timezone.utc)
@@ -150,7 +155,7 @@ class BacktestResponse(BaseModel):
     trades: list[TradeRecord] = []
 
 
-SUPPORTED_STRATEGIES = {"ema_cross", "gated", "macd", "rsi"}
+SUPPORTED_STRATEGIES = {"ema_cross", "gated", "macd", "rsi", "xgb"}
 
 
 class BestParamsResponse(BaseModel):
@@ -355,6 +360,11 @@ def get_backtest(
     period: int = Query(14, description="RSI period"),
     oversold: float = Query(30.0, description="RSI oversold threshold"),
     overbought: float = Query(70.0, description="RSI overbought threshold"),
+    # XGBoost params
+    xgb_train_ratio: float = Query(0.7, description="XGBoost train/test split ratio"),
+    xgb_n_estimators: int = Query(100, description="XGBoost number of trees"),
+    xgb_max_depth: int = Query(4, description="XGBoost tree max depth"),
+    xgb_learning_rate: float = Query(0.1, description="XGBoost learning rate"),
 ) -> BacktestResponse:
     if strategy not in SUPPORTED_STRATEGIES:
         raise HTTPException(
@@ -366,8 +376,8 @@ def get_backtest(
     end_ns = date_to_ns(end.isoformat())
     bar_type_str = str(bar_type_for(InstrumentId.from_str(instrument_id)))
 
-    # Route MACD and RSI to the pure-Python simple runner
-    if strategy in {"macd", "rsi"}:
+    # Route MACD, RSI, and XGBoost to the pure-Python simple runner
+    if strategy in {"macd", "rsi", "xgb"}:
         catalog = ParquetDataCatalog(CATALOG_PATH)
         all_bars = catalog.bars(bar_types=[bar_type_str])
         simple_bars = [b for b in all_bars if start_ns <= b.ts_event <= end_ns]
@@ -375,8 +385,16 @@ def get_backtest(
             raise HTTPException(status_code=400, detail=f"no bars found for {instrument_id!r}")
         if strategy == "macd":
             simple_params = {"fast": fast, "slow": slow, "signal_period": signal_period, "trade_size": trade_size}
-        else:
+        elif strategy == "rsi":
             simple_params = {"period": period, "oversold": oversold, "overbought": overbought, "trade_size": trade_size}
+        else:  # xgb
+            simple_params = {
+                "train_ratio": xgb_train_ratio,
+                "n_estimators": xgb_n_estimators,
+                "max_depth": xgb_max_depth,
+                "learning_rate": xgb_learning_rate,
+                "trade_size": trade_size,
+            }
         try:
             report = run_simple_backtest(simple_bars, strategy, simple_params)
         except ValueError as exc:

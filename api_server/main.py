@@ -2,6 +2,7 @@ import datetime as dt
 import json
 import os
 import random
+import statistics as _stats
 import threading
 import uuid
 from pathlib import Path
@@ -76,6 +77,10 @@ def date_to_ns(date_str: str) -> int:
     parsed = dt.date.fromisoformat(date_str)
     event_date = dt.datetime.combine(parsed, dt.time.min, tzinfo=dt.timezone.utc)
     return int(event_date.timestamp() * 1_000_000_000)
+
+
+def ns_to_date(ns: int) -> str:
+    return dt.datetime.fromtimestamp(ns / 1e9, tz=dt.timezone.utc).strftime("%Y-%m-%d")
 
 
 class BarOut(BaseModel):
@@ -238,6 +243,32 @@ class EquityPoint(BaseModel):
     equity: float
 
 
+class WalkForwardWindow(BaseModel):
+    window_start: str
+    window_end: str
+    sharpe_ratio: float | None
+    total_pnl_pct: float | None
+    win_rate: float | None
+    max_drawdown: float | None
+    num_trades: int
+
+
+class WalkForwardSummary(BaseModel):
+    avg_sharpe: float | None
+    avg_pnl_pct: float | None
+    profitable_windows: int
+    total_windows: int
+    avg_max_drawdown: float | None
+
+
+class WalkForwardResponse(BaseModel):
+    instrument_id: str
+    strategy: str
+    n_windows: int
+    windows: list[WalkForwardWindow]
+    summary: WalkForwardSummary
+
+
 class PortfolioBacktestResponse(BaseModel):
     results: list[PortfolioInstrumentResult]
     portfolio_equity: list[EquityPoint]
@@ -340,6 +371,123 @@ def get_portfolio_backtest(
         portfolio_total_pnl=portfolio_total_pnl,
         portfolio_max_drawdown=portfolio_max_drawdown,
         portfolio_sharpe=None,
+    )
+
+
+_SIMPLE_STRATEGIES = {"macd", "rsi", "xgb", "ema_cross"}
+
+
+@app.get("/backtest/walk-forward", response_model=WalkForwardResponse)
+def get_walk_forward(
+    instrument_id: str = Query(...),
+    start: dt.date = Query(...),
+    end: dt.date = Query(...),
+    strategy: str = Query(...),
+    n_windows: int = Query(5, ge=2, le=20),
+    trade_size: int = Query(10),
+    # EMA Cross / shared
+    fast: int = Query(12),
+    slow: int = Query(26),
+    # MACD
+    signal_period: int = Query(9),
+    # RSI
+    period: int = Query(14),
+    oversold: float = Query(30.0),
+    overbought: float = Query(70.0),
+    # XGBoost
+    xgb_train_ratio: float = Query(0.7),
+    xgb_n_estimators: int = Query(100),
+    xgb_max_depth: int = Query(4),
+    xgb_learning_rate: float = Query(0.1),
+) -> WalkForwardResponse:
+    if strategy not in _SIMPLE_STRATEGIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"walk-forward supports {_SIMPLE_STRATEGIES}, got {strategy!r}",
+        )
+
+    start_ns = date_to_ns(start.isoformat())
+    end_ns = date_to_ns(end.isoformat())
+    bar_type_str = str(bar_type_for(InstrumentId.from_str(instrument_id)))
+
+    catalog = ParquetDataCatalog(CATALOG_PATH)
+    all_bars_raw = catalog.bars(bar_types=[bar_type_str])
+    all_bars = sorted(
+        [b for b in all_bars_raw if start_ns <= b.ts_event <= end_ns],
+        key=lambda b: b.ts_event,
+    )
+    if len(all_bars) < n_windows * 5:
+        raise HTTPException(
+            status_code=400,
+            detail=f"need at least {n_windows * 5} bars, got {len(all_bars)}",
+        )
+
+    if strategy == "ema_cross":
+        params = {"fast": fast, "slow": slow, "trade_size": trade_size}
+    elif strategy == "macd":
+        params = {"fast": fast, "slow": slow, "signal_period": signal_period, "trade_size": trade_size}
+    elif strategy == "rsi":
+        params = {"period": period, "oversold": oversold, "overbought": overbought, "trade_size": trade_size}
+    else:  # xgb
+        params = {
+            "train_ratio": xgb_train_ratio,
+            "n_estimators": xgb_n_estimators,
+            "max_depth": xgb_max_depth,
+            "learning_rate": xgb_learning_rate,
+            "trade_size": trade_size,
+        }
+
+    window_size = len(all_bars) // n_windows
+    windows: list[WalkForwardWindow] = []
+
+    for i in range(n_windows):
+        start_idx = i * window_size
+        end_idx = start_idx + window_size if i < n_windows - 1 else len(all_bars)
+        w_bars = all_bars[start_idx:end_idx]
+        if len(w_bars) < 5:
+            continue
+        w_start = ns_to_date(w_bars[0].ts_event)
+        w_end = ns_to_date(w_bars[-1].ts_event)
+        try:
+            report = run_simple_backtest(w_bars, strategy, params)
+            windows.append(WalkForwardWindow(
+                window_start=w_start,
+                window_end=w_end,
+                sharpe_ratio=report.get("sharpe_ratio"),
+                total_pnl_pct=report.get("total_pnl_pct"),
+                win_rate=report.get("win_rate"),
+                max_drawdown=report.get("max_drawdown"),
+                num_trades=report.get("num_trades", 0),
+            ))
+        except Exception:
+            windows.append(WalkForwardWindow(
+                window_start=w_start,
+                window_end=w_end,
+                sharpe_ratio=None,
+                total_pnl_pct=None,
+                win_rate=None,
+                max_drawdown=None,
+                num_trades=0,
+            ))
+
+    sharpes = [w.sharpe_ratio for w in windows if w.sharpe_ratio is not None]
+    pnls = [w.total_pnl_pct for w in windows if w.total_pnl_pct is not None]
+    dds = [w.max_drawdown for w in windows if w.max_drawdown is not None]
+
+    summary = WalkForwardSummary(
+        avg_sharpe=_stats.mean(sharpes) if sharpes else None,
+        avg_pnl_pct=_stats.mean(pnls) if pnls else None,
+        profitable_windows=sum(1 for p in pnls if p > 0),
+        total_windows=len(windows),
+        avg_max_drawdown=_stats.mean(dds) if dds else None,
+    )
+
+    return WalkForwardResponse(
+        instrument_id=instrument_id,
+        strategy=strategy,
+        n_windows=n_windows,
+        windows=windows,
+        summary=summary,
     )
 
 

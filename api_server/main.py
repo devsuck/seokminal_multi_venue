@@ -3207,3 +3207,99 @@ def get_triggered_alerts() -> TriggeredAlertsResponse:
                     _triggered_alerts.pop(0)
         snapshot = list(reversed(_triggered_alerts))
     return TriggeredAlertsResponse(triggered=snapshot)
+
+
+# ── /insider ───────────────────────────────────────────────────────────────────
+
+from insider.dart_client import search_company as _dart_search, get_executive_stock_changes as _dart_trades
+from insider.edgar_client import get_form4_transactions as _edgar_trades
+
+
+class DartCompany(BaseModel):
+    corp_code: str
+    corp_name: str
+    stock_code: str
+
+
+class InsiderTrade(BaseModel):
+    trade_date: str
+    reporter: str
+    trade_type: str          # BUY / SELL / OTHER
+    shares_change: int | None = None
+    shares: float | None = None
+    price_per_share: float | None = None
+    value_usd: float | None = None
+    shares_owned_after: float | None = None
+    shares_total: int | None = None
+    ownership_pct: float | None = None
+    report_type: str | None = None
+    corp_name: str | None = None
+    ticker: str | None = None
+    issuer: str | None = None
+
+
+@app.get("/insider/kr/search", response_model=list[DartCompany])
+def insider_kr_search(q: str = Query(..., min_length=1)) -> list[DartCompany]:
+    try:
+        results = _dart_search(q)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"OpenDART error: {exc}") from exc
+    return [DartCompany(**r) for r in results]
+
+
+@app.get("/insider/kr", response_model=list[InsiderTrade])
+def insider_kr(
+    corp_code: str = Query(...),
+    days: int = Query(180, ge=1, le=730),
+) -> list[InsiderTrade]:
+    end_de = dt.date.today().strftime("%Y%m%d")
+    bgn_de = (dt.date.today() - dt.timedelta(days=days)).strftime("%Y%m%d")
+    try:
+        rows = _dart_trades(corp_code, bgn_de, end_de)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"OpenDART error: {exc}") from exc
+    return [
+        InsiderTrade(
+            trade_date=r["rcept_dt"],
+            reporter=r["reporter"],
+            trade_type=r["trade_type"],
+            shares_change=r["shares_change"],
+            shares_total=r["shares_total"],
+            ownership_pct=r["ownership_pct"],
+            report_type=r["report_type"],
+            corp_name=r["corp_name"],
+        )
+        for r in rows
+    ]
+
+
+@app.get("/insider/us", response_model=list[InsiderTrade])
+def insider_us(
+    ticker: str = Query(..., min_length=1, max_length=10),
+    days: int = Query(90, ge=1, le=365),
+) -> list[InsiderTrade]:
+    try:
+        rows = _edgar_trades(ticker.upper(), days)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"SEC EDGAR error: {exc}") from exc
+    if not rows and days <= 365:
+        # ticker might not exist
+        raise HTTPException(status_code=404, detail=f"No Form 4 filings found for {ticker!r}")
+    return [
+        InsiderTrade(
+            trade_date=r["transaction_date"],
+            reporter=r["reporter"],
+            trade_type=r["trade_type"],
+            shares=r.get("shares"),
+            price_per_share=r.get("price_per_share"),
+            value_usd=r.get("value_usd"),
+            shares_owned_after=r.get("shares_owned_after"),
+            ticker=r.get("ticker"),
+            issuer=r.get("issuer"),
+        )
+        for r in rows
+    ]

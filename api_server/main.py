@@ -213,6 +213,130 @@ def optimize_backtest(
     )
 
 
+PORTFOLIO_STRATEGIES = {"ema_cross", "macd", "rsi"}
+
+
+class PortfolioInstrumentResult(BaseModel):
+    instrument_id: str
+    sharpe_ratio: float | None
+    total_pnl: float | None
+    total_pnl_pct: float | None
+    max_drawdown: float | None
+    win_rate: float | None
+    trade_count: int
+    bar_count: int
+
+
+class EquityPoint(BaseModel):
+    ts_ns: int
+    equity: float
+
+
+class PortfolioBacktestResponse(BaseModel):
+    results: list[PortfolioInstrumentResult]
+    portfolio_equity: list[EquityPoint]
+    portfolio_total_pnl: float | None
+    portfolio_max_drawdown: float | None
+    portfolio_sharpe: float | None = None
+
+
+@app.get("/backtest/portfolio", response_model=PortfolioBacktestResponse)
+def get_portfolio_backtest(
+    instrument_ids: str = Query(..., description="Comma-separated instrument IDs"),
+    start: dt.date = Query(...),
+    end: dt.date = Query(...),
+    strategy: str = Query(...),
+    fast: int = Query(12),
+    slow: int = Query(26),
+    signal_period: int = Query(9),
+    period: int = Query(14),
+    oversold: float = Query(30.0),
+    overbought: float = Query(70.0),
+    trade_size: int = Query(10),
+) -> PortfolioBacktestResponse:
+    ids = [i.strip() for i in instrument_ids.split(",") if i.strip()]
+    if not ids:
+        raise HTTPException(status_code=400, detail="instrument_ids must not be empty")
+    if strategy not in PORTFOLIO_STRATEGIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"portfolio-backtest only supports {sorted(PORTFOLIO_STRATEGIES)}",
+        )
+
+    start_ns = date_to_ns(start.isoformat())
+    end_ns = date_to_ns(end.isoformat())
+
+    if strategy == "macd":
+        params = {"fast": fast, "slow": slow, "signal_period": signal_period, "trade_size": trade_size}
+    elif strategy == "rsi":
+        params = {"period": period, "oversold": oversold, "overbought": overbought, "trade_size": trade_size}
+    else:  # ema_cross
+        params = {"fast": fast, "slow": slow, "trade_size": trade_size}
+
+    catalog = ParquetDataCatalog(CATALOG_PATH)
+    results: list[PortfolioInstrumentResult] = []
+    all_trades: list[dict] = []
+
+    for iid in ids:
+        try:
+            bar_type_str = str(bar_type_for(InstrumentId.from_str(iid)))
+        except Exception:
+            continue
+        all_iid_bars = catalog.bars(bar_types=[bar_type_str])
+        bars = [b for b in all_iid_bars if start_ns <= b.ts_event <= end_ns]
+        if not bars:
+            continue
+        try:
+            report = run_simple_backtest(bars, strategy, params)
+        except Exception:
+            continue
+        results.append(PortfolioInstrumentResult(
+            instrument_id=iid,
+            sharpe_ratio=report.get("sharpe_ratio"),
+            total_pnl=report.get("total_pnl"),
+            total_pnl_pct=report.get("total_pnl_pct"),
+            max_drawdown=report.get("max_drawdown"),
+            win_rate=report.get("win_rate"),
+            trade_count=len(report.get("trades", [])),
+            bar_count=report["bar_count"],
+        ))
+        for t in report.get("trades", []):
+            if t.get("exit_ts_ns") is not None and t.get("pnl") is not None:
+                all_trades.append({"ts_ns": t["exit_ts_ns"], "pnl": t["pnl"]})
+
+    # Build portfolio equity curve sorted by trade exit timestamp
+    all_trades.sort(key=lambda t: t["ts_ns"])
+    equity = 0.0
+    equity_series: list[EquityPoint] = [EquityPoint(ts_ns=start_ns, equity=0.0)]
+    for t in all_trades:
+        equity += t["pnl"]
+        equity_series.append(EquityPoint(ts_ns=t["ts_ns"], equity=equity))
+
+    # Portfolio-level stats
+    pnls = [r.total_pnl for r in results if r.total_pnl is not None]
+    portfolio_total_pnl: float | None = sum(pnls) if pnls else None
+
+    portfolio_max_drawdown: float | None = None
+    if len(equity_series) >= 2:
+        peak = equity_series[0].equity
+        worst = 0.0
+        for ep in equity_series:
+            if ep.equity > peak:
+                peak = ep.equity
+            dd = (ep.equity - peak) / peak if peak > 0 else 0.0
+            if dd < worst:
+                worst = dd
+        portfolio_max_drawdown = worst if worst != 0.0 else None
+
+    return PortfolioBacktestResponse(
+        results=results,
+        portfolio_equity=equity_series,
+        portfolio_total_pnl=portfolio_total_pnl,
+        portfolio_max_drawdown=portfolio_max_drawdown,
+        portfolio_sharpe=None,
+    )
+
+
 @app.get("/backtest", response_model=BacktestResponse)
 def get_backtest(
     instrument_id: str = Query(...),

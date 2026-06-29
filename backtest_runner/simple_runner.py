@@ -115,6 +115,35 @@ def _rsi_signals(
     return signals
 
 
+# ── EMA Cross signals ─────────────────────────────────────────────────────────
+
+def _ema_signals(closes: list[float], fast: int, slow: int) -> list[str]:
+    """BUY on golden cross (fast crosses above slow), SELL on death cross, else HOLD."""
+    fast_ema = _ema_series(closes, fast)
+    slow_ema = _ema_series(closes, slow)
+    signals: list[str] = []
+    for i in range(len(closes)):
+        f = fast_ema[i]
+        s = slow_ema[i]
+        if f is None or s is None:
+            signals.append("HOLD")
+            continue
+        if i == 0:
+            signals.append("HOLD")
+            continue
+        pf = fast_ema[i - 1]
+        ps = slow_ema[i - 1]
+        if pf is None or ps is None:
+            signals.append("HOLD")
+        elif f > s and pf <= ps:
+            signals.append("BUY")
+        elif f < s and pf >= ps:
+            signals.append("SELL")
+        else:
+            signals.append("HOLD")
+    return signals
+
+
 # ── Trade simulation ──────────────────────────────────────────────────────────
 
 def _simulate_trades(
@@ -253,7 +282,7 @@ def _compute_stats(closes: list[float], ts_events: list[int], trades: list[dict]
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def run_simple_backtest(bars: list, strategy: str, params: dict) -> dict:
-    """Run MACD or RSI backtest on the given bars. Returns same dict format as run_backtest."""
+    """Run MACD, RSI, or EMA Cross backtest on the given bars. Returns same dict format as run_backtest."""
     closes = [float(b.close) for b in bars]
     ts_events = [b.ts_event for b in bars]
     trade_size = int(params.get("trade_size", 10))
@@ -271,6 +300,12 @@ def run_simple_backtest(bars: list, strategy: str, params: dict) -> dict:
             period=int(params.get("period", 14)),
             oversold=float(params.get("oversold", 30)),
             overbought=float(params.get("overbought", 70)),
+        )
+    elif strategy == "ema_cross":
+        signals = _ema_signals(
+            closes,
+            fast=int(params.get("fast", 12)),
+            slow=int(params.get("slow", 26)),
         )
     else:
         raise ValueError(f"unknown strategy {strategy!r}")

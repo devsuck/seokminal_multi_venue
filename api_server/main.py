@@ -3672,3 +3672,93 @@ def run_screener(
             continue
 
     return results
+
+
+# ── /hl/trade (Hyperliquid 거래) ───────────────────────────────────────────────
+
+class HLOrderRequest(BaseModel):
+    coin: str
+    is_buy: bool
+    size: float
+    order_type: str = "market"       # "market" | "limit"
+    limit_px: float | None = None
+    reduce_only: bool = False
+    slippage: float = 0.05
+
+
+class HLCancelRequest(BaseModel):
+    coin: str
+    oid: int
+
+
+class HLCloseRequest(BaseModel):
+    coin: str
+    size: float | None = None
+    slippage: float = 0.05
+
+
+def _hl_trader():
+    try:
+        from hyperliquid.trader import get_positions, place_order, cancel_order, close_position
+        return get_positions, place_order, cancel_order, close_position
+    except ImportError as e:
+        raise HTTPException(status_code=503, detail=f"Hyperliquid trader not available: {e}") from e
+
+
+@app.get("/hl/positions")
+def hl_positions() -> dict:
+    get_positions, *_ = _hl_trader()
+    try:
+        return get_positions()
+    except ValueError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"HL API error: {e}") from e
+
+
+@app.post("/hl/order")
+def hl_place_order(req: HLOrderRequest) -> dict:
+    _, place_order, *_ = _hl_trader()
+    if req.size <= 0:
+        raise HTTPException(status_code=400, detail="size must be > 0")
+    if req.order_type not in ("market", "limit"):
+        raise HTTPException(status_code=400, detail="order_type must be 'market' or 'limit'")
+    if req.order_type == "limit" and req.limit_px is None:
+        raise HTTPException(status_code=400, detail="limit_px required for limit order")
+    if req.slippage < 0 or req.slippage > 0.5:
+        raise HTTPException(status_code=400, detail="slippage must be 0~0.5")
+    try:
+        result = place_order(
+            coin=req.coin,
+            is_buy=req.is_buy,
+            size=req.size,
+            order_type=req.order_type,
+            limit_px=req.limit_px,
+            reduce_only=req.reduce_only,
+            slippage=req.slippage,
+        )
+        return {"status": "ok", "result": result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"HL order failed: {e}") from e
+
+
+@app.post("/hl/order/cancel")
+def hl_cancel_order(req: HLCancelRequest) -> dict:
+    _, _, cancel_order, _ = _hl_trader()
+    try:
+        result = cancel_order(coin=req.coin, oid=req.oid)
+        return {"status": "ok", "result": result}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"HL cancel failed: {e}") from e
+
+
+@app.post("/hl/order/close")
+def hl_close_position(req: HLCloseRequest) -> dict:
+    _, _, _, close_position = _hl_trader()
+    try:
+        result = close_position(coin=req.coin, size=req.size, slippage=req.slippage)
+        return {"status": "ok", "result": result}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"HL close failed: {e}") from e

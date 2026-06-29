@@ -144,23 +144,23 @@ class LiveBotEngine:
                         signal = "EMA_BUY"
                         if state.position <= 0:
                             # Close SHORT if was in a short position
-                            if state.position < 0 and state.entry_price is not None:
-                                pnl = (state.entry_price - tick.price) * state.trade_size
-                                state.closed_trades.append({
-                                    "entry_ts_ns": state.entry_ts_ns,
-                                    "exit_ts_ns": tick.ts_ns,
-                                    "side": "SHORT",
-                                    "entry_price": state.entry_price,
-                                    "exit_price": tick.price,
-                                    "qty": state.trade_size,
-                                    "pnl": round(pnl, 6),
-                                })
-                                state.closed_trades = state.closed_trades[-200:]
                             try:
                                 result = await state.broker.place_order(
                                     state.instrument_id, "BUY", state.trade_size, "MARKET"
                                 )
                                 state.orders.append(result)
+                                if state.position < 0 and state.entry_price is not None:
+                                    pnl = (state.entry_price - tick.price) * state.trade_size
+                                    state.closed_trades.append({
+                                        "entry_ts_ns": state.entry_ts_ns,
+                                        "exit_ts_ns": tick.ts_ns,
+                                        "side": "SHORT",
+                                        "entry_price": state.entry_price,
+                                        "exit_price": tick.price,
+                                        "qty": state.trade_size,
+                                        "pnl": round(pnl, 6),
+                                    })
+                                    state.closed_trades = state.closed_trades[-200:]
                                 state.entry_price = tick.price
                                 state.entry_ts_ns = tick.ts_ns
                                 state.position = 1
@@ -172,23 +172,23 @@ class LiveBotEngine:
                         signal = "EMA_SELL"
                         if state.position >= 0:
                             # Close LONG if was in a long position
-                            if state.position > 0 and state.entry_price is not None:
-                                pnl = (tick.price - state.entry_price) * state.trade_size
-                                state.closed_trades.append({
-                                    "entry_ts_ns": state.entry_ts_ns,
-                                    "exit_ts_ns": tick.ts_ns,
-                                    "side": "LONG",
-                                    "entry_price": state.entry_price,
-                                    "exit_price": tick.price,
-                                    "qty": state.trade_size,
-                                    "pnl": round(pnl, 6),
-                                })
-                                state.closed_trades = state.closed_trades[-200:]
                             try:
                                 result = await state.broker.place_order(
                                     state.instrument_id, "SELL", state.trade_size, "MARKET"
                                 )
                                 state.orders.append(result)
+                                if state.position > 0 and state.entry_price is not None:
+                                    pnl = (tick.price - state.entry_price) * state.trade_size
+                                    state.closed_trades.append({
+                                        "entry_ts_ns": state.entry_ts_ns,
+                                        "exit_ts_ns": tick.ts_ns,
+                                        "side": "LONG",
+                                        "entry_price": state.entry_price,
+                                        "exit_price": tick.price,
+                                        "qty": state.trade_size,
+                                        "pnl": round(pnl, 6),
+                                    })
+                                    state.closed_trades = state.closed_trades[-200:]
                                 state.entry_price = tick.price
                                 state.entry_ts_ns = tick.ts_ns
                                 state.position = -1

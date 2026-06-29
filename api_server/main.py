@@ -603,6 +603,7 @@ def list_bots() -> list[BotRecord]:
 
 @app.post("/bots", response_model=BotRecord, status_code=201)
 def create_bot(config: BotConfig) -> BotRecord:
+    global bots
     bots = _load_bots()
     bot_id = str(uuid.uuid4())[:8]
     record = {
@@ -623,6 +624,7 @@ def create_bot(config: BotConfig) -> BotRecord:
 
 @app.post("/bots/{bot_id}/start", response_model=BotRecord)
 async def start_bot(bot_id: str) -> BotRecord:
+    global bots
     bots = _load_bots()
     if bot_id not in bots:
         raise HTTPException(status_code=404, detail=f"bot {bot_id!r} not found")
@@ -654,6 +656,7 @@ async def start_bot(bot_id: str) -> BotRecord:
 
 @app.post("/bots/{bot_id}/stop", response_model=BotRecord)
 async def stop_bot(bot_id: str) -> BotRecord:
+    global bots
     bots = _load_bots()
     if bot_id not in bots:
         raise HTTPException(status_code=404, detail=f"bot {bot_id!r} not found")
@@ -749,6 +752,7 @@ async def ws_bot_prices(websocket: WebSocket, bot_id: str) -> None:
 
 @app.delete("/bots/{bot_id}", status_code=204)
 def delete_bot(bot_id: str) -> None:
+    global bots
     bots = _load_bots()
     if bot_id not in bots:
         raise HTTPException(status_code=404, detail=f"bot {bot_id!r} not found")

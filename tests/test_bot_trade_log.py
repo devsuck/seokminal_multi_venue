@@ -95,27 +95,26 @@ def test_get_bot_endpoint_404():
 
 def test_get_bot_trades_endpoint_empty(monkeypatch):
     """Bot exists, not running → 200 with empty trades list."""
-    bots["test_bot_1"] = {
+    monkeypatch.setitem(bots, "test_bot_1", {
         "id": "test_bot_1", "name": "TestBot", "strategy": "ema_cross",
         "instrument_id": "AAPL.NASDAQ", "fast_ema": 10, "slow_ema": 20,
         "trade_size": 5, "status": "stopped", "created_at": "2026-01-01T00:00:00Z",
-    }
+    })
     monkeypatch.setattr(live_engine, "_running", {})
     r = client.get("/bots/test_bot_1/trades")
     assert r.status_code == 200
     data = r.json()
     assert data["bot_id"] == "test_bot_1"
     assert data["trades"] == []
-    del bots["test_bot_1"]
 
 
 def test_get_bot_signals_endpoint_with_data(monkeypatch):
     """Bot running with signal_log → signals returned."""
-    bots["test_bot_2"] = {
+    monkeypatch.setitem(bots, "test_bot_2", {
         "id": "test_bot_2", "name": "TestBot2", "strategy": "ema_cross",
         "instrument_id": "AAPL.NASDAQ", "fast_ema": 10, "slow_ema": 20,
         "trade_size": 5, "status": "running", "created_at": "2026-01-01T00:00:00Z",
-    }
+    })
     state = _make_state(bot_id="test_bot_2")
     state.signal_log = [{"ts_ns": 1_000_000_000, "signal": "EMA_BUY", "price": 150.0}]
     monkeypatch.setattr(live_engine, "_running", {"test_bot_2": state})
@@ -124,4 +123,3 @@ def test_get_bot_signals_endpoint_with_data(monkeypatch):
     data = r.json()
     assert len(data["signals"]) == 1
     assert data["signals"][0]["signal"] == "EMA_BUY"
-    del bots["test_bot_2"]

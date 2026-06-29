@@ -2334,38 +2334,48 @@ def _bar_date_to_ms(date) -> int:
     return int(d.timestamp() * 1000)
 
 
+IB_BAR_SIZES = {
+    "1 min", "2 mins", "3 mins", "5 mins", "10 mins", "15 mins", "20 mins", "30 mins",
+    "1 hour", "2 hours", "3 hours", "4 hours", "8 hours",
+    "1 day", "1 week", "1 month",
+}
+
+
 @app.get("/ib/bars", response_model=IBBarsResponse)
 async def get_ib_bars(
     symbol: str = Query(...),
     asset_type: Literal["stock", "forex", "future", "option", "crypto"] = Query("stock"),
     end_date: str = Query(""),
     duration: str = Query("1 Y"),
+    bar_size: str = Query("1 day"),
     exchange: str = Query(""),
     expiry: str = Query(""),
     strike: float = Query(0.0),
     right: Literal["C", "P"] = Query("C"),
 ) -> IBBarsResponse:
+    if bar_size not in IB_BAR_SIZES:
+        raise HTTPException(status_code=400, detail=f"Invalid bar_size '{bar_size}'. Valid: {sorted(IB_BAR_SIZES)}")
     ib_client = IBClient(client_id=random.randint(1, 899))
     try:
         sym = symbol.strip().upper()
         if asset_type == "stock":
-            raw = await ib_client.get_daily_bars(sym, end_date, duration)
+            raw = await ib_client.get_daily_bars(sym, end_date, duration, bar_size)
             label = f"{sym}.STOCK"
         elif asset_type == "forex":
-            raw = await ib_client.get_daily_bars_forex(sym, end_date, duration)
+            raw = await ib_client.get_daily_bars_forex(sym, end_date, duration, bar_size)
             label = f"{sym}.FOREX"
         elif asset_type == "future":
             raw = await ib_client.get_daily_bars_future(
-                sym, exchange.strip().upper(), expiry.strip(), end_date, duration
+                sym, exchange.strip().upper(), expiry.strip(), end_date, duration, bar_size
             )
             label = f"{sym}.{exchange.strip().upper()}.FUTURE"
         elif asset_type == "option":
             raw = await ib_client.get_daily_bars_option(
-                sym, expiry.strip(), strike, right, end_date, duration
+                sym, expiry.strip(), strike, right, end_date, duration, bar_size
             )
             label = f"{sym}.{expiry.strip()}.{strike}.{right}.OPTION"
         else:
-            raw = await ib_client.get_daily_bars_crypto(sym, end_date, duration)
+            raw = await ib_client.get_daily_bars_crypto(sym, end_date, duration, bar_size)
             label = f"{sym}.CRYPTO"
         bars = [
             IBBarOut(

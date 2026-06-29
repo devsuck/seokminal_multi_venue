@@ -3409,3 +3409,266 @@ def get_economic_calendar(week: str = Query("this", pattern="^(this|next)$")) ->
 
     _cal_cache[week] = (now, events)
     return [EconomicEvent(**e) for e in events]
+
+
+# ── /macro/fear-greed ──────────────────────────────────────────────────────────
+
+_fg_cache: dict[str, tuple[float, dict]] = {}
+_FG_TTL = 3600  # 1h — updates once/day
+
+
+class FearGreedResponse(BaseModel):
+    value: int
+    classification: str
+    timestamp: str
+
+
+@app.get("/macro/fear-greed", response_model=FearGreedResponse)
+def get_fear_greed() -> FearGreedResponse:
+    now = _time.time()
+    if "fg" in _fg_cache:
+        ts, data = _fg_cache["fg"]
+        if now - ts < _FG_TTL:
+            return FearGreedResponse(**data)
+
+    try:
+        resp = requests.get(
+            "https://api.alternative.me/fng/?limit=1",
+            timeout=8,
+            headers={"User-Agent": "seokminal-dashboard/1.0"},
+        )
+        resp.raise_for_status()
+        raw = resp.json()["data"][0]
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Fear & Greed fetch failed: {exc}") from exc
+
+    data = {
+        "value": int(raw["value"]),
+        "classification": raw["value_classification"],
+        "timestamp": raw["timestamp"],
+    }
+    _fg_cache["fg"] = (now, data)
+    return FearGreedResponse(**data)
+
+
+# ── /news/* (Finnhub) ──────────────────────────────────────────────────────────
+
+import os as _os
+
+_FINNHUB_KEY = _os.getenv("FINNHUB_API_KEY", "")
+_FINNHUB_BASE = "https://finnhub.io/api/v1"
+
+# Cache: {key: (timestamp, list)}
+_news_cache: dict[str, tuple[float, list]] = {}
+_NEWS_GENERAL_TTL = 900   # 15min
+_NEWS_COMPANY_TTL = 1800  # 30min
+
+
+def _finnhub_key() -> str:
+    if not _FINNHUB_KEY:
+        raise HTTPException(status_code=503, detail="FINNHUB_API_KEY not set")
+    return _FINNHUB_KEY
+
+
+class NewsItem(BaseModel):
+    id: int | str
+    headline: str
+    summary: str
+    source: str
+    url: str
+    datetime: int
+    category: str
+    related: str | None = None
+    image: str | None = None
+
+
+@app.get("/news/market", response_model=list[NewsItem])
+def get_market_news(category: str = Query("general")) -> list[NewsItem]:
+    key = f"market:{category}"
+    now = _time.time()
+    if key in _news_cache:
+        ts, data = _news_cache[key]
+        if now - ts < _NEWS_GENERAL_TTL:
+            return [NewsItem(**n) for n in data]
+
+    key_param = _finnhub_key()
+    try:
+        resp = requests.get(
+            f"{_FINNHUB_BASE}/news",
+            params={"category": category, "token": key_param},
+            timeout=10,
+        )
+        resp.raise_for_status()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Finnhub news failed: {exc}") from exc
+
+    items = [
+        {
+            "id": n.get("id", ""),
+            "headline": n.get("headline", ""),
+            "summary": n.get("summary", ""),
+            "source": n.get("source", ""),
+            "url": n.get("url", ""),
+            "datetime": n.get("datetime", 0),
+            "category": n.get("category", category),
+            "related": n.get("related") or None,
+            "image": n.get("image") or None,
+        }
+        for n in resp.json()[:30]
+    ]
+    _news_cache[key] = (now, items)
+    return [NewsItem(**n) for n in items]
+
+
+@app.get("/news/company", response_model=list[NewsItem])
+def get_company_news(
+    ticker: str = Query(..., min_length=1),
+    days: int = Query(7, ge=1, le=30),
+) -> list[NewsItem]:
+    cache_key = f"company:{ticker}:{days}"
+    now = _time.time()
+    if cache_key in _news_cache:
+        ts, data = _news_cache[cache_key]
+        if now - ts < _NEWS_COMPANY_TTL:
+            return [NewsItem(**n) for n in data]
+
+    key_param = _finnhub_key()
+    end_dt = dt.datetime.now(dt.timezone.utc)
+    start_dt = end_dt - dt.timedelta(days=days)
+    try:
+        resp = requests.get(
+            f"{_FINNHUB_BASE}/company-news",
+            params={
+                "symbol": ticker.upper(),
+                "from": start_dt.strftime("%Y-%m-%d"),
+                "to": end_dt.strftime("%Y-%m-%d"),
+                "token": key_param,
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Finnhub company news failed: {exc}") from exc
+
+    items = [
+        {
+            "id": n.get("id", ""),
+            "headline": n.get("headline", ""),
+            "summary": n.get("summary", ""),
+            "source": n.get("source", ""),
+            "url": n.get("url", ""),
+            "datetime": n.get("datetime", 0),
+            "category": n.get("category", "company"),
+            "related": ticker.upper(),
+            "image": n.get("image") or None,
+        }
+        for n in resp.json()[:20]
+    ]
+    _news_cache[cache_key] = (now, items)
+    return [NewsItem(**n) for n in items]
+
+
+# ── /screener ──────────────────────────────────────────────────────────────────
+
+import statistics as _statistics
+
+
+def _compute_rsi(closes: list[float], period: int = 14) -> float | None:
+    if len(closes) < period + 1:
+        return None
+    gains, losses = [], []
+    for i in range(1, period + 1):
+        diff = closes[-period - 1 + i] - closes[-period - 2 + i]
+        (gains if diff >= 0 else losses).append(abs(diff))
+    avg_g = sum(gains) / period if gains else 0
+    avg_l = sum(losses) / period if losses else 0
+    if avg_l == 0:
+        return 100.0
+    rs = avg_g / avg_l
+    return round(100 - 100 / (1 + rs), 2)
+
+
+def _ema_val(closes: list[float], period: int) -> float | None:
+    if len(closes) < period:
+        return None
+    k = 2 / (period + 1)
+    ema = sum(closes[:period]) / period
+    for c in closes[period:]:
+        ema = c * k + ema * (1 - k)
+    return ema
+
+
+class ScreenerResult(BaseModel):
+    instrument_id: str
+    last_price: float
+    rsi14: float | None
+    ema12: float | None
+    ema26: float | None
+    ema_signal: str  # "bullish_cross" | "bearish_cross" | "above" | "below" | "neutral"
+    change_pct: float | None
+
+
+@app.get("/screener", response_model=list[ScreenerResult])
+def run_screener(
+    instruments: str = Query(..., description="Comma-separated instrument IDs"),
+    rsi_min: float | None = Query(None),
+    rsi_max: float | None = Query(None),
+    ema_signal: str | None = Query(None, description="bullish_cross|bearish_cross|above|below"),
+    days: int = Query(60, ge=20, le=365),
+) -> list[ScreenerResult]:
+    from catalog.client import CatalogClient  # type: ignore
+
+    ids = [s.strip() for s in instruments.split(",") if s.strip()][:30]
+    client = CatalogClient()
+    results: list[ScreenerResult] = []
+
+    end = dt.datetime.now(dt.timezone.utc)
+    start = end - dt.timedelta(days=days)
+
+    for inst in ids:
+        try:
+            bars = client.get_bars(inst, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
+            if not bars or len(bars) < 15:
+                continue
+            closes = [b["close"] for b in bars]
+            last = closes[-1]
+            prev = closes[-2] if len(closes) >= 2 else last
+            rsi = _compute_rsi(closes)
+            e12 = _ema_val(closes, 12)
+            e26 = _ema_val(closes, 26)
+            e12_prev = _ema_val(closes[:-1], 12)
+            e26_prev = _ema_val(closes[:-1], 26)
+
+            sig = "neutral"
+            if e12 and e26:
+                if e12_prev and e26_prev:
+                    if e12_prev <= e26_prev and e12 > e26:
+                        sig = "bullish_cross"
+                    elif e12_prev >= e26_prev and e12 < e26:
+                        sig = "bearish_cross"
+                    elif e12 > e26:
+                        sig = "above"
+                    else:
+                        sig = "below"
+
+            # apply filters
+            if rsi_min is not None and (rsi is None or rsi < rsi_min):
+                continue
+            if rsi_max is not None and (rsi is None or rsi > rsi_max):
+                continue
+            if ema_signal and sig != ema_signal:
+                continue
+
+            results.append(ScreenerResult(
+                instrument_id=inst,
+                last_price=round(last, 2),
+                rsi14=rsi,
+                ema12=round(e12, 2) if e12 else None,
+                ema26=round(e26, 2) if e26 else None,
+                ema_signal=sig,
+                change_pct=round((last - prev) / prev * 100, 2) if prev else None,
+            ))
+        except Exception:
+            continue
+
+    return results

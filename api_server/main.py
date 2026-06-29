@@ -3355,3 +3355,57 @@ def insider_kr_recent(
         )
         for r in rows
     ]
+
+
+# ── /calendar/economic ─────────────────────────────────────────────────────────
+
+import time as _time
+
+_cal_cache: dict[str, tuple[float, list]] = {}
+_CAL_TTL = 600  # 10 min
+
+
+class EconomicEvent(BaseModel):
+    title: str
+    country: str
+    date: str
+    impact: str
+    forecast: str | None = None
+    previous: str | None = None
+    actual: str | None = None
+
+
+@app.get("/calendar/economic", response_model=list[EconomicEvent])
+def get_economic_calendar(week: str = Query("this", pattern="^(this|next)$")) -> list[EconomicEvent]:
+    now = _time.time()
+    if week in _cal_cache:
+        ts, data = _cal_cache[week]
+        if now - ts < _CAL_TTL:
+            return [EconomicEvent(**e) for e in data]
+
+    url = f"https://nfs.faireconomy.media/ff_calendar_{week}week.json"
+    try:
+        resp = requests.get(
+            url,
+            timeout=12,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; seokminal-dashboard/1.0)"},
+        )
+        resp.raise_for_status()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"ForexFactory fetch failed: {exc}") from exc
+
+    raw = resp.json()
+    events = []
+    for item in raw:
+        events.append({
+            "title":    item.get("title", ""),
+            "country":  item.get("country", ""),
+            "date":     item.get("date", ""),
+            "impact":   item.get("impact", ""),
+            "forecast": item.get("forecast") or None,
+            "previous": item.get("previous") or None,
+            "actual":   item.get("actual") or None,
+        })
+
+    _cal_cache[week] = (now, events)
+    return [EconomicEvent(**e) for e in events]

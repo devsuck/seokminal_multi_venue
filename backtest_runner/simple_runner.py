@@ -157,11 +157,10 @@ def _simulate_trades(
                     "qty": float(trade_size),
                     "pnl": round(pnl, 6),
                 })
-                position = 0
-            elif position == 0:
-                entry_price = price
-                entry_ts_ns = ts
-                position = -1
+            # Always open SHORT unconditionally
+            entry_price = price
+            entry_ts_ns = ts
+            position = -1
 
     # Close any open position at last bar
     if position != 0 and entry_price is not None and closes:

@@ -62,10 +62,30 @@ def test_simulate_trades_long_exit_pnl():
     ts = [1_000_000, 2_000_000, 3_000_000]
     signals = ["BUY", "HOLD", "SELL"]
     trades = _simulate_trades(closes, ts, signals, trade_size=5)
-    # BUY at 100, SELL at 110 → PnL = (110-100)*5 = 50
-    assert len(trades) == 1
-    assert trades[0]["pnl"] == pytest.approx(50.0)
-    assert trades[0]["side"] == "LONG"
+    # SELL at 110: closes LONG (PnL=+50) and opens SHORT; SHORT auto-closed at same 110 (PnL=0)
+    assert len(trades) == 2
+    long_trade = trades[0]
+    assert long_trade["side"] == "LONG"
+    assert long_trade["pnl"] == pytest.approx(50.0)
+    short_trade = trades[1]
+    assert short_trade["side"] == "SHORT"
+    assert short_trade["pnl"] == pytest.approx(0.0)
+
+
+def test_simulate_trades_short_exit_pnl():
+    closes = [100.0, 100.0, 90.0]
+    ts = [1_000_000, 2_000_000, 3_000_000]
+    signals = ["SELL", "HOLD", "BUY"]
+    trades = _simulate_trades(closes, ts, signals, trade_size=5)
+    # SELL at 100 → open SHORT; BUY at 90 → close SHORT (PnL = (100-90)*5 = 50) + open LONG
+    # LONG auto-closed at 90 → PnL = 0
+    assert len(trades) == 2
+    short_trade = trades[0]
+    assert short_trade["side"] == "SHORT"
+    assert short_trade["pnl"] == pytest.approx(50.0)
+    long_trade = trades[1]
+    assert long_trade["side"] == "LONG"
+    assert long_trade["pnl"] == pytest.approx(0.0)
 
 
 def test_simulate_trades_open_position_closed_at_last_bar():

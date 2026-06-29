@@ -40,6 +40,9 @@ class _BotRunState:
     error: str | None = None
     subscribers: set = field(default_factory=set)  # WebSocket connections
     entry_price: float | None = None  # price when position was entered
+    entry_ts_ns: int | None = None                           # timestamp when position was entered
+    closed_trades: list[dict] = field(default_factory=list)  # last 200 closed trades
+    signal_log: list[dict] = field(default_factory=list)     # last 100 signal changes
 
 
 # ── Engine ────────────────────────────────────────────────────────────────────
@@ -140,12 +143,26 @@ class LiveBotEngine:
                     if fast > slow:
                         signal = "EMA_BUY"
                         if state.position <= 0:
+                            # Close SHORT if was in a short position
+                            if state.position < 0 and state.entry_price is not None:
+                                pnl = (state.entry_price - tick.price) * state.trade_size
+                                state.closed_trades.append({
+                                    "entry_ts_ns": state.entry_ts_ns,
+                                    "exit_ts_ns": tick.ts_ns,
+                                    "side": "SHORT",
+                                    "entry_price": state.entry_price,
+                                    "exit_price": tick.price,
+                                    "qty": state.trade_size,
+                                    "pnl": round(pnl, 6),
+                                })
+                                state.closed_trades = state.closed_trades[-200:]
                             try:
                                 result = await state.broker.place_order(
                                     state.instrument_id, "BUY", state.trade_size, "MARKET"
                                 )
                                 state.orders.append(result)
-                                state.entry_price = tick.price  # record entry
+                                state.entry_price = tick.price
+                                state.entry_ts_ns = tick.ts_ns
                                 state.position = 1
                                 log.info("bot %s: BUY %s @ %.2f", state.bot_id, state.instrument_id, tick.price)
                             except Exception as exc:
@@ -154,12 +171,26 @@ class LiveBotEngine:
                     elif fast < slow:
                         signal = "EMA_SELL"
                         if state.position >= 0:
+                            # Close LONG if was in a long position
+                            if state.position > 0 and state.entry_price is not None:
+                                pnl = (tick.price - state.entry_price) * state.trade_size
+                                state.closed_trades.append({
+                                    "entry_ts_ns": state.entry_ts_ns,
+                                    "exit_ts_ns": tick.ts_ns,
+                                    "side": "LONG",
+                                    "entry_price": state.entry_price,
+                                    "exit_price": tick.price,
+                                    "qty": state.trade_size,
+                                    "pnl": round(pnl, 6),
+                                })
+                                state.closed_trades = state.closed_trades[-200:]
                             try:
                                 result = await state.broker.place_order(
                                     state.instrument_id, "SELL", state.trade_size, "MARKET"
                                 )
                                 state.orders.append(result)
-                                state.entry_price = tick.price  # record entry
+                                state.entry_price = tick.price
+                                state.entry_ts_ns = tick.ts_ns
                                 state.position = -1
                                 log.info("bot %s: SELL %s @ %.2f", state.bot_id, state.instrument_id, tick.price)
                             except Exception as exc:
@@ -168,9 +199,25 @@ class LiveBotEngine:
                     else:
                         signal = "HOLD"
 
+                    # Record signal change (not every tick — only on change)
+                    if signal != state.last_signal:
+                        state.signal_log.append({
+                            "ts_ns": tick.ts_ns,
+                            "signal": signal,
+                            "price": tick.price,
+                        })
+                        state.signal_log = state.signal_log[-100:]
+
                     state.last_signal = signal
                 else:
                     signal = "WARMING_UP"
+                    if signal != state.last_signal:
+                        state.signal_log.append({
+                            "ts_ns": tick.ts_ns,
+                            "signal": signal,
+                            "price": tick.price,
+                        })
+                        state.signal_log = state.signal_log[-100:]
                     state.last_signal = signal
 
                 # Push to WebSocket subscribers

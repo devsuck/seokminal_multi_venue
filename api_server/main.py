@@ -587,8 +587,12 @@ def _load_bots() -> dict[str, dict]:
     return {}
 
 
-def _save_bots(bots: dict[str, dict]) -> None:
-    BOTS_FILE.write_text(json.dumps(bots, indent=2))
+def _save_bots(b: dict[str, dict]) -> None:
+    BOTS_FILE.write_text(json.dumps(b, indent=2))
+
+
+# Module-level in-memory bot registry (loaded once at startup; tests manipulate directly)
+bots: dict[str, dict] = _load_bots()
 
 
 @app.get("/bots", response_model=list[BotRecord])
@@ -672,6 +676,34 @@ class LiveBotStatusResponse(BaseModel):
     last_signal: str | None
     recent_orders: list[dict]
     error: str | None
+
+
+# ── Bot trade/signal log models ────────────────────────────────────────────────
+
+class ClosedTrade(BaseModel):
+    entry_ts_ns: int | None
+    exit_ts_ns: int
+    side: str  # "LONG" | "SHORT"
+    entry_price: float
+    exit_price: float
+    qty: int
+    pnl: float
+
+
+class SignalEntry(BaseModel):
+    ts_ns: int
+    signal: str
+    price: float
+
+
+class BotTradeLogResponse(BaseModel):
+    bot_id: str
+    trades: list[ClosedTrade]
+
+
+class BotSignalLogResponse(BaseModel):
+    bot_id: str
+    signals: list[SignalEntry]
 
 
 @app.get("/bots/{bot_id}/live-status", response_model=LiveBotStatusResponse)
@@ -2536,6 +2568,35 @@ def get_all_bots_live_status() -> AllBotsStatusResponse:
                 )
             )
     return AllBotsStatusResponse(bots=entries)
+
+
+# ── Bot detail / trade log / signal log endpoints ──────────────────────────────
+# IMPORTANT: GET /bots/{bot_id} is placed here, AFTER /bots/all-live-status,
+# so that "all-live-status" is not captured as a bot_id.
+
+@app.get("/bots/{bot_id}", response_model=BotRecord)
+def get_bot(bot_id: str) -> BotRecord:
+    if bot_id not in bots:
+        raise HTTPException(status_code=404, detail=f"bot {bot_id!r} not found")
+    return BotRecord(**bots[bot_id])
+
+
+@app.get("/bots/{bot_id}/trades", response_model=BotTradeLogResponse)
+def get_bot_trade_log(bot_id: str) -> BotTradeLogResponse:
+    if bot_id not in bots:
+        raise HTTPException(status_code=404, detail=f"bot {bot_id!r} not found")
+    state = live_engine._running.get(bot_id)
+    trades = [ClosedTrade(**t) for t in (state.closed_trades if state else [])]
+    return BotTradeLogResponse(bot_id=bot_id, trades=trades)
+
+
+@app.get("/bots/{bot_id}/signals", response_model=BotSignalLogResponse)
+def get_bot_signal_log(bot_id: str) -> BotSignalLogResponse:
+    if bot_id not in bots:
+        raise HTTPException(status_code=404, detail=f"bot {bot_id!r} not found")
+    state = live_engine._running.get(bot_id)
+    signals = [SignalEntry(**s) for s in (state.signal_log if state else [])]
+    return BotSignalLogResponse(bot_id=bot_id, signals=signals)
 
 
 # ── Alert System ──────────────────────────────────────────────

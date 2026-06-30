@@ -1504,19 +1504,23 @@ def get_krx_index(
 
     rows = []
     for r in rows_raw:
-        def _f(k: str) -> float | None:
-            try: return float(str(r.get(k, "")).replace(",", ""))
-            except (TypeError, ValueError): return None
+        def _f(*keys: str) -> float | None:
+            for k in keys:
+                v = r.get(k, "")
+                if v and str(v).strip():
+                    try: return float(str(v).replace(",", ""))
+                    except (TypeError, ValueError): pass
+            return None
         rows.append(KRXIndexRow(
-            bas_dd=r.get("basDd", bas_dd),
-            idx_nm=r.get("idxNm") or r.get("idx_nm"),
-            clpr=_f("clpr") or _f("cls_prc"),
-            vs=_f("vs"),
-            flt_rt=_f("fltRt") or _f("flt_rt"),
-            opn_prc=_f("opnPrc") or _f("opn_prc"),
-            hgpr=_f("hgpr"),
-            lwpr=_f("lwpr"),
-            acc_trdvol=_f("accTrdvol") or _f("acc_trdvol"),
+            bas_dd=r.get("BAS_DD") or r.get("basDd", bas_dd),
+            idx_nm=r.get("IDX_NM") or r.get("idxNm") or r.get("idx_nm"),
+            clpr=_f("CLSPRC_IDX", "clpr", "cls_prc"),
+            vs=_f("CMPPREVDD_IDX", "vs"),
+            flt_rt=_f("FLUC_RT", "fltRt", "flt_rt"),
+            opn_prc=_f("OPNPRC_IDX", "opnPrc", "opn_prc"),
+            hgpr=_f("HGPRC_IDX", "hgpr"),
+            lwpr=_f("LWPRC_IDX", "lwpr"),
+            acc_trdvol=_f("ACC_TRDVOL", "accTrdvol", "acc_trdvol"),
             raw=r,
         ))
     return KRXIndexResponse(bas_dd=bas_dd, index_type=index_type, rows=rows)
@@ -3234,7 +3238,7 @@ class DartCompany(BaseModel):
 class InsiderTrade(BaseModel):
     trade_date: str
     reporter: str
-    trade_type: str          # BUY / SELL / OTHER
+    trade_type: str          # BUY / SELL / RIGHTS_ISSUE / PAID_IN / CANCELLATION / HOLD_REPORT
     shares_change: int | None = None
     shares: float | None = None
     price_per_share: float | None = None
@@ -3246,6 +3250,9 @@ class InsiderTrade(BaseModel):
     corp_name: str | None = None
     ticker: str | None = None
     issuer: str | None = None
+    role: str | None = None          # KR: 직책 (대표이사, 사외이사 등)
+    event_cause: str | None = None   # KR: 증감원인 (장내매수, 무상증자 등)
+    dart_url: str | None = None      # KR: 공시 원문 링크
 
 
 @app.get("/insider/kr/search", response_model=list[DartCompany])
@@ -3282,6 +3289,9 @@ def insider_kr(
             ownership_pct=r["ownership_pct"],
             report_type=r["report_type"],
             corp_name=r["corp_name"],
+            role=r.get("role") or None,
+            event_cause=r.get("event_cause") or None,
+            dart_url=r.get("dart_url") or None,
         )
         for r in rows
     ]
@@ -3362,6 +3372,9 @@ def insider_kr_recent(
             report_type=r["report_type"],
             corp_name=r["corp_name"],
             ticker=r.get("stock_code"),
+            role=r.get("role") or None,
+            event_cause=r.get("event_cause") or None,
+            dart_url=r.get("dart_url") or None,
         )
         for r in rows
     ]
@@ -3372,7 +3385,7 @@ def insider_kr_recent(
 import time as _time
 
 _cal_cache: dict[str, tuple[float, list]] = {}
-_CAL_TTL = 600  # 10 min
+_CAL_TTL = 60  # matches ForexFactory CDN max-age
 
 
 class EconomicEvent(BaseModel):
@@ -3459,6 +3472,69 @@ def get_fear_greed() -> FearGreedResponse:
     }
     _fg_cache["fg"] = (now, data)
     return FearGreedResponse(**data)
+
+
+def _classify_fg(v: int) -> str:
+    if v <= 24: return "Extreme Fear"
+    if v <= 44: return "Fear"
+    if v <= 55: return "Neutral"
+    if v <= 74: return "Greed"
+    return "Extreme Greed"
+
+
+@app.get("/macro/fear-greed/markets")
+def get_fg_markets() -> dict:
+    import yfinance as yf
+    now = _time.time()
+
+    # ── Crypto (Alternative.me) ─────────────────────────────────────────────
+    crypto_val, crypto_cls = 50, "Neutral"
+    try:
+        if "fg" in _fg_cache and now - _fg_cache["fg"][0] < _FG_TTL:
+            d = _fg_cache["fg"][1]
+            crypto_val, crypto_cls = d["value"], d["classification"]
+        else:
+            r = requests.get("https://api.alternative.me/fng/?limit=1", timeout=6,
+                             headers={"User-Agent": "seokminal/1.0"})
+            raw = r.json()["data"][0]
+            crypto_val = int(raw["value"])
+            crypto_cls = raw["value_classification"]
+            _fg_cache["fg"] = (now, {"value": crypto_val, "classification": crypto_cls, "timestamp": raw["timestamp"]})
+    except Exception:
+        pass
+
+    # ── US (CNN Fear & Greed) ───────────────────────────────────────────────
+    us_val, us_cls = 50, "Neutral"
+    try:
+        r = requests.get(
+            "https://production.dataviz.cnn.io/index/fearandgreed/graphdata",
+            timeout=6, headers={"User-Agent": "Mozilla/5.0"}
+        )
+        fg = r.json()["fear_and_greed"]
+        us_val = int(float(fg["score"]))
+        us_cls = _classify_fg(us_val)
+    except Exception:
+        pass
+
+    # ── KR (KOSPI 20d momentum proxy) ──────────────────────────────────────
+    kr_val, kr_cls = 50, "Neutral"
+    try:
+        ks = yf.download("^KS11", period="25d", progress=False, auto_adjust=True)
+        closes = ks["Close"].dropna()
+        if len(closes) >= 10:
+            ret_5d  = (closes.iloc[-1] / closes.iloc[-6]  - 1) * 100
+            ret_20d = (closes.iloc[-1] / closes.iloc[-21] - 1) * 100 if len(closes) >= 21 else ret_5d
+            score = 50 + ret_5d * 4 + ret_20d * 1.5
+            kr_val = max(0, min(100, int(score)))
+            kr_cls = _classify_fg(kr_val)
+    except Exception:
+        pass
+
+    return {
+        "crypto": {"value": crypto_val, "classification": crypto_cls},
+        "us":     {"value": us_val,     "classification": us_cls},
+        "kr":     {"value": kr_val,     "classification": kr_cls},
+    }
 
 
 # ── /news/* (Finnhub) ──────────────────────────────────────────────────────────
@@ -3776,3 +3852,247 @@ def hl_close_position(req: HLCloseRequest) -> dict:
         return {"status": "ok", "result": result}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"HL close failed: {e}") from e
+
+# ── Quant Advanced Routes (Group 3) ──────────────────────────────────────────
+from api_server.router_quant3 import router as quant3_router
+app.include_router(quant3_router)
+
+
+# ── Quant Advanced Routes (Group 2) ──────────────────────────────────────────
+from api_server.router_quant2 import router as quant2_router
+app.include_router(quant2_router)
+
+
+# ── Quant Advanced Routes (Group 1) ──────────────────────────────────────────
+from api_server.router_quant1 import router as quant1_router
+app.include_router(quant1_router)
+
+
+# ── Alpaca Autopilot ──────────────────────────────────────────────────────────
+from api_server.router_autopilot import router as autopilot_router
+app.include_router(autopilot_router)
+
+
+# ── Market Overview ───────────────────────────────────────────────────────────
+_FX_CACHE: dict = {}
+_FX_TTL = 60
+
+@app.get("/forex/overview")
+def forex_overview() -> dict:
+    import yfinance as yf
+    now = _time.time()
+    if "d" in _FX_CACHE and now - _FX_CACHE["d"][0] < _FX_TTL:
+        return _FX_CACHE["d"][1]
+
+    PAIRS = {
+        "EUR/USD": "EURUSD=X", "GBP/USD": "GBPUSD=X", "USD/JPY": "USDJPY=X",
+        "USD/CHF": "USDCHF=X", "AUD/USD": "AUDUSD=X", "NZD/USD": "NZDUSD=X",
+        "USD/CAD": "USDCAD=X", "USD/KRW": "USDKRW=X", "USD/CNY": "USDCNY=X",
+        "EUR/GBP": "EURGBP=X", "EUR/JPY": "EURJPY=X", "GBP/JPY": "GBPJPY=X",
+    }
+    result = {}
+    for pair, sym in PAIRS.items():
+        try:
+            hist = yf.Ticker(sym).history(period="5d", interval="1d", auto_adjust=True)
+            closes = hist["Close"].dropna()
+            if len(closes) < 2:
+                result[pair] = {"rate": None, "change_pct": None, "change_5d": None}
+                continue
+            rate = float(closes.iloc[-1])
+            chg1d = (rate - float(closes.iloc[-2])) / float(closes.iloc[-2]) * 100
+            chg5d = (rate - float(closes.iloc[0]))  / float(closes.iloc[0])  * 100
+            result[pair] = {
+                "rate":       round(rate, 4),
+                "change_pct": round(chg1d, 3),
+                "change_5d":  round(chg5d, 3),
+            }
+        except Exception:
+            result[pair] = {"rate": None, "change_pct": None, "change_5d": None}
+
+    _FX_CACHE["d"] = (now, result)
+    return result
+
+
+@app.get("/market-overview")
+def market_overview() -> dict:
+    import yfinance as yf  # type: ignore
+    TICKERS = {
+        "sp500":   "^GSPC",
+        "nasdaq":  "^IXIC",
+        "usdkrw":  "USDKRW=X",
+        "btcusd":  "BTC-USD",
+        "vix":     "^VIX",
+        "gold":    "GC=F",
+    }
+    result = {}
+    for key, symbol in TICKERS.items():
+        try:
+            t = yf.Ticker(symbol)
+            hist = t.history(period="2d", interval="1d")
+            if len(hist) >= 2:
+                prev_close = float(hist["Close"].iloc[-2])
+                last_close = float(hist["Close"].iloc[-1])
+                change_pct = (last_close - prev_close) / prev_close * 100
+            elif len(hist) == 1:
+                last_close = float(hist["Close"].iloc[-1])
+                change_pct = 0.0
+            else:
+                result[key] = {"value": None, "change_pct": None}
+                continue
+            result[key] = {"value": round(last_close, 4), "change_pct": round(change_pct, 2)}
+        except Exception:
+            result[key] = {"value": None, "change_pct": None}
+    return result
+
+
+# ── /claude/usage ──────────────────────────────────────────────────────────────
+
+_usage_cache: dict = {}
+_USAGE_TTL = 300  # 5 min
+
+@app.get("/claude/usage")
+def get_claude_usage() -> dict:
+    import glob, json as _json
+    from datetime import datetime, timedelta, timezone
+
+    now = _time.time()
+    if "u" in _usage_cache and now - _usage_cache["u"][0] < _USAGE_TTL:
+        return _usage_cache["u"][1]
+
+    home = _os.path.expanduser("~")
+    projects_dir = _os.path.join(home, ".claude", "projects")
+    utc_now = datetime.now(timezone.utc)
+    today_str = utc_now.strftime("%Y-%m-%d")
+    week_ago = utc_now - timedelta(days=7)
+
+    daily_in = daily_out = 0
+    weekly_in = weekly_out = 0
+
+    for jsonl_file in glob.glob(_os.path.join(projects_dir, "**", "*.jsonl"), recursive=True):
+        try:
+            with open(jsonl_file, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    try:
+                        obj = _json.loads(line)
+                        ts = obj.get("timestamp", "")
+                        if not ts:
+                            continue
+                        msg = obj.get("message", {})
+                        if not isinstance(msg, dict):
+                            continue
+                        usage = msg.get("usage", {})
+                        if not usage:
+                            continue
+                        inp = int(usage.get("input_tokens", 0) or 0)
+                        out = int(usage.get("output_tokens", 0) or 0)
+                        if inp == 0 and out == 0:
+                            continue
+                        if ts[:10] == today_str:
+                            daily_in += inp
+                            daily_out += out
+                        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                        if dt >= week_ago:
+                            weekly_in += inp
+                            weekly_out += out
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    result = {
+        "daily":  {"input": daily_in,  "output": daily_out,  "total": daily_in  + daily_out},
+        "weekly": {"input": weekly_in, "output": weekly_out, "total": weekly_in + weekly_out},
+        "daily_cap":  2_000_000,
+        "weekly_cap": 25_000_000,
+    }
+    _usage_cache["u"] = (now, result)
+    return result
+
+
+# ── Groq Summary ──────────────────────────────────────────────────────────────
+
+class GroqSummarizeRequest(BaseModel):
+    content: str
+    mode: str = "news"  # "news" | "calendar"
+
+
+class StockPick(BaseModel):
+    symbol: str
+    direction: str  # "up" | "down" | "neutral"
+
+
+class GroqSummarizeResponse(BaseModel):
+    summary: str
+    picks: list[StockPick] = []
+
+
+@app.post("/groq/summarize", response_model=GroqSummarizeResponse)
+def groq_summarize(body: GroqSummarizeRequest) -> GroqSummarizeResponse:
+    import re
+    from openai import OpenAI
+
+    picks_instruction = """
+마지막 줄에 반드시 아래 형식으로 관련 미국 주식 티커 추가 (언급된 종목만, 없으면 생략):
+STOCKS: NVDA↑ AAPL↓ MSFT↑
+규칙: 티커↑(상승전망) 티커↓(하락전망) — 최대 5개, 미국 상장 종목만"""
+
+    if body.mode == "calendar":
+        system = """당신은 매크로 트레이딩 전략가입니다. 이번 주 경제지표 일정을 보고 투자 전략을 한국어로 작성하세요.
+
+형식 규칙:
+- 마크다운 헤더(#, ##) 절대 금지
+- **볼드** 절대 금지
+- 각 항목은 "· " 으로 시작
+- 4~6개 항목, 각 항목 1~2문장
+- 반드시 포함: 상승 전망 자산, 하락 전망 자산, 주목 섹터, 핵심 리스크
+
+예시:
+· 이번 주 미국 CPI 발표 예정으로 인플레이션 둔화 시 나스닥 상승 전망.
+· 달러 약세 가능성으로 금, 신흥국 통화가 수혜를 받을 전망.
+· 에너지 섹터는 공급 우려로 강세 흐름 유지될 것으로 보임.
+· 영국 GDP 발표 부진 시 파운드화 하락 리스크 주의.""" + picks_instruction
+    else:
+        system = """당신은 매크로 트레이딩 전략가입니다. 뉴스 헤드라인을 보고 투자 전략을 한국어로 작성하세요.
+
+형식 규칙:
+- 마크다운 헤더(#, ##) 절대 금지
+- **볼드** 절대 금지
+- 각 항목은 "· " 으로 시작
+- 4~6개 항목, 각 항목 1~2문장
+- 반드시 포함: 오를 전망 자산/섹터, 떨어질 전망 자산/섹터, 핵심 리스크, 단기 전략
+
+예시:
+· 연준 금리 동결로 성장주 중심 나스닥이 단기 상승 전망.
+· 유가 하락세로 에너지 섹터는 약세, 항공·물류 섹터는 수혜 기대.
+· 미-이란 긴장 완화 시 위험자산 선호 심리 강화될 전망.
+· 기술 섹터 AI 투자 확대로 반도체 관련주 강세 흐름 지속 예상.""" + picks_instruction
+
+    client = OpenAI(
+        base_url="https://api.groq.com/openai/v1",
+        api_key=os.environ["GROQ_API_KEY"],
+    )
+    resp = client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        max_tokens=500,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user",   "content": body.content[:6000]},
+        ],
+    )
+    raw = resp.choices[0].message.content.strip()
+
+    # Parse STOCKS: line and remove from summary
+    lines = raw.split("\n")
+    stocks_line = next((l for l in lines if l.strip().startswith("STOCKS:")), None)
+    clean_lines = [l for l in lines if not l.strip().startswith("STOCKS:")]
+    summary = "\n".join(clean_lines).strip()
+
+    picks: list[StockPick] = []
+    if stocks_line:
+        for m in re.finditer(r"([A-Z]{1,5})(↑|↓)", stocks_line):
+            sym, arrow = m.group(1), m.group(2)
+            picks.append(StockPick(symbol=sym, direction="up" if arrow == "↑" else "down"))
+
+    return GroqSummarizeResponse(summary=summary, picks=picks)

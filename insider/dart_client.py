@@ -69,23 +69,44 @@ def get_executive_stock_changes(
 
     rows = []
     for item in data.get("list", []):
-        # stkqy_irds: 주식수 증감 (양수=취득, 음수=처분)
-        irds_str = item.get("stkqy_irds", "0").replace(",", "").replace("-", "") or "0"
         irds_raw = item.get("stkqy_irds", "0").replace(",", "") or "0"
         try:
             irds = int(irds_raw)
         except ValueError:
             irds = 0
 
+        cause = (item.get("irds_cause_nm") or item.get("stkqy_irds_incls_nmis_nm") or "").strip()
+        role  = (item.get("rl_nm") or "").strip()
+
+        # Classify by cause text first, fall back to shares_change sign
+        cause_lower = cause.lower()
+        if any(k in cause_lower for k in ("무상증자", "주식배당", "분할")):
+            trade_type = "RIGHTS_ISSUE"
+        elif any(k in cause_lower for k in ("유상증자", "신주인수")):
+            trade_type = "PAID_IN"
+        elif any(k in cause_lower for k in ("소각", "자사주소각")):
+            trade_type = "CANCELLATION"
+        elif irds > 0:
+            trade_type = "BUY"
+        elif irds < 0:
+            trade_type = "SELL"
+        else:
+            trade_type = "HOLD_REPORT"  # 변동없이 보고의무만 발생
+
+        rcept_no = item.get("rcept_no", "")
         rows.append({
-            "rcept_dt": item.get("rcept_dt", ""),          # 접수일자
-            "reporter": item.get("reprer_nm", ""),           # 보고자명
-            "report_type": item.get("rcept_type", ""),       # 보고구분
-            "shares_change": irds,                           # 주식수 증감 (양=취득, 음=처분)
-            "shares_total": _parse_int(item.get("stkqy", "0")),
+            "rcept_dt":      item.get("rcept_dt", ""),
+            "rcept_no":      rcept_no,
+            "dart_url":      f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}" if rcept_no else None,
+            "reporter":      item.get("reprer_nm", ""),
+            "role":          role,
+            "report_type":   item.get("rcept_type", ""),
+            "event_cause":   cause,
+            "shares_change": irds,
+            "shares_total":  _parse_int(item.get("stkqy", "0")),
             "ownership_pct": _parse_float(item.get("ctr_rate", "0")),
-            "corp_name": item.get("corp_name", ""),
-            "trade_type": "BUY" if irds > 0 else "SELL" if irds < 0 else "OTHER",
+            "corp_name":     item.get("corp_name", ""),
+            "trade_type":    trade_type,
         })
     return rows
 

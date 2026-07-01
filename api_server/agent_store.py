@@ -18,10 +18,18 @@ from pathlib import Path
 # are data, not code, so a new strategy is a new row rather than a new branch.
 AGENT_PROFILES: dict[str, dict] = {
     "swing": {
-        "label": "스윙/중장기",
+        "label": "스윙",
         "cadence_seconds": 8 * 3600,
         "universe_size": 10,
         "buy_score_threshold": 18,  # of 40
+        "force_eod_close": False,
+    },
+    "longterm": {
+        # 장기투자 — 스윙과 동일 실행 경로, 주기만 길게(주 단위 점검).
+        "label": "장투",
+        "cadence_seconds": 7 * 24 * 3600,
+        "universe_size": 15,
+        "buy_score_threshold": 16,  # of 40
         "force_eod_close": False,
     },
     "daytrade": {

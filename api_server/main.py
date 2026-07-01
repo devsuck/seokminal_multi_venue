@@ -3844,6 +3844,103 @@ def copytrade_positions() -> list[dict]:
         raise HTTPException(status_code=502, detail=f"포지션 조회 실패: {exc}") from exc
 
 
+# ── DART 기업행위 오토파일럿 (페이퍼/KIS 모의) ────────────────────────────────────
+# 자사주 취득·소각=호재(매수), 유상증자=악재(회피). 개인 내부자 매매는 5영업일
+# 지연이라 제외. 페이퍼(KIS 모의)로만 집행.
+
+_DART_ACTION = {
+    "BUYBACK":      ("자사주 취득", "BUY",   "호재"),
+    "CANCELLATION": ("자사주 소각", "BUY",   "호재"),
+    "PAID_IN":      ("유상증자",   "AVOID", "악재(희석)"),
+    "DISPOSAL":     ("자사주 처분", "AVOID", "약악재"),
+    "RIGHTS_ISSUE": ("무상증자",   "SKIP",  "중립"),
+}
+
+
+class DartSignal(BaseModel):
+    corp_name: str
+    ticker: str | None = None
+    action_type: str      # BUYBACK / CANCELLATION / ...
+    action_label: str     # 자사주 취득 등
+    verdict: str          # BUY / AVOID / SKIP
+    note: str             # 호재/악재/중립
+    date: str             # 접수일 (YYYYMMDD)
+    dart_url: str | None = None
+
+
+@app.get("/dart/signals", response_model=list[DartSignal])
+def dart_signals(days: int = Query(14, ge=1, le=60), max_items: int = Query(50, ge=10, le=100)) -> list[DartSignal]:
+    """최근 DART 기업행위 → 매매 판정(자사주=매수/증자=회피). 최신순."""
+    try:
+        rows = _dart_corp_actions(days=days, max_items=max_items)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"DART error: {exc}") from exc
+    out = []
+    for r in rows:
+        label, verdict, note = _DART_ACTION.get(r["trade_type"], (r["trade_type"], "SKIP", "—"))
+        out.append(DartSignal(
+            corp_name=r.get("corp_name", ""), ticker=r.get("ticker"),
+            action_type=r["trade_type"], action_label=label, verdict=verdict, note=note,
+            date=r.get("trade_date", ""), dart_url=r.get("dart_url"),
+        ))
+    return out
+
+
+class DartMirrorRequest(BaseModel):
+    code: str          # 6자리 종목코드
+    krw: float = 1000000.0  # 미러 1건당 원화 예산
+
+
+@app.post("/dart/mirror")
+def dart_mirror(body: DartMirrorRequest) -> dict:
+    """KIS 모의 계좌에 시장가 매수 (원화 예산 → 주식수). 실계좌 아님."""
+    code = body.code.strip().split(".")[0]
+    # 현재가 (yfinance .KS) → 주식수
+    try:
+        import yfinance as yf
+        px = float(yf.Ticker(f"{code}.KS").history(period="1d")["Close"].iloc[-1])
+    except Exception:
+        px = 0.0
+    if px <= 0:
+        raise HTTPException(status_code=502, detail=f"{code} 현재가 조회 실패")
+    qty = int(body.krw // px)
+    if qty < 1:
+        raise HTTPException(status_code=400, detail=f"예산 부족 (현재가 ₩{px:,.0f}, 최소 1주)")
+    from backends.kis.order_client import KISOrderClient
+    kk, ks, kc = (os.environ.get("KIS_MOCK_APP_KEY", ""), os.environ.get("KIS_MOCK_APP_SECRET", ""), os.environ.get("KIS_MOCK_CANO", ""))
+    if not (kk and ks and kc):
+        raise HTTPException(status_code=503, detail="KIS 모의 키 없음")
+    kis = KISOrderClient(kk, ks, kc, os.environ.get("KIS_ACNT_PRDT_CD", "01"), mock=True)
+    try:
+        r = kis.place_order(code, "BUY", qty, "MARKET")
+        return {"code": code, "qty": qty, "price": round(px, 0), "order_id": r.get("order_id"), "status": r.get("status")}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"KIS 모의 주문 실패: {exc}") from exc
+
+
+@app.get("/dart/positions")
+def dart_positions() -> list[dict]:
+    """KIS 모의 보유 종목 (기업행위 미러 성과)."""
+    from backends.kis.order_client import KISOrderClient
+    kk, ks, kc = (os.environ.get("KIS_MOCK_APP_KEY", ""), os.environ.get("KIS_MOCK_APP_SECRET", ""), os.environ.get("KIS_MOCK_CANO", ""))
+    if not (kk and ks and kc):
+        raise HTTPException(status_code=503, detail="KIS 모의 키 없음")
+    kis = KISOrderClient(kk, ks, kc, os.environ.get("KIS_ACNT_PRDT_CD", "01"), mock=True)
+    try:
+        out = []
+        for h in kis.get_holdings():
+            entry = float(h.get("avg_price", 0) or 0)
+            cur = float(h.get("current", 0) or 0)
+            out.append({
+                "code": h.get("code"), "name": h.get("name", h.get("code")),
+                "qty": h.get("qty"), "avg_price": entry, "current": cur,
+                "return_pct": round((cur - entry) / entry * 100, 2) if entry else None,
+            })
+        return out
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"KIS 모의 조회 실패: {exc}") from exc
+
+
 # ── /calendar/economic ─────────────────────────────────────────────────────────
 
 import time as _time

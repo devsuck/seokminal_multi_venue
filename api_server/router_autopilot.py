@@ -1248,7 +1248,7 @@ def account_balances() -> dict:
                 )
             summ = asyncio.run(_ib_summary())
             out["venues"]["ib_live"] = {"mode": "live", "net_liquidation": summ["net_liquidation"],
-                                        "cash": summ["total_cash"]}
+                                        "cash": summ["total_cash"], "currency": summ.get("currency", "USD")}
         except (TimeoutError, asyncio.TimeoutError):
             out["venues"]["ib_live"] = {"error": "IB 응답 시간 초과 (TWS 확인)"}
         except Exception as e:
@@ -1307,7 +1307,7 @@ def account_balances() -> dict:
         {"venue": "kis_live", "label": "한투 · 실계좌(한국주식)", "ccy": "KRW",
          "mode": "live", "balance": _num(ven.get("kis_live", {}), "net_asset"),
          "allocated": 0.0, "error": ven.get("kis_live", {}).get("error")},
-        {"venue": "ib_live", "label": "IB · 실계좌(미국)", "ccy": "USD",
+        {"venue": "ib_live", "label": "IB · 실계좌(미국)", "ccy": ven.get("ib_live", {}).get("currency", "USD"),
          "mode": "live", "balance": _num(ven.get("ib_live", {}), "net_liquidation"),
          "allocated": 0.0, "error": ven.get("ib_live", {}).get("error")},
         {"venue": "hl_testnet", "label": "HL · 테스트넷(크립토)", "ccy": "USDC",

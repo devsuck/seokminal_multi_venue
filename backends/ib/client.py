@@ -1,4 +1,5 @@
 # backends/ib/client.py
+import asyncio
 from collections.abc import AsyncIterator
 
 from ib_async import IB
@@ -47,23 +48,28 @@ class IBClient:
             self._host, self._port, self._client_id, timeout=connect_timeout
         )
         try:
-            rows = await self._ib.reqAccountSummaryAsync()
-            d = {r.tag: r.value for r in rows}
-            # reqAccountSummaryAsync intermittently returns 0 rows for a single
-            # account → fall back to per-account values via reqAccountUpdates.
-            if not d:
-                accounts = self._ib.managedAccounts()
-                acct = accounts[0] if accounts else ""
-                await self._ib.reqAccountUpdatesAsync(acct)
-                import asyncio as _a
-                await _a.sleep(1.5)
-                for v in self._ib.accountValues(acct):
-                    if v.currency in ("USD", "BASE", "") and v.tag not in d:
-                        d[v.tag] = v.value
+            # ib_async auto-subscribes account updates on connect and fills
+            # accountValues(). reqAccountSummaryAsync returns 0 rows and an
+            # explicit reqAccountUpdatesAsync hangs for some accounts, so just
+            # wait briefly and read the auto-populated values.
+            for _ in range(12):  # up to ~3s for the initial account push
+                if self._ib.accountValues():
+                    break
+                await asyncio.sleep(0.25)
+            vals = self._ib.accountValues()
+            # Base-currency rows only (skip per-currency BASE duplicates).
+            d = {}
+            ccy = "USD"
+            for v in vals:
+                if v.tag in ("NetLiquidation", "TotalCashValue", "BuyingPower") and v.currency and v.currency != "BASE":
+                    d[v.tag] = v.value
+                    if v.tag == "NetLiquidation":
+                        ccy = v.currency
             return {
                 "net_liquidation": float(d.get("NetLiquidation", 0) or 0),
                 "total_cash": float(d.get("TotalCashValue", 0) or 0),
                 "buying_power": float(d.get("BuyingPower", 0) or 0),
+                "currency": ccy,
             }
         finally:
             if self._ib.isConnected():

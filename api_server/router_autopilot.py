@@ -1211,32 +1211,29 @@ def account_balances() -> dict:
     except Exception as e:
         out["venues"]["alpaca"] = {"error": str(e)[:120]}
 
-    # KIS 모의 (한국투자증권 모의투자)
-    try:
-        from backends.kis.order_client import KISOrderClient
-        mk = os.environ.get("KIS_MOCK_APP_KEY", "")
-        ms = os.environ.get("KIS_MOCK_APP_SECRET", "")
-        mc = os.environ.get("KIS_MOCK_CANO", "")
-        if mk and ms and mc:
-            kc = KISOrderClient(mk, ms, mc, os.environ.get("KIS_ACNT_PRDT_CD", "01"), mock=True)
-            b = kc.get_balance()
-            out["venues"]["kis_mock"] = {"mode": "paper", "net_asset": b["net_asset"],
-                                         "deposit": b["deposit"], "total_eval": b["total_eval"]}
-        else:
-            out["venues"]["kis_mock"] = {"error": "KIS_MOCK 키 없음"}
-        # 한투 실계좌
-        rk = os.environ.get("KIS_APP_KEY", "")
-        rs = os.environ.get("KIS_APP_SECRET", "")
-        rc = os.environ.get("KIS_CANO", "")
-        if rk and rs and rc:
-            kr = KISOrderClient(rk, rs, rc, os.environ.get("KIS_ACNT_PRDT_CD", "01"), mock=False)
-            b = kr.get_balance()
-            out["venues"]["kis_live"] = {"mode": "live", "net_asset": b["net_asset"],
-                                         "deposit": b["deposit"], "total_eval": b["total_eval"]}
-        else:
-            out["venues"]["kis_live"] = {"error": "KIS 실계좌 키 없음"}
-    except Exception as e:
-        out["venues"]["kis_mock"] = {"error": str(e)[:120]}
+    # KIS 모의 + 실계좌. KIS 모의서버가 간헐적으로 rt_cd=2 / RemoteDisconnected를
+    # 뱉어 → 실패 시 1회 재시도. 모의·실전 독립 처리(하나 실패가 다른 하나 숨기지 않게).
+    from backends.kis.order_client import KISOrderClient
+    import time as _t
+
+    def _kis_balance(app_key, secret, cano, mock):
+        last = None
+        for attempt in range(2):
+            try:
+                c = KISOrderClient(app_key, secret, cano, os.environ.get("KIS_ACNT_PRDT_CD", "01"), mock=mock)
+                b = c.get_balance()
+                return {"mode": "paper" if mock else "live", "net_asset": b["net_asset"],
+                        "deposit": b["deposit"], "total_eval": b["total_eval"]}
+            except Exception as e:  # noqa: BLE001
+                last = e
+                if attempt == 0:
+                    _t.sleep(0.6)
+        return {"error": str(last)[:120]}
+
+    mk, ms, mc = (os.environ.get("KIS_MOCK_APP_KEY", ""), os.environ.get("KIS_MOCK_APP_SECRET", ""), os.environ.get("KIS_MOCK_CANO", ""))
+    out["venues"]["kis_mock"] = _kis_balance(mk, ms, mc, True) if (mk and ms and mc) else {"error": "KIS_MOCK 키 없음"}
+    rk, rs, rc = (os.environ.get("KIS_APP_KEY", ""), os.environ.get("KIS_APP_SECRET", ""), os.environ.get("KIS_CANO", ""))
+    out["venues"]["kis_live"] = _kis_balance(rk, rs, rc, False) if (rk and rs and rc) else {"error": "KIS 실계좌 키 없음"}
 
     # IB live only (US paper is Alpaca; IB paper dropped). Requires TWS.
     try:

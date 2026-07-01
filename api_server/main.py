@@ -4531,6 +4531,15 @@ from api_server.router_autopilot import router as autopilot_router, agents_route
 app.include_router(autopilot_router)
 app.include_router(agents_router)
 
+# ── DART 기업행위 자동매매 봇 (서버측, 브라우저 무관) ──────────────────────────────
+from api_server.dart_autobot import router as dart_bot_router, start_loop as _dart_bot_start
+app.include_router(dart_bot_router)
+
+
+@app.on_event("startup")
+async def _start_dart_bot() -> None:
+    _dart_bot_start()
+
 
 # ── Market Overview ───────────────────────────────────────────────────────────
 _FX_CACHE: dict = {}

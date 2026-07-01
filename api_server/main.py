@@ -3846,6 +3846,81 @@ def copytrade_positions() -> list[dict]:
         raise HTTPException(status_code=502, detail=f"포지션 조회 실패: {exc}") from exc
 
 
+# ── 스마트 시그널 (레짐 게이트 + 모멘텀 팩터 + Kelly 사이징) ─────────────────────────
+
+class SmartSignal(BaseModel):
+    instrument_id: str
+    verdict: str            # BUY / HOLD / AVOID
+    current_regime: str     # bull_low_vol / bull_high_vol / bear_high_vol / bear_low_vol
+    momentum_60d_pct: float | None = None
+    price_vs_sma50_pct: float | None = None
+    kelly_half: float | None = None
+    suggested_position_pct: float
+    notes: list[str]
+
+
+@app.get("/signal/smart", response_model=SmartSignal)
+def smart_signal(instrument_id: str = Query(...)) -> SmartSignal:
+    """레짐(HMM) + 모멘텀 + Kelly 결합 매매 판단 + 사이징. catalog 일봉 기반."""
+    bar_type_str = str(bar_type_for(InstrumentId.from_str(instrument_id)))
+    catalog = ParquetDataCatalog(CATALOG_PATH)
+    bars = sorted(catalog.bars(bar_types=[bar_type_str]), key=lambda b: b.ts_event)
+    closes = [float(b.close) for b in bars]
+    if len(closes) < 60:
+        raise HTTPException(status_code=400, detail=f"데이터 부족 ({len(closes)}봉, 60↑ 필요)")
+
+    rets = [(closes[i] - closes[i - 1]) / closes[i - 1] for i in range(1, len(closes)) if closes[i - 1] > 0]
+    notes: list[str] = []
+
+    # 레짐 (HMM)
+    regime = "unknown"
+    try:
+        from regime_filter.hmm_detector import detect_regime_hmm
+        regime = detect_regime_hmm(rets)["current_regime"]
+    except Exception as e:  # noqa: BLE001
+        notes.append(f"레짐 계산 실패: {str(e)[:40]}")
+
+    # 모멘텀 팩터
+    mom = (closes[-1] / closes[-60] - 1) * 100 if closes[-60] > 0 else None
+    sma50 = sum(closes[-50:]) / 50
+    px_sma = (closes[-1] / sma50 - 1) * 100 if sma50 > 0 else None
+
+    # Kelly (일간 수익 분포 기반)
+    kelly_half = None
+    try:
+        from risk_analysis.kelly import compute_kelly
+        kelly_half = compute_kelly(rets)["kelly_half"]
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 결합 판단
+    bull = regime.startswith("bull")
+    risk_off = regime == "bear_high_vol"
+    mom_up = (mom or 0) > 0 and (px_sma or 0) > 0
+
+    if risk_off:
+        verdict = "AVOID"; notes.append("고변동 하락 레짐 — 리스크오프")
+        size = 0.0
+    elif bull and mom_up:
+        verdict = "BUY"
+        regime_mult = 1.0 if regime == "bull_low_vol" else 0.5
+        base = min(kelly_half or 0.0, 0.25)  # Kelly-half, 25% 상한
+        size = round(base * regime_mult, 4)
+        notes.append(f"{regime} + 모멘텀↑ → 매수. Kelly½={kelly_half}, 레짐배율×{regime_mult}")
+        if size <= 0:
+            verdict = "HOLD"; notes.append("Kelly ≤ 0 (엣지 없음) → 관망")
+    else:
+        verdict = "HOLD"; size = 0.0
+        notes.append("추세·레짐 조건 불충족 → 관망")
+
+    return SmartSignal(
+        instrument_id=instrument_id, verdict=verdict, current_regime=regime,
+        momentum_60d_pct=round(mom, 2) if mom is not None else None,
+        price_vs_sma50_pct=round(px_sma, 2) if px_sma is not None else None,
+        kelly_half=kelly_half, suggested_position_pct=round(size * 100, 2), notes=notes,
+    )
+
+
 # ── 성과 추적 (페이퍼 계좌 equity curve + 벤치마크) ───────────────────────────────
 
 class PerfPoint(BaseModel):

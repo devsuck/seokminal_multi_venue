@@ -616,7 +616,7 @@ def start_agent(agent_id: str) -> dict:
         subprocess.Popen(
             ["tmux", "new-session", "-d", "-s", name,
              agent_loop, agent_id, agent["type"], str(agent.get("autonomy", 2)),
-             agent.get("market", "US")],
+             agent.get("market", "US"), str(agent.get("account_alloc", 100000))],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
     agent_store.set_status(agent_id, "running")
@@ -834,7 +834,10 @@ def daytrade_tick(agent_id: str, cycle: int = 0) -> dict:
     if agent is None:
         raise HTTPException(status_code=404, detail="agent not found")
     profile = agent.get("profile", {})
-    venue = profile.get("venue", "US")
+    # 데이트레이딩 타입은 profile.venue로 고정(kr_daytrade=KR, hl_daytrade=HL).
+    # 스윙/장투는 profile.venue가 없으니 에이전트의 market으로 라우팅 →
+    # KR봇이 US(Alpaca)로 새던 통화·시장 오라우팅 버그 수정.
+    venue = profile.get("venue") or ("KR" if agent.get("market") == "KR" else "US")
     threshold = float(profile.get("buy_score_threshold", 55))
     leverage = float(profile.get("leverage", 1))
     position_pct = float(profile.get("position_pct", 0.10))

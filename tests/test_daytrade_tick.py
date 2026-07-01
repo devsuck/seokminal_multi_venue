@@ -29,3 +29,22 @@ def test_daytrade_tick_us_no_crash(client):
     assert r.json()["decision"] == "SKIP"  # empty scores → no entry
     # cycle recorded
     assert len(client.get(f"/agents/{aid}/cycles").json()["cycles"]) == 1
+
+
+def test_swing_kr_routes_to_kr_not_us(client, monkeypatch):
+    """스윙(장투) 봇 + market=KR → KR 실행(KIS), US(Alpaca) 아님. 통화 오라우팅 회귀."""
+    monkeypatch.setattr(rp, "_fetch_kr_intraday_bars", lambda s: [])
+
+    class _KIS:
+        def __init__(self, *a, **k): pass
+        def get_balance(self): return {"net_asset": 1000000.0}
+        def get_holdings(self): return []
+        def place_order(self, *a, **k): return {"order_id": "1"}
+    monkeypatch.setattr("backends.kis.order_client.KISOrderClient", _KIS)
+
+    aid = client.post("/agents", json={
+        "name": "KRswing", "type": "swing", "market": "KR", "account_alloc": 1000000,
+    }).json()["id"]
+    r = client.post(f"/agents/{aid}/daytrade-tick?cycle=1")
+    assert r.status_code == 200
+    assert r.json()["venue"] == "KR"  # not US → no Alpaca/USD order

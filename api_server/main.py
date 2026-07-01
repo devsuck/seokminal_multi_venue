@@ -3846,6 +3846,83 @@ def copytrade_positions() -> list[dict]:
         raise HTTPException(status_code=502, detail=f"포지션 조회 실패: {exc}") from exc
 
 
+# ── 페어 트레이딩 (시장중립 stat-arb) ────────────────────────────────────────────
+
+class PairsResult(BaseModel):
+    instrument_a: str
+    instrument_b: str
+    cointegrated: bool
+    eg_pvalue: float
+    hedge_ratio: float
+    half_life_days: float
+    total_return_pct: float | None = None
+    sharpe_ratio: float | None = None
+    max_drawdown_pct: float | None = None
+    num_trades: int = 0
+    win_rate: float | None = None
+    zscore: list[float] = []
+    tradeable: bool
+    note: str
+
+
+@app.get("/pairs/backtest", response_model=PairsResult)
+def pairs_backtest(a: str = Query(...), b: str = Query(...), cost_bps: float = Query(5.0, ge=0, le=100)) -> PairsResult:
+    """두 종목 공적분 검정 + 스프레드 z-score 백테스트(비용 반영). 시장중립."""
+    catalog = ParquetDataCatalog(CATALOG_PATH)
+
+    def _closes(iid: str) -> dict:
+        bt = str(bar_type_for(InstrumentId.from_str(iid)))
+        return {bar.ts_event: float(bar.close) for bar in catalog.bars(bar_types=[bt])}
+
+    ca, cb = _closes(a), _closes(b)
+    common = sorted(set(ca) & set(cb))
+    if len(common) < 30:
+        raise HTTPException(status_code=400, detail=f"공통 봉 부족 ({len(common)}, 30↑ 필요)")
+    pa = [ca[t] for t in common]
+    pb = [cb[t] for t in common]
+
+    from pairs_trading.johansen import test_cointegration
+    from pairs_trading.backtest import backtest_pairs
+    coint = test_cointegration(pa, pb)
+    bt = backtest_pairs(pa, pb, coint["hedge_ratio"], coint["spread"],
+                        _signals_from_z(coint["zscore"]), cost_bps=cost_bps)
+
+    cointegrated = bool(coint["cointegrated"] or coint.get("johansen_cointegrated"))
+    hl = coint["half_life_days"]
+    tradeable = cointegrated and 1 <= hl <= 60
+    if not cointegrated:
+        note = "공적분 안 됨 — 스프레드 평균회귀 신뢰 낮음. 페어 부적합"
+    elif hl > 60:
+        note = f"반감기 {hl}일 — 회귀 너무 느림. 부적합"
+    elif hl < 1:
+        note = f"반감기 {hl}일 — 너무 빠름(노이즈). 주의"
+    else:
+        note = f"공적분 ✓, 반감기 {hl}일 — 페어 적합"
+
+    return PairsResult(
+        instrument_a=a, instrument_b=b, cointegrated=cointegrated,
+        eg_pvalue=coint["eg_pvalue"], hedge_ratio=coint["hedge_ratio"], half_life_days=hl,
+        total_return_pct=bt.get("total_return_pct"), sharpe_ratio=bt.get("sharpe_ratio"),
+        max_drawdown_pct=bt.get("max_drawdown_pct"), num_trades=bt.get("num_trades", 0),
+        win_rate=bt.get("win_rate"), zscore=[round(z, 2) for z in coint["zscore"][-120:]],
+        tradeable=tradeable, note=note,
+    )
+
+
+def _signals_from_z(zscore: list[float]) -> list[str]:
+    out = []
+    for z in zscore:
+        if z > 2.0:
+            out.append("sell_spread")
+        elif z < -2.0:
+            out.append("buy_spread")
+        elif abs(z) < 0.5:
+            out.append("exit")
+        else:
+            out.append("hold")
+    return out
+
+
 # ── 스마트 시그널 (레짐 게이트 + 모멘텀 팩터 + Kelly 사이징) ─────────────────────────
 
 class SmartSignal(BaseModel):

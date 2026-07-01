@@ -593,14 +593,27 @@ def get_agent(agent_id: str) -> dict:
 
 
 @agents_router.delete("/{agent_id}")
-def delete_agent(agent_id: str) -> dict:
-    # Stop the session first so we don't orphan a running loop.
+def delete_agent(agent_id: str, confirm: str | None = None) -> dict:
+    ag = agent_store.get_agent(agent_id)
+    if ag is None:
+        raise HTTPException(status_code=404, detail="agent not found")
+    # 잠금(protected) 에이전트는 이름 확인 없이 삭제 불가 (실수 방지)
+    if ag.get("protected") and confirm != ag.get("name"):
+        raise HTTPException(status_code=403, detail=f"잠긴 에이전트 — 삭제하려면 이름('{ag.get('name')}') 확인 필요")
     name = _agent_tmux(agent_id)
     if _session_exists(name):
         subprocess.run(["tmux", "kill-session", "-t", name], capture_output=True)
     if not agent_store.delete_agent(agent_id):
         raise HTTPException(status_code=404, detail="agent not found")
     return {"status": "deleted", "agent_id": agent_id}
+
+
+@agents_router.post("/{agent_id}/protect")
+def protect_agent(agent_id: str, protected: bool = True) -> dict:
+    ag = agent_store.set_protected(agent_id, protected)
+    if ag is None:
+        raise HTTPException(status_code=404, detail="agent not found")
+    return {"agent_id": agent_id, "protected": ag.get("protected", False)}
 
 
 @agents_router.post("/{agent_id}/start")

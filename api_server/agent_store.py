@@ -103,6 +103,9 @@ def _conn() -> sqlite3.Connection:
     if "market" not in cols:
         # US | KR | MIXED — market scope for swing agents (others ignore it)
         conn.execute("ALTER TABLE agents ADD COLUMN market TEXT NOT NULL DEFAULT 'US'")
+    if "protected" not in cols:
+        # 잠금: 삭제 시 이름 타이핑 확인 요구 (실수 삭제 방지)
+        conn.execute("ALTER TABLE agents ADD COLUMN protected INTEGER NOT NULL DEFAULT 0")
     conn.commit()
     return conn
 
@@ -175,10 +178,21 @@ def delete_agent(agent_id: str) -> bool:
     return bool(deleted)
 
 
+def set_protected(agent_id: str, protected: bool) -> dict | None:
+    conn = _conn()
+    cur = conn.execute("UPDATE agents SET protected=? WHERE id=?", (1 if protected else 0, agent_id))
+    conn.commit()
+    changed = cur.rowcount
+    conn.close()
+    return get_agent(agent_id) if changed else None
+
+
 def _with_profile(agent: dict) -> dict:
     agent["profile"] = AGENT_PROFILES.get(agent["type"], {})
     if "paper" in agent:  # SQLite stores 0/1 → expose as bool
         agent["paper"] = bool(agent["paper"])
+    if "protected" in agent:
+        agent["protected"] = bool(agent["protected"])
     return agent
 
 

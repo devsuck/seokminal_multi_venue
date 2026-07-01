@@ -81,6 +81,14 @@ def tick() -> dict:
     cfg = _load()
     if not cfg["enabled"]:
         return {"skipped": "disabled"}
+    # 킬스위치(수동 or MDD 자동차단) — 모든 자동 매수 중단
+    try:
+        from api_server.risk_state import is_killed
+        if is_killed():
+            _log_event({"kind": "kill", "msg": "리스크 킬스위치 — 매수 중단"})
+            return {"skipped": "kill_switch"}
+    except Exception:
+        pass
     if not _kr_market_open():
         cfg["last_run"] = _dt.datetime.now(_dt.timezone.utc).isoformat()
         _save(cfg)

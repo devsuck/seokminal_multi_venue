@@ -4691,6 +4691,10 @@ from api_server.router_autopilot import router as autopilot_router, agents_route
 app.include_router(autopilot_router)
 app.include_router(agents_router)
 
+# ── 리스크 (킬스위치 + drawdown 자동차단) ─────────────────────────────────────────
+from api_server.risk_state import router as risk_router
+app.include_router(risk_router)
+
 # ── DART 기업행위 자동매매 봇 (서버측, 브라우저 무관) ──────────────────────────────
 from api_server.dart_autobot import router as dart_bot_router, start_loop as _dart_bot_start
 app.include_router(dart_bot_router)

@@ -1217,8 +1217,9 @@ def account_balances() -> dict:
     import time as _t
 
     def _kis_balance(app_key, secret, cano, mock):
+        # KIS 서버가 rt_cd=2 (빈 msg) / RemoteDisconnected를 자주 던져 최대 4회 재시도.
         last = None
-        for attempt in range(2):
+        for attempt in range(4):
             try:
                 c = KISOrderClient(app_key, secret, cano, os.environ.get("KIS_ACNT_PRDT_CD", "01"), mock=mock)
                 b = c.get_balance()
@@ -1226,8 +1227,8 @@ def account_balances() -> dict:
                         "deposit": b["deposit"], "total_eval": b["total_eval"]}
             except Exception as e:  # noqa: BLE001
                 last = e
-                if attempt == 0:
-                    _t.sleep(0.6)
+                if attempt < 3:
+                    _t.sleep(0.5)
         return {"error": str(last)[:120]}
 
     mk, ms, mc = (os.environ.get("KIS_MOCK_APP_KEY", ""), os.environ.get("KIS_MOCK_APP_SECRET", ""), os.environ.get("KIS_MOCK_CANO", ""))

@@ -49,6 +49,17 @@ class IBClient:
         try:
             rows = await self._ib.reqAccountSummaryAsync()
             d = {r.tag: r.value for r in rows}
+            # reqAccountSummaryAsync intermittently returns 0 rows for a single
+            # account → fall back to per-account values via reqAccountUpdates.
+            if not d:
+                accounts = self._ib.managedAccounts()
+                acct = accounts[0] if accounts else ""
+                await self._ib.reqAccountUpdatesAsync(acct)
+                import asyncio as _a
+                await _a.sleep(1.5)
+                for v in self._ib.accountValues(acct):
+                    if v.currency in ("USD", "BASE", "") and v.tag not in d:
+                        d[v.tag] = v.value
             return {
                 "net_liquidation": float(d.get("NetLiquidation", 0) or 0),
                 "total_cash": float(d.get("TotalCashValue", 0) or 0),

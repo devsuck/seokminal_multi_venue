@@ -85,13 +85,17 @@ def get_positions(paper: bool = False) -> dict[str, Any]:
     state = info.user_state(account)
     open_orders = info.open_orders(account)
 
+    # Spot USDC counts on both networks — testnet faucet credits spot, so
+    # skipping it there made faucet funds invisible in the balance panel.
     usdc_spot = 0.0
-    if not paper:
+    try:
         spot_state = info.spot_user_state(account)
         usdc_spot = next(
             (float(b["total"]) for b in spot_state.get("balances", []) if b["coin"] == "USDC"),
             0.0,
         )
+    except Exception:
+        usdc_spot = 0.0
 
     margin_summary = dict(state.get("marginSummary", {}))
     perp_value = float(margin_summary.get("accountValue", 0))

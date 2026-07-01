@@ -3855,6 +3855,9 @@ class SmartSignal(BaseModel):
     momentum_60d_pct: float | None = None
     price_vs_sma50_pct: float | None = None
     kelly_half: float | None = None
+    vol_annual_pct: float | None = None      # 연율 변동성
+    cvar_95_pct: float | None = None         # 일간 95% 조건부 VaR (꼬리손실)
+    sizing_constraint: str | None = None     # 최종 비중을 묶은 제약 (kelly/vol/cvar/cap)
     suggested_position_pct: float
     notes: list[str]
 
@@ -3893,20 +3896,45 @@ def smart_signal(instrument_id: str = Query(...)) -> SmartSignal:
     except Exception:  # noqa: BLE001
         pass
 
+    # 변동성(리스크패리티=변동성 타게팅) + CVaR(꼬리손실)
+    import statistics as _st
+    vol_d = _st.pstdev(rets) if len(rets) > 1 else 0.0
+    vol_annual = vol_d * (252 ** 0.5)
+    cvar95 = None
+    try:
+        from risk_analysis.cvar import compute_cvar
+        cvar95 = compute_cvar(rets).get("cvar_95")  # 일간, 음수
+    except Exception:  # noqa: BLE001
+        pass
+
+    TARGET_VOL = 0.15      # 연율 목표 변동성 (리스크패리티)
+    RISK_BUDGET = 0.015    # 일간 꼬리손실 예산 (자본 1.5%)
+    CAP = 0.25             # 비중 상한
+
     # 결합 판단
     bull = regime.startswith("bull")
     risk_off = regime == "bear_high_vol"
     mom_up = (mom or 0) > 0 and (px_sma or 0) > 0
+    constraint = None
 
     if risk_off:
-        verdict = "AVOID"; notes.append("고변동 하락 레짐 — 리스크오프")
-        size = 0.0
+        verdict = "AVOID"; notes.append("고변동 하락 레짐 — 리스크오프"); size = 0.0
     elif bull and mom_up:
         verdict = "BUY"
         regime_mult = 1.0 if regime == "bull_low_vol" else 0.5
-        base = min(kelly_half or 0.0, 0.25)  # Kelly-half, 25% 상한
-        size = round(base * regime_mult, 4)
-        notes.append(f"{regime} + 모멘텀↑ → 매수. Kelly½={kelly_half}, 레짐배율×{regime_mult}")
+        kelly_frac = (kelly_half or 0.0) * regime_mult
+        # 변동성 타게팅: 목표변동성/실현변동성 (0.25~1.5 클램프)
+        vol_scalar = max(0.25, min(TARGET_VOL / vol_annual, 1.5)) if vol_annual > 0 else 1.0
+        vol_frac = kelly_frac * vol_scalar
+        # CVaR 캡: 비중 × |일간 CVaR| ≤ 일간 예산
+        cvar_cap = (RISK_BUDGET / abs(cvar95)) if (cvar95 and cvar95 < 0) else CAP
+        # 최종 = 셋 중 최소
+        cands = {"kelly/vol": vol_frac, "cvar": cvar_cap, "cap": CAP}
+        size = min(cands.values())
+        constraint = min(cands, key=cands.get)
+        size = round(max(size, 0.0), 4)
+        notes.append(f"{regime}+모멘텀↑ → 매수. Kelly½×레짐={round(kelly_frac,4)}, 변동성타게팅×{round(vol_scalar,2)}(연변동성 {round(vol_annual*100,1)}%), CVaR캡 {round(cvar_cap,4)}")
+        notes.append(f"최종 비중 = {constraint} 제약이 결정")
         if size <= 0:
             verdict = "HOLD"; notes.append("Kelly ≤ 0 (엣지 없음) → 관망")
     else:
@@ -3917,7 +3945,11 @@ def smart_signal(instrument_id: str = Query(...)) -> SmartSignal:
         instrument_id=instrument_id, verdict=verdict, current_regime=regime,
         momentum_60d_pct=round(mom, 2) if mom is not None else None,
         price_vs_sma50_pct=round(px_sma, 2) if px_sma is not None else None,
-        kelly_half=kelly_half, suggested_position_pct=round(size * 100, 2), notes=notes,
+        kelly_half=kelly_half,
+        vol_annual_pct=round(vol_annual * 100, 1),
+        cvar_95_pct=round(cvar95 * 100, 2) if cvar95 is not None else None,
+        sizing_constraint=constraint,
+        suggested_position_pct=round(size * 100, 2), notes=notes,
     )
 
 

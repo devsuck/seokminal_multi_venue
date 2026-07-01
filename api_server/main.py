@@ -3844,6 +3844,87 @@ def copytrade_positions() -> list[dict]:
         raise HTTPException(status_code=502, detail=f"포지션 조회 실패: {exc}") from exc
 
 
+# ── 성과 추적 (페이퍼 계좌 equity curve + 벤치마크) ───────────────────────────────
+
+class PerfPoint(BaseModel):
+    date: str
+    equity: float
+    benchmark: float | None = None
+
+
+class PerfSummary(BaseModel):
+    points: list[PerfPoint]
+    return_pct: float
+    mdd_pct: float
+    sharpe: float
+    benchmark_return_pct: float | None = None
+    excess_pct: float | None = None
+    start_equity: float
+    end_equity: float
+
+
+@app.get("/performance/portfolio", response_model=PerfSummary)
+def performance_portfolio(period: str = Query("1M")) -> PerfSummary:
+    """Alpaca 페이퍼 계좌 equity curve + 수익률/MDD/Sharpe + SPY 매수보유 벤치마크."""
+    import datetime as _d
+    key = os.environ.get("ALPACA_API_KEY", ""); sec = os.environ.get("ALPACA_SECRET_KEY", "")
+    if not key or not sec:
+        raise HTTPException(status_code=503, detail="ALPACA 키 없음")
+    from alpaca.trading.client import TradingClient
+    from alpaca.trading.requests import GetPortfolioHistoryRequest
+    c = TradingClient(key, sec, paper=True)
+    try:
+        h = c.get_portfolio_history(GetPortfolioHistoryRequest(period=period, timeframe="1D"))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Alpaca history 실패: {exc}") from exc
+
+    ts = list(h.timestamp or [])
+    eq = list(h.equity or [])
+    # 계좌 개설 전 0 equity 구간 제거
+    rows = [(t, e) for t, e in zip(ts, eq) if e and e > 0]
+    if len(rows) < 2:
+        raise HTTPException(status_code=404, detail="거래 이력 부족 (페이퍼 매매 후 다시)")
+    dates = [_d.datetime.fromtimestamp(t, _d.timezone.utc).date().isoformat() for t, _ in rows]
+    equity = [float(e) for _, e in rows]
+
+    start, end = equity[0], equity[-1]
+    ret = (end - start) / start * 100 if start else 0.0
+    # MDD
+    peak = equity[0]; mdd = 0.0
+    for e in equity:
+        peak = max(peak, e)
+        mdd = min(mdd, (e - peak) / peak * 100)
+    # Sharpe (일간)
+    import statistics as _st
+    rets = [(equity[i] - equity[i - 1]) / equity[i - 1] for i in range(1, len(equity)) if equity[i - 1]]
+    sharpe = 0.0
+    if len(rets) > 1 and _st.pstdev(rets) > 0:
+        sharpe = (_st.mean(rets) / _st.pstdev(rets)) * (252 ** 0.5)
+
+    # SPY 벤치마크 (같은 기간, 시작 equity로 정규화)
+    bench_curve: dict[str, float] = {}
+    bench_ret = None
+    try:
+        import yfinance as yf
+        spy = yf.Ticker("SPY").history(start=dates[0], end=(_d.date.fromisoformat(dates[-1]) + _d.timedelta(days=1)).isoformat(), auto_adjust=True)["Close"].dropna()
+        if len(spy):
+            base = float(spy.iloc[0])
+            for idx, v in spy.items():
+                bench_curve[idx.date().isoformat()] = start * float(v) / base
+            bench_ret = (float(spy.iloc[-1]) - base) / base * 100
+    except Exception:  # noqa: BLE001
+        bench_curve = {}
+
+    points = [PerfPoint(date=d, equity=round(e, 2), benchmark=round(bench_curve[d], 2) if d in bench_curve else None)
+              for d, e in zip(dates, equity)]
+    return PerfSummary(
+        points=points, return_pct=round(ret, 2), mdd_pct=round(mdd, 2), sharpe=round(sharpe, 2),
+        benchmark_return_pct=round(bench_ret, 2) if bench_ret is not None else None,
+        excess_pct=round(ret - bench_ret, 2) if bench_ret is not None else None,
+        start_equity=round(start, 2), end_equity=round(end, 2),
+    )
+
+
 # ── DART 기업행위 오토파일럿 (페이퍼/KIS 모의) ────────────────────────────────────
 # 자사주 취득·소각=호재(매수), 유상증자=악재(회피). 개인 내부자 매매는 5영업일
 # 지연이라 제외. 페이퍼(KIS 모의)로만 집행.

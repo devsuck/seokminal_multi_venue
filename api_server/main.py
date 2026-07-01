@@ -3707,6 +3707,119 @@ def copytrade_mirror(body: MirrorRequest) -> dict:
         raise HTTPException(status_code=502, detail=f"페이퍼 주문 실패: {exc}") from exc
 
 
+class TraderHolding(BaseModel):
+    ticker: str
+    date: str
+    entry: float | None = None
+    current: float | None = None
+    return_pct: float | None = None
+
+
+class TraderCard(BaseModel):
+    source: str
+    name: str
+    role: str | None = None
+    initials: str
+    num_buys: int
+    avg_return_pct: float | None = None
+    holdings: list[TraderHolding]
+
+
+_traders_cache: dict = {}
+_TRADERS_TTL = 1800  # 30분
+
+
+def _initials(name: str) -> str:
+    parts = [p for p in name.replace(".", " ").split() if p]
+    if not parts:
+        return "?"
+    if len(parts) == 1:
+        return parts[0][:2].upper()
+    return (parts[0][0] + parts[-1][0]).upper()
+
+
+@app.get("/copytrade/traders", response_model=list[TraderCard])
+def copytrade_traders(limit: int = Query(120, ge=20, le=300)) -> list[TraderCard]:
+    """매수자별 카드: 최근 매수 종목을 거래일 종가로 진입했다 가정, 현재가 대비 수익률.
+    Autopilot 앱 스타일 — 인물별 트랙레코드. 30분 캐시."""
+    now = _time.time()
+    if "d" in _traders_cache and now - _traders_cache["t"] < _TRADERS_TTL:
+        return _traders_cache["d"]
+
+    import datetime as _d
+    signals = copytrade_signals(limit=limit)
+    cutoff = _d.date.today() - _d.timedelta(days=120)
+
+    # (source,name) → [(ticker, date_str)]
+    people: dict[tuple, dict] = {}
+    tickers: set[str] = set()
+    for s in signals:
+        try:
+            dt_ = _d.date.fromisoformat(s.date[:10])
+        except Exception:
+            continue
+        if dt_ < cutoff:
+            continue
+        key = (s.source, s.name)
+        p = people.setdefault(key, {"role": s.role, "buys": []})
+        p["buys"].append((s.ticker, dt_))
+        tickers.add(s.ticker)
+
+    # 가격 배치 조회 (yfinance) — 진입(거래일 종가) + 현재(최신 종가)
+    prices: dict[str, "any"] = {}
+    if tickers:
+        try:
+            import yfinance as yf
+            data = yf.download(list(tickers), start=cutoff.isoformat(), progress=False,
+                               auto_adjust=True, group_by="ticker", threads=True)
+            for tk in tickers:
+                try:
+                    closes = data[tk]["Close"].dropna() if len(tickers) > 1 else data["Close"].dropna()
+                    if len(closes):
+                        prices[tk] = closes
+                except Exception:
+                    continue
+        except Exception:  # noqa: BLE001
+            prices = {}
+
+    def _price_on(tk: str, d: "any"):
+        s = prices.get(tk)
+        if s is None or not len(s):
+            return None, None
+        cur = float(s.iloc[-1])
+        # 거래일 이하의 마지막 종가 = 진입가
+        import pandas as _pd
+        ts = _pd.Timestamp(d)
+        prior = s[s.index <= ts]
+        entry = float(prior.iloc[-1]) if len(prior) else float(s.iloc[0])
+        return entry, cur
+
+    cards: list[TraderCard] = []
+    for (source, name), p in people.items():
+        holdings = []
+        rets = []
+        # 종목별 최신 1건 (중복 매수 합치기)
+        seen = {}
+        for tk, d in sorted(p["buys"], key=lambda x: x[1], reverse=True):
+            if tk in seen:
+                continue
+            seen[tk] = True
+            entry, cur = _price_on(tk, d)
+            rp = round((cur - entry) / entry * 100, 2) if entry and cur else None
+            holdings.append(TraderHolding(ticker=tk, date=d.isoformat(), entry=round(entry, 2) if entry else None,
+                                          current=round(cur, 2) if cur else None, return_pct=rp))
+            if rp is not None:
+                rets.append(rp)
+        avg = round(sum(rets) / len(rets), 2) if rets else None
+        cards.append(TraderCard(source=source, name=name, role=p["role"], initials=_initials(name),
+                                 num_buys=len(holdings), avg_return_pct=avg, holdings=holdings))
+
+    cards.sort(key=lambda c: (c.avg_return_pct if c.avg_return_pct is not None else -999), reverse=True)
+    _traders_cache["d"] = cards
+    _traders_cache["t"] = now
+    return cards
+
+
 @app.get("/copytrade/positions")
 def copytrade_positions() -> list[dict]:
     """페이퍼 계좌 보유 포지션 (미러 성과 확인용)."""

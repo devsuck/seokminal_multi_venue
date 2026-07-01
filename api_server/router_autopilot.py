@@ -1242,11 +1242,20 @@ def account_balances() -> dict:
     try:
         from backends.ib.client import IBClient
         try:
-            summ = asyncio.run(IBClient(port=7496, client_id=random.randint(700, 799)).get_account_summary())
+            # Hard timeout: IB summary can hang (flaky TWS / account-update push)
+            # and this endpoint feeds the balance panel — never let it block.
+            async def _ib_summary():
+                return await asyncio.wait_for(
+                    IBClient(port=7496, client_id=random.randint(700, 799)).get_account_summary(),
+                    timeout=6.0,
+                )
+            summ = asyncio.run(_ib_summary())
             out["venues"]["ib_live"] = {"mode": "live", "net_liquidation": summ["net_liquidation"],
                                         "cash": summ["total_cash"]}
+        except (TimeoutError, asyncio.TimeoutError):
+            out["venues"]["ib_live"] = {"error": "IB 응답 시간 초과 (TWS 확인)"}
         except Exception as e:
-            out["venues"]["ib_live"] = {"error": str(e)[:80]}
+            out["venues"]["ib_live"] = {"error": str(e)[:80] or "IB 연결 실패"}
     except Exception as e:
         out["venues"]["ib_live"] = {"error": str(e)[:120]}
 

@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator
 
 from backends.ib.client import IBClient
 from backends.ib.order_client import IBOrderClient
-from live_engine.broker_interface import BrokerInterface, OrderResult, PriceTick
+from live_engine.broker_interface import BrokerInterface, OrderResult, Position, PriceTick
 
 
 def _instrument_to_symbol(instrument_id: str) -> str:
@@ -43,6 +43,21 @@ class IBBroker(BrokerInterface):
             filled=result["filled"],
             remaining=result["remaining"],
         )
+
+    async def get_position(self, instrument_id: str) -> Position | None:
+        """Look up the held IB position for reconciliation (None if flat/unknown)."""
+        symbol = _instrument_to_symbol(instrument_id)
+        await self._order_client._ensure_connected()
+        for pos in self._order_client._ib.positions():
+            if pos.contract.symbol == symbol and pos.position:
+                qty = float(pos.position)
+                return Position(
+                    instrument_id=instrument_id,
+                    qty=abs(qty),
+                    avg_price=float(pos.avgCost),
+                    side="LONG" if qty > 0 else "SHORT",
+                )
+        return None
 
     async def cancel_order(self, order_id: str) -> OrderResult:
         result = await self._order_client.cancel_order(int(order_id))

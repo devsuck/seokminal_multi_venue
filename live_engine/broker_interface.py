@@ -17,6 +17,7 @@ class OrderResult:
     status: str   # SUBMITTED | FILLED | PARTIAL | CANCELLED | ERROR
     filled: float
     remaining: float
+    avg_fill_price: float | None = None  # actual fill price when known (None = use ref price)
 
 
 @dataclass
@@ -68,3 +69,12 @@ class BrokerInterface(ABC):
     async def close(self) -> None:
         """Release connections."""
         ...
+
+    async def get_position(self, instrument_id: str) -> Position | None:
+        """Return the broker's current position, or None when not implemented.
+
+        Used by the engine to reconcile its tracked position with reality on
+        startup. The default returns None ("unknown") so adapters that don't
+        implement it leave the engine to start flat, as before.
+        """
+        return None

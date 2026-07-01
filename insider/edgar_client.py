@@ -80,7 +80,7 @@ def _fetch_filing_transactions(
     acc_clean = accession.replace("-", "")
     # Try to find the primary Form 4 XML document via the index
     try:
-        idx_url = f"{EDGAR_ARCHIVES}/{cik_int}/{acc_clean}/{accession}-index.json"
+        idx_url = f"{EDGAR_ARCHIVES}/{cik_int}/{acc_clean}/index.json"
         idx_r = requests.get(idx_url, headers=_HEADERS, timeout=10)
         if not idx_r.ok:
             return []
@@ -200,12 +200,15 @@ def get_recent_form4_feed(days: int = 7, max_filings: int = 40) -> list[dict]:
 
     def _parse_hit(hit: dict) -> list[dict]:
         src = hit.get("_source", {})
-        acc = src.get("accession_no", "")
+        # EDGAR FTS uses 'adsh' for accession; '_id' also carries it before ':'.
+        acc = src.get("adsh") or hit.get("_id", "").split(":")[0]
         file_date = src.get("file_date", "")
-        entity = src.get("entity_name", "")
+        # display_names: ["Reporter (CIK …)", "Issuer CORP (CIK …)"] — last = issuer
+        names = src.get("display_names") or []
+        entity = names[-1].split("  (")[0] if names else ""
         if not acc or not file_date:
             return []
-        # CIK is the numeric prefix of accession number
+        # Archive path CIK = accession's filer prefix.
         try:
             cik_int = int(acc.split("-")[0])
         except (ValueError, IndexError):

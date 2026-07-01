@@ -5,7 +5,7 @@ import os
 import time
 from dataclasses import dataclass, field
 
-from live_engine.broker_interface import BotStatus, BrokerInterface, OrderResult
+from live_engine.broker_interface import BotStatus, BrokerInterface, OrderResult, Position
 
 log = logging.getLogger(__name__)
 
@@ -19,6 +19,36 @@ def _ema(prices: list[float], period: int) -> float:
     for p in prices[period:]:
         ema = p * k + ema * (1 - k)
     return ema
+
+
+# ── Stop-and-reverse position sizing ──────────────────────────────────────────
+
+def _target_units(*, fast: float, slow: float, current: int) -> int:
+    """Desired position in units from the EMA cross: +1 long, -1 short.
+
+    On an exact tie there is no signal, so the current position is held.
+    """
+    if fast > slow:
+        return 1
+    if fast < slow:
+        return -1
+    return current
+
+
+def _order_for_target(
+    *, current_units: int, target_units: int, trade_size: int
+) -> tuple[str, int] | None:
+    """Order needed to move from current to target position, or None if already there.
+
+    Returns (side, quantity). A reversal (e.g. +1 → -1) trades the full
+    distance (2 units) so the position actually flips instead of merely
+    flattening — the fix for the engine/broker position desync.
+    """
+    delta = target_units - current_units
+    if delta == 0:
+        return None
+    side = "BUY" if delta > 0 else "SELL"
+    return side, abs(delta) * trade_size
 
 
 # ── Per-bot running state ─────────────────────────────────────────────────────
@@ -76,8 +106,28 @@ class LiveBotEngine:
             broker=broker,
         )
         self._running[bot_id] = state
+        await self._reconcile_position(state)
         state.task = asyncio.create_task(self._run(state), name=f"bot-{bot_id}")
         log.info("bot %s started", bot_id)
+
+    async def _reconcile_position(self, state: _BotRunState) -> None:
+        """Seed the tracked position from the broker so a restart doesn't assume flat.
+
+        Best-effort: adapters that don't report positions return None and the
+        bot starts flat, as before. A held position is mapped to the engine's
+        unit model (±1) with the broker's average price as the entry.
+        """
+        try:
+            pos: Position | None = await state.broker.get_position(state.instrument_id)
+        except Exception as exc:
+            log.warning("bot %s: position reconcile failed: %s", state.bot_id, exc)
+            return
+        if pos is not None and pos.side in ("LONG", "SHORT") and pos.qty:
+            state.position = 1 if pos.side == "LONG" else -1
+            state.entry_price = pos.avg_price
+            log.info(
+                "bot %s: reconciled to %s @ %.2f", state.bot_id, pos.side, pos.avg_price
+            )
 
     async def stop(self, bot_id: str) -> None:
         state = self._running.pop(bot_id, None)
@@ -140,64 +190,57 @@ class LiveBotEngine:
                     fast = _ema(state.prices, state.fast_ema)
                     slow = _ema(state.prices, state.slow_ema)
 
-                    if fast > slow:
-                        signal = "EMA_BUY"
-                        if state.position <= 0:
-                            # Close SHORT if was in a short position
-                            try:
-                                result = await state.broker.place_order(
-                                    state.instrument_id, "BUY", state.trade_size, "MARKET"
-                                )
-                                state.orders.append(result)
-                                if state.position < 0 and state.entry_price is not None:
-                                    pnl = (state.entry_price - tick.price) * state.trade_size
-                                    state.closed_trades.append({
-                                        "entry_ts_ns": state.entry_ts_ns,
-                                        "exit_ts_ns": tick.ts_ns,
-                                        "side": "SHORT",
-                                        "entry_price": state.entry_price,
-                                        "exit_price": tick.price,
-                                        "qty": state.trade_size,
-                                        "pnl": round(pnl, 6),
-                                    })
-                                    state.closed_trades = state.closed_trades[-200:]
-                                state.entry_price = tick.price
+                    target = _target_units(fast=fast, slow=slow, current=state.position)
+                    signal = "EMA_BUY" if target > 0 else "EMA_SELL" if target < 0 else "HOLD"
+                    order = _order_for_target(
+                        current_units=state.position,
+                        target_units=target,
+                        trade_size=state.trade_size,
+                    )
+
+                    if order is not None:
+                        side, qty = order
+                        try:
+                            result = await state.broker.place_order(
+                                state.instrument_id, side, qty, "MARKET"
+                            )
+                            state.orders.append(result)
+                            # Prefer the broker's actual fill price; fall back to the
+                            # tick only when the adapter can't report a fill yet.
+                            fill_price = (
+                                result.avg_fill_price
+                                if result.avg_fill_price is not None
+                                else tick.price
+                            )
+                            # Realize PnL on the position being closed (if any).
+                            if state.position != 0 and state.entry_price is not None:
+                                sign = 1 if state.position > 0 else -1
+                                pnl = (fill_price - state.entry_price) * state.trade_size * sign
+                                state.closed_trades.append({
+                                    "entry_ts_ns": state.entry_ts_ns,
+                                    "exit_ts_ns": tick.ts_ns,
+                                    "side": "LONG" if state.position > 0 else "SHORT",
+                                    "entry_price": state.entry_price,
+                                    "exit_price": fill_price,
+                                    "qty": state.trade_size,
+                                    "pnl": round(pnl, 6),
+                                })
+                                state.closed_trades = state.closed_trades[-200:]
+                            # Adopt the new position at the fill price.
+                            state.position = target
+                            if target == 0:
+                                state.entry_price = None
+                                state.entry_ts_ns = None
+                            else:
+                                state.entry_price = fill_price
                                 state.entry_ts_ns = tick.ts_ns
-                                state.position = 1
-                                log.info("bot %s: BUY %s @ %.2f", state.bot_id, state.instrument_id, tick.price)
-                            except Exception as exc:
-                                log.error("bot %s: order error: %s", state.bot_id, exc)
-                                state.error = str(exc)
-                    elif fast < slow:
-                        signal = "EMA_SELL"
-                        if state.position >= 0:
-                            # Close LONG if was in a long position
-                            try:
-                                result = await state.broker.place_order(
-                                    state.instrument_id, "SELL", state.trade_size, "MARKET"
-                                )
-                                state.orders.append(result)
-                                if state.position > 0 and state.entry_price is not None:
-                                    pnl = (tick.price - state.entry_price) * state.trade_size
-                                    state.closed_trades.append({
-                                        "entry_ts_ns": state.entry_ts_ns,
-                                        "exit_ts_ns": tick.ts_ns,
-                                        "side": "LONG",
-                                        "entry_price": state.entry_price,
-                                        "exit_price": tick.price,
-                                        "qty": state.trade_size,
-                                        "pnl": round(pnl, 6),
-                                    })
-                                    state.closed_trades = state.closed_trades[-200:]
-                                state.entry_price = tick.price
-                                state.entry_ts_ns = tick.ts_ns
-                                state.position = -1
-                                log.info("bot %s: SELL %s @ %.2f", state.bot_id, state.instrument_id, tick.price)
-                            except Exception as exc:
-                                log.error("bot %s: order error: %s", state.bot_id, exc)
-                                state.error = str(exc)
-                    else:
-                        signal = "HOLD"
+                            log.info(
+                                "bot %s: %s %d %s @ %.2f",
+                                state.bot_id, side, qty, state.instrument_id, fill_price,
+                            )
+                        except Exception as exc:
+                            log.error("bot %s: order error: %s", state.bot_id, exc)
+                            state.error = str(exc)
 
                     # Record signal change (not every tick — only on change)
                     if signal != state.last_signal:

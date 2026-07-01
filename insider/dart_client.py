@@ -186,3 +186,65 @@ def get_recent_kr_insider_feed(days: int = 30, max_corps: int = 20) -> list[dict
                 pass
 
     return sorted(results, key=lambda x: x.get("rcept_dt", ""), reverse=True)
+
+
+def get_recent_kr_corporate_actions(days: int = 30, max_items: int = 40) -> list[dict]:
+    """매매 판단에 영향 주는 기업행위만: 유상/무상증자, 자기주식 취득/소각.
+    소유상황보고(보유자 보고)는 제외. DART list.json을 report_nm으로 필터."""
+    import datetime as _dt
+    end_de = _dt.date.today().strftime("%Y%m%d")
+    bgn_de = (_dt.date.today() - _dt.timedelta(days=days)).strftime("%Y%m%d")
+
+    def _classify(nm: str) -> str | None:
+        if "무상증자" in nm:
+            return "RIGHTS_ISSUE"
+        if "유상증자" in nm:
+            return "PAID_IN"
+        if "자기주식" in nm or "자사주" in nm:
+            if "소각" in nm:
+                return "CANCELLATION"
+            if "처분" in nm or "해지" in nm:  # 버프백 종료/매도성 — 호재 아님
+                return "DISPOSAL"
+            return "BUYBACK"
+        return None
+
+    out: list[dict] = []
+    seen: set[str] = set()
+    for page in (1, 2, 3):
+        try:
+            r = requests.get(
+                f"{DART_BASE}/list.json",
+                params={"crtfc_key": _key(), "bgn_de": bgn_de, "end_de": end_de,
+                        "sort": "date", "sort_mth": "desc", "page_no": page, "page_count": 100},
+                timeout=_TIMEOUT,
+            )
+            data = r.json()
+        except Exception:
+            break
+        if data.get("status") != "000":
+            break
+        rows = data.get("list", [])
+        for d in rows:
+            nm = d.get("report_nm", "")
+            ttype = _classify(nm)
+            if not ttype:
+                continue
+            rcept = d.get("rcept_no", "")
+            if rcept in seen:
+                continue
+            seen.add(rcept)
+            out.append({
+                "trade_date": d.get("rcept_dt", ""),
+                "reporter": d.get("corp_name", ""),
+                "corp_name": d.get("corp_name", ""),
+                "ticker": d.get("stock_code", "") or None,
+                "trade_type": ttype,
+                "report_type": nm,
+                "event_cause": nm,
+                "dart_url": f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept}" if rcept else None,
+            })
+            if len(out) >= max_items:
+                return out
+        if len(rows) < 100:
+            break
+    return out

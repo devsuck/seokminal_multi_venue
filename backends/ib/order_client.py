@@ -1,6 +1,9 @@
+import asyncio
+import time
+
 from ib_async import IB
 from ib_async.contract import Stock
-from ib_async.order import LimitOrder, MarketOrder, Trade
+from ib_async.order import UNSET_DOUBLE, LimitOrder, MarketOrder, Trade
 
 
 class IBOrderClient:
@@ -23,7 +26,11 @@ class IBOrderClient:
         quantity: int,
         order_type: str,
         limit_price: float | None = None,
+        wait_fill: bool = False,
     ) -> dict:
+        """Place an order. When ``wait_fill`` is True, wait (briefly) for the
+        order to reach a terminal state so the returned dict carries the real
+        ``avg_fill_price`` — needed for accurate live P&L on market orders."""
         await self._ensure_connected()
         contract = Stock(symbol, "SMART", "USD")
         await self._ib.qualifyContractsAsync(contract)
@@ -34,7 +41,39 @@ class IBOrderClient:
             order = MarketOrder(side, quantity)
 
         trade = self._ib.placeOrder(contract, order)
+        if wait_fill:
+            await self._await_fill(trade)
         return self._to_dict(trade)
+
+    async def _await_fill(self, trade: Trade, timeout: float = 6.0) -> None:
+        """Poll until the order is done (filled/cancelled) or times out."""
+        terminal = {"Filled", "Cancelled", "ApiCancelled", "Inactive"}
+        deadline = time.monotonic() + timeout
+        while trade.orderStatus.status not in terminal and time.monotonic() < deadline:
+            await asyncio.sleep(0.2)
+
+    async def get_intraday_bars(
+        self, symbol: str, bar_size: str = "5 mins", duration: str = "2 D"
+    ) -> list[dict]:
+        """Recent intraday bars as intraday_score-shaped dicts (t/o/h/l/c/v).
+        Reuses this client's IB connection so a live day-trade tick reads data
+        and executes over a single session (no source mismatch)."""
+        await self._ensure_connected()
+        contract = Stock(symbol, "SMART", "USD")
+        await self._ib.qualifyContractsAsync(contract)
+        bars = await self._ib.reqHistoricalDataAsync(
+            contract,
+            endDateTime="",
+            durationStr=duration,
+            barSizeSetting=bar_size,
+            whatToShow="TRADES",
+            useRTH=True,
+        )
+        return [
+            {"t": b.date, "o": float(b.open), "h": float(b.high),
+             "l": float(b.low), "c": float(b.close), "v": float(b.volume)}
+            for b in bars
+        ]
 
     async def get_order_status(self, order_id: int) -> dict | None:
         await self._ensure_connected()
@@ -54,9 +93,20 @@ class IBOrderClient:
             raise ValueError(f"no known order with order_id={order_id}")
         return self._to_dict(cancelled)
 
+    async def get_positions(self) -> list[dict]:
+        """Held IB positions: [{symbol, qty(signed), avg_price}]."""
+        await self._ensure_connected()
+        out = []
+        for p in self._ib.positions():
+            q = float(p.position)
+            if q != 0:
+                out.append({"symbol": p.contract.symbol, "qty": q,
+                            "avg_price": float(p.avgCost)})
+        return out
+
     async def _ensure_connected(self) -> None:
         if not self._ib.isConnected():
-            await self._ib.connectAsync(self._host, self._port, self._client_id)
+            await self._ib.connectAsync(self._host, self._port, self._client_id, timeout=4)
 
     def _find_trade(self, order_id: int) -> Trade | None:
         for trade in self._ib.trades():
@@ -66,11 +116,14 @@ class IBOrderClient:
 
     @staticmethod
     def _to_dict(trade: Trade) -> dict:
+        avg = getattr(trade.orderStatus, "avgFillPrice", None)
+        avg_fill = None if avg is None or avg == UNSET_DOUBLE or avg == 0 else float(avg)
         return {
             "order_id": trade.order.orderId,
             "status": trade.orderStatus.status,
             "filled": trade.orderStatus.filled,
             "remaining": trade.orderStatus.remaining,
+            "avg_fill_price": avg_fill,
         }
 
     async def close(self) -> None:

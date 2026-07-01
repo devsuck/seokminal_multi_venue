@@ -32,6 +32,7 @@ def test_place_us_order_success(mock_cls):
 
     r = client.post("/orders/us", json={
         "symbol": "AAPL", "side": "BUY", "quantity": 1, "order_type": "MARKET",
+        "paper": False,  # IB(TWS) live path (paper=True → Alpaca)
     })
     assert r.status_code == 200
     body = r.json()

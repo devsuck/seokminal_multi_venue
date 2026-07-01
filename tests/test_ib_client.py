@@ -43,7 +43,7 @@ class FakeIB:
         self._ticker = FakeTicker(batches if batches is not None else [])
         self._historical_bars = historical_bars if historical_bars is not None else []
 
-    async def connectAsync(self, host, port, client_id):
+    async def connectAsync(self, host, port, client_id, timeout=4):
         self.connect_calls.append((host, port, client_id))
 
     async def qualifyContractsAsync(self, contract):

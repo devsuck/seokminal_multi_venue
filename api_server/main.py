@@ -1,3 +1,4 @@
+import asyncio
 import datetime as dt
 import json
 import os
@@ -19,7 +20,7 @@ from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnec
 from fastapi.middleware.cors import CORSMiddleware
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from adapters.data_provider import bar_type_for
 from ai_strategy.advisor import recommend_strategy
@@ -34,6 +35,13 @@ from risk_analysis.portfolio import markowitz_optimize
 from risk_analysis.timeseries import compute_timeseries
 from live_engine.engine import engine as live_engine, make_broker
 from live_engine.broker_interface import BotStatus
+from live_engine.risk_guard import (
+    DailyPnLTracker,
+    RiskConfig,
+    RiskViolation,
+    validate_order,
+)
+from api_server.order_audit import read_recent as read_order_audit, record_order
 from fred.client import FREDClient, SERIES_CATALOG as FRED_CATALOG
 from ecos.client import ECOSClient, SERIES_CATALOG as ECOS_CATALOG
 from corp_finance.client import CorpFinanceClient, STOCK_CRNO_MAP, parse_financials
@@ -2628,6 +2636,98 @@ async def ws_live(websocket: WebSocket, code: str) -> None:
             await stream.aclose()
 
 
+# ── IB Live Streaming ─────────────────────────────────────────────────────────
+
+
+def _serialize_ib_tick(symbol: str, tick) -> dict:
+    """Serialise an ib_async TickByTickAllLast into a JSON-safe dict.
+
+    ``tick.time`` is a timezone-aware datetime; emit epoch seconds so the
+    frontend can format locally. price/size come through as plain numbers.
+    """
+    return {
+        "symbol": symbol,
+        "time": tick.time.timestamp() if tick.time is not None else None,
+        "price": float(tick.price),
+        "size": float(tick.size),
+        "exchange": tick.exchange or "",
+    }
+
+
+# IB error codes that mean "no ticks will ever arrive on this stream" — relay
+# them to the client so the widget stops waiting. 354/10168/10167 = market data
+# not subscribed; 162/200 = historical/contract problems; 504 = not connected.
+_IB_FATAL_ERROR_CODES = {162, 200, 354, 504, 10167, 10168, 10197}
+
+
+@app.websocket("/ws/ib/live/{symbol}")
+async def ws_ib_live(websocket: WebSocket, symbol: str) -> None:
+    """Stream IB tick-by-tick trades for a US equity symbol.
+
+    Requires a running TWS/IB Gateway (default 127.0.0.1:7497). When the
+    gateway is unreachable, stream_trades' connectAsync times out and raises,
+    and we relay the error to the client and close — the widget then shows
+    offline. If the gateway is up but the account lacks a market-data
+    subscription, IB emits an async error event (e.g. 354) rather than
+    raising; we forward those fatal codes so the widget doesn't hang waiting
+    for ticks that never come. Each connection uses a random client_id to
+    allow concurrent symbols.
+    """
+    await websocket.accept()
+
+    symbol = symbol.strip().upper()
+    client = IBClient(client_id=random.randint(900, 999))
+    loop = asyncio.get_running_loop()
+    error_queue: asyncio.Queue[str] = asyncio.Queue()
+
+    def _on_ib_error(reqId, errorCode, errorString, contract):  # noqa: N803 (ib_async signature)
+        if errorCode in _IB_FATAL_ERROR_CODES:
+            loop.call_soon_threadsafe(error_queue.put_nowait, errorString)
+
+    client._ib.errorEvent += _on_ib_error
+
+    stream = None
+    stream_task = None
+    error_task = None
+    try:
+        stream = client.stream_trades(symbol)
+        stream_task = asyncio.ensure_future(stream.__anext__())
+        error_task = asyncio.ensure_future(error_queue.get())
+
+        while True:
+            done, _ = await asyncio.wait(
+                {stream_task, error_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if error_task in done:
+                await websocket.send_json({"error": error_task.result()})
+                await websocket.close()
+                break
+            if stream_task in done:
+                tick = stream_task.result()  # raises StopAsyncIteration when stream ends
+                await websocket.send_json(_serialize_ib_tick(symbol, tick))
+                stream_task = asyncio.ensure_future(stream.__anext__())
+    except (WebSocketDisconnect, StopAsyncIteration):
+        pass
+    except Exception as exc:
+        try:
+            await websocket.send_json({"error": str(exc)})
+            await websocket.close()
+        except Exception:
+            pass
+    finally:
+        client._ib.errorEvent -= _on_ib_error
+        for task in (stream_task, error_task):
+            if task is not None and not task.done():
+                task.cancel()
+        if stream is not None:
+            await stream.aclose()
+        try:
+            if client._ib.isConnected():
+                client._ib.disconnect()
+        except Exception:
+            pass
+
+
 # ── Spawner ───────────────────────────────────────────────────────────────────
 
 class ConditionInfo(BaseModel):
@@ -2793,9 +2893,10 @@ def _compute_unrealized_pnl(
 class KROrderRequest(BaseModel):
     code: str
     side: str           # "BUY" | "SELL"
-    quantity: int
+    quantity: int = Field(gt=0)
     order_type: str     # "MARKET" | "LIMIT"
     price: int | None = None  # required for LIMIT
+    paper: bool = True  # True=모의(KIS_MOCK), False=실전(KIS)
 
 
 class KROrderResponse(BaseModel):
@@ -2813,9 +2914,10 @@ class KRCancelRequest(BaseModel):
 class USOrderRequest(BaseModel):
     symbol: str           # e.g. "AAPL"
     side: str             # "BUY" | "SELL"
-    quantity: int
+    quantity: int = Field(gt=0)
     order_type: str       # "MARKET" | "LIMIT"
     limit_price: float | None = None  # required for LIMIT
+    paper: bool = True    # True=Alpaca 페이퍼, False=IB(TWS) 실계좌
 
 
 class USOrderResponse(BaseModel):
@@ -2843,29 +2945,105 @@ class AllBotsStatusResponse(BaseModel):
     bots: list[BotLiveEntry]
 
 
+# Shared firm-wide risk state: one config snapshot (env-driven) and one
+# realized-PnL ledger feed the pre-trade guard on every order path.
+daily_pnl_tracker = DailyPnLTracker()
+
+
+def _check_risk(
+    *, side: str, quantity: float, price_estimate: float | None,
+    current_position_qty: int = 0,
+) -> None:
+    """Run the pre-trade risk guard; translate a violation into HTTP 422.
+
+    Re-reads RiskConfig from env each call so limit changes (incl. the kill
+    switch) take effect without a restart.
+    """
+    try:
+        validate_order(
+            side=side,
+            quantity=quantity,
+            price_estimate=price_estimate,
+            current_position_qty=current_position_qty,
+            day_realized_pnl=daily_pnl_tracker.realized(),
+            config=RiskConfig.from_env(),
+        )
+    except RiskViolation as exc:
+        raise HTTPException(status_code=422, detail=f"risk check failed: {exc}") from exc
+
+
+@app.get("/trading/mode")
+def get_trading_mode() -> dict:
+    """Report paper/live mode per venue plus the active risk limits.
+
+    The frontend uses this to badge the orders page and force extra
+    confirmation before sending against a live account. IB mode is inferred
+    from the configured port (7497 = paper default, 7496 = live default);
+    a non-standard port is reported as "unknown" since only the TWS login
+    truly decides.
+    """
+    ib_port = int(os.environ.get("IB_PORT", "7497"))
+    ib_mode = "paper" if ib_port == 7497 else "live" if ib_port == 7496 else "unknown"
+    kr_mode = "paper" if os.environ.get("KIS_MOCK", "true").lower() == "true" else "live"
+    alpaca_mode = "paper" if os.environ.get("ALPACA_PAPER", "true").lower() == "true" else "live"
+    cfg = RiskConfig.from_env()
+    return {
+        "venues": {
+            "US": {"mode": ib_mode, "ib_port": ib_port},
+            "KR": {"mode": kr_mode},
+            "ALPACA": {"mode": alpaca_mode},
+            "HL": {"mode": "live"},  # Hyperliquid uses a real key; paper is per-order
+        },
+        "risk": {
+            "max_order_qty": cfg.max_order_qty,
+            "max_order_notional": cfg.max_order_notional,
+            "max_position_qty": cfg.max_position_qty,
+            "daily_loss_limit": cfg.daily_loss_limit,
+            "kill_switch": cfg.kill_switch,
+        },
+        "any_live": "live" in (ib_mode, kr_mode, alpaca_mode),
+    }
+
+
+@app.get("/orders/audit")
+def get_orders_audit(limit: int = 100) -> dict:
+    """Return the recent persisted order audit trail (newest last)."""
+    return {"entries": read_order_audit(limit=limit)}
+
+
 @app.post("/orders/kr", response_model=KROrderResponse)
 def place_kr_order(req: KROrderRequest) -> KROrderResponse:
-    app_key = os.environ.get("KIS_APP_KEY", "")
-    app_secret = os.environ.get("KIS_APP_SECRET", "")
-    cano = os.environ.get("KIS_CANO", "")
+    # Route to 모의(KIS_MOCK) or 실전(KIS) creds + server by the paper flag.
+    if req.paper:
+        app_key = os.environ.get("KIS_MOCK_APP_KEY", "")
+        app_secret = os.environ.get("KIS_MOCK_APP_SECRET", "")
+        cano = os.environ.get("KIS_MOCK_CANO", "")
+    else:
+        app_key = os.environ.get("KIS_APP_KEY", "")
+        app_secret = os.environ.get("KIS_APP_SECRET", "")
+        cano = os.environ.get("KIS_CANO", "")
     acnt_prdt_cd = os.environ.get("KIS_ACNT_PRDT_CD", "")
     if not all([app_key, app_secret, cano, acnt_prdt_cd]):
-        raise HTTPException(status_code=503, detail="KIS credentials not configured")
+        raise HTTPException(status_code=503, detail=f"KIS {'모의' if req.paper else '실전'} credentials not configured")
     if req.side not in ("BUY", "SELL"):
         raise HTTPException(status_code=400, detail=f"invalid side: {req.side!r}")
     if req.order_type not in ("MARKET", "LIMIT"):
         raise HTTPException(status_code=400, detail=f"invalid order_type: {req.order_type!r}")
     if req.order_type == "LIMIT" and req.price is None:
         raise HTTPException(status_code=400, detail="price required for LIMIT order")
+    _check_risk(side=req.side, quantity=req.quantity, price_estimate=req.price)
     try:
-        order_client = KISOrderClient(app_key, app_secret, cano, acnt_prdt_cd)
+        order_client = KISOrderClient(app_key, app_secret, cano, acnt_prdt_cd, mock=req.paper)
         result = order_client.place_order(
             req.code, req.side, req.quantity, req.order_type, req.price
         )
+        record_order(venue="KR", request=req.model_dump(), result=result, status="submitted")
         return KROrderResponse(**result)
     except (requests.ConnectionError, requests.Timeout) as exc:
+        record_order(venue="KR", request=req.model_dump(), result=None, status="error")
         raise HTTPException(status_code=503, detail="KIS unreachable") from exc
     except Exception as exc:
+        record_order(venue="KR", request=req.model_dump(), result=None, status="error")
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
@@ -2918,19 +3096,42 @@ async def place_us_order(req: USOrderRequest) -> USOrderResponse:
         raise HTTPException(status_code=400, detail=f"invalid order_type: {req.order_type!r}")
     if req.order_type == "LIMIT" and req.limit_price is None:
         raise HTTPException(status_code=400, detail="limit_price required for LIMIT order")
+    _check_risk(side=req.side, quantity=req.quantity, price_estimate=req.limit_price)
+
+    # US 라우팅: 페이퍼=Alpaca(무제한·무TWS), 실계좌=IB(TWS 7496).
+    if req.paper:
+        try:
+            from api_server.router_autopilot import place_order as _alpaca_order, OrderRequest as _AlpacaReq
+            r = _alpaca_order(_AlpacaReq(symbol=req.symbol, side=req.side.lower(),
+                                        qty=float(req.quantity), type=req.order_type.lower(),
+                                        limit_price=req.limit_price, paper=True))
+            record_order(venue="US", request=req.model_dump(), result=r, status="submitted")
+            # Alpaca order id is a UUID (str); USOrderResponse.order_id is int → 0 placeholder.
+            return USOrderResponse(order_id=0, status=r["status"],
+                                   filled=float(r.get("filled_qty", 0.0)),
+                                   remaining=float(req.quantity - r.get("filled_qty", 0.0)))
+        except HTTPException:
+            raise
+        except Exception as exc:
+            record_order(venue="US", request=req.model_dump(), result=None, status="error")
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     ib_client = IBOrderClient(
         host=os.environ.get("IB_HOST", "127.0.0.1"),
-        port=int(os.environ.get("IB_PORT", "7497")),
+        port=7496,  # live TWS
         client_id=int(os.environ.get("IB_MANUAL_ORDER_CLIENT_ID", "10")),
     )
     try:
         result = await ib_client.place_order(
             req.symbol, req.side, req.quantity, req.order_type, req.limit_price
         )
+        record_order(venue="US", request=req.model_dump(), result=result, status="submitted")
         return USOrderResponse(**result)
     except (ConnectionRefusedError, OSError) as exc:
+        record_order(venue="US", request=req.model_dump(), result=None, status="error")
         raise HTTPException(status_code=503, detail="IB TWS not reachable") from exc
     except Exception as exc:
+        record_order(venue="US", request=req.model_dump(), result=None, status="error")
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
         await ib_client.close()
@@ -3225,7 +3426,54 @@ def get_triggered_alerts() -> TriggeredAlertsResponse:
 
 # ── /insider ───────────────────────────────────────────────────────────────────
 
-from insider.dart_client import search_company as _dart_search, get_executive_stock_changes as _dart_trades, get_recent_kr_insider_feed as _dart_recent
+from insider.dart_client import search_company as _dart_search, get_executive_stock_changes as _dart_trades, get_recent_kr_insider_feed as _dart_recent, get_recent_kr_corporate_actions as _dart_corp_actions
+from insider.congress_client import get_congress_trades as _congress_trades
+from insider.gov_spending_client import get_recent_contracts as _gov_contracts
+
+
+class GovContract(BaseModel):
+    recipient: str
+    amount: float
+    agency: str | None = None
+    description: str | None = None
+    start_date: str | None = None
+    award_id: str | None = None
+
+
+@app.get("/insider/gov-contracts", response_model=list[GovContract])
+def insider_gov_contracts(days: int = Query(30, ge=1, le=180), limit: int = Query(40, ge=10, le=100)) -> list[GovContract]:
+    """미국 연방정부 계약 낙찰 (USASpending) — 기업 단위."""
+    try:
+        rows = _gov_contracts(days=days, limit=limit)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"USASpending error: {exc}") from exc
+    return [GovContract(**r) for r in rows]
+
+
+class CongressTrade(BaseModel):
+    chamber: str
+    trade_date: str
+    disclosure_date: str
+    reporter: str
+    district: str | None = None
+    owner: str | None = None
+    ticker: str | None = None
+    asset: str | None = None
+    trade_type: str
+    amount: str | None = None
+    link: str | None = None
+
+
+@app.get("/insider/congress", response_model=list[CongressTrade])
+def insider_congress(limit: int = Query(80, ge=10, le=200)) -> list[CongressTrade]:
+    """미국 의회(상·하원) 의원 주식 매매 신고 (STOCK Act)."""
+    try:
+        rows = _congress_trades(limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"congress feed error: {exc}") from exc
+    return [CongressTrade(**r) for r in rows]
 from insider.edgar_client import get_form4_transactions as _edgar_trades, get_recent_form4_feed as _edgar_recent
 
 
@@ -3353,26 +3601,24 @@ def insider_us_recent(
 @app.get("/insider/kr/recent", response_model=list[InsiderTrade])
 def insider_kr_recent(
     days: int = Query(30, ge=1, le=180),
-    max_corps: int = Query(20, ge=5, le=50),
+    max_corps: int = Query(40, ge=5, le=100),
 ) -> list[InsiderTrade]:
+    """매매 판단에 영향 주는 기업행위만: 유상/무상증자, 자기주식 취득·소각.
+    (보유자 소유상황보고는 제외)"""
     try:
-        rows = _dart_recent(days=days, max_corps=max_corps)
+        rows = _dart_corp_actions(days=days, max_items=max_corps)
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"OpenDART error: {exc}") from exc
     return [
         InsiderTrade(
-            trade_date=r["rcept_dt"],
+            trade_date=r["trade_date"],
             reporter=r["reporter"],
             trade_type=r["trade_type"],
-            shares_change=r["shares_change"],
-            shares_total=r["shares_total"],
-            ownership_pct=r["ownership_pct"],
-            report_type=r["report_type"],
-            corp_name=r["corp_name"],
-            ticker=r.get("stock_code"),
-            role=r.get("role") or None,
+            report_type=r.get("report_type"),
+            corp_name=r.get("corp_name"),
+            ticker=r.get("ticker"),
             event_cause=r.get("event_cause") or None,
             dart_url=r.get("dart_url") or None,
         )
@@ -3556,6 +3802,46 @@ def _finnhub_key() -> str:
     return _FINNHUB_KEY
 
 
+class QuoteResponse(BaseModel):
+    symbol: str
+    price: float
+    ts: int  # epoch seconds
+
+
+# Short-TTL cache: 여러 컴포넌트/클라가 같은 심볼 요청해도 Finnhub 호출 1회로 dedup.
+# → 무료티어 60 calls/분 한도 보호. (symbol → (fetched_at, QuoteResponse))
+_quote_cache: dict[str, tuple[float, "QuoteResponse"]] = {}
+_QUOTE_TTL = 3.0  # seconds
+
+
+@app.get("/quote", response_model=QuoteResponse)
+def get_quote(symbol: str = Query(..., description="US ticker, e.g. AAPL")) -> QuoteResponse:
+    """실시간 최신가 (US 주식, Finnhub). 차트 마지막 봉 라이브 갱신용. 3초 캐시."""
+    sym = symbol.strip().upper().split(".")[0]
+    now = _time.time()
+    cached = _quote_cache.get(sym)
+    if cached and now - cached[0] < _QUOTE_TTL:
+        return cached[1]
+
+    key_param = _finnhub_key()
+    try:
+        resp = requests.get(
+            f"{_FINNHUB_BASE}/quote",
+            params={"symbol": sym, "token": key_param},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Finnhub quote failed: {exc}") from exc
+    price = float(data.get("c") or 0)
+    if price <= 0:
+        raise HTTPException(status_code=404, detail=f"no quote for {sym!r}")
+    out = QuoteResponse(symbol=sym, price=price, ts=int(data.get("t") or now))
+    _quote_cache[sym] = (now, out)
+    return out
+
+
 class NewsItem(BaseModel):
     id: int | str
     headline: str
@@ -3602,7 +3888,8 @@ def get_market_news(category: str = Query("general")) -> list[NewsItem]:
         }
         for n in resp.json()[:30]
     ]
-    _news_cache[key] = (now, items)
+    if items:  # never cache an empty result (avoids poisoning on a transient blip)
+        _news_cache[key] = (now, items)
     return [NewsItem(**n) for n in items]
 
 
@@ -3765,7 +4052,7 @@ def run_screener(
 class HLOrderRequest(BaseModel):
     coin: str
     is_buy: bool
-    size: float
+    size: float = Field(gt=0)
     order_type: str = "market"
     limit_px: float | None = None
     reduce_only: bool = False
@@ -3816,6 +4103,13 @@ def hl_place_order(req: HLOrderRequest) -> dict:
         raise HTTPException(status_code=400, detail="limit_px required for limit order")
     if req.slippage < 0 or req.slippage > 0.5:
         raise HTTPException(status_code=400, detail="slippage must be 0~0.5")
+    # reduce_only orders unwind exposure — exempt from the position cap path.
+    if not req.reduce_only:
+        _check_risk(
+            side="BUY" if req.is_buy else "SELL",
+            quantity=req.size,
+            price_estimate=req.limit_px,
+        )
     try:
         result = place_order(
             coin=req.coin,
@@ -3827,10 +4121,13 @@ def hl_place_order(req: HLOrderRequest) -> dict:
             slippage=req.slippage,
             paper=req.paper,
         )
+        record_order(venue="HL", request=req.model_dump(), result={"result": result}, status="submitted")
         return {"status": "ok", "paper": req.paper, "result": result}
     except ValueError as e:
+        record_order(venue="HL", request=req.model_dump(), result=None, status="error")
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
+        record_order(venue="HL", request=req.model_dump(), result=None, status="error")
         raise HTTPException(status_code=502, detail=f"HL order failed: {e}") from e
 
 
@@ -3853,6 +4150,52 @@ def hl_close_position(req: HLCloseRequest) -> dict:
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"HL close failed: {e}") from e
 
+
+class HLLeverageRequest(BaseModel):
+    coin: str
+    leverage: int = Field(ge=1, le=50)
+    is_cross: bool = True
+    paper: bool = False
+
+
+@app.post("/hl/leverage")
+def hl_set_leverage(req: HLLeverageRequest) -> dict:
+    """Set leverage for a coin before sizing a leveraged day-trade position."""
+    try:
+        from hyperliquid.trader import set_leverage
+    except ImportError as e:
+        raise HTTPException(status_code=503, detail=f"HL trader unavailable: {e}") from e
+    try:
+        result = set_leverage(req.coin, req.leverage, req.is_cross, req.paper)
+        return {"status": "ok", "coin": req.coin.upper(), "leverage": req.leverage, "result": result}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"HL set leverage failed: {e}") from e
+
+
+@app.get("/hl/intraday/scores")
+def hl_intraday_scores(coins: str, paper: bool = True) -> dict:
+    """Intraday (crypto 24/7) scoring for HL perps. ``coins`` comma-separated.
+
+    Pulls HL 5-min candles and runs the crypto-mode intraday engine
+    (rolling VWAP, no session/ToD reset). Default paper=True (testnet).
+    """
+    try:
+        from hyperliquid.trader import get_candles
+    except ImportError as e:
+        raise HTTPException(status_code=503, detail=f"HL trader unavailable: {e}") from e
+    from api_server import intraday_score as _iz
+
+    out = {}
+    for coin in [c.strip().upper() for c in coins.split(",") if c.strip()]:
+        try:
+            bars = get_candles(coin, interval="5m", lookback_min=1440, paper=paper)
+            res = _iz.score_intraday(bars, crypto=True)
+        except Exception as e:
+            res = {"direction": "FLAT", "score": 0, "signal": "AVOID", "error": str(e)}
+        res["symbol"] = coin
+        out[coin] = res
+    return {"scores": out}
+
 # ── Quant Advanced Routes (Group 3) ──────────────────────────────────────────
 from api_server.router_quant3 import router as quant3_router
 app.include_router(quant3_router)
@@ -3869,8 +4212,9 @@ app.include_router(quant1_router)
 
 
 # ── Alpaca Autopilot ──────────────────────────────────────────────────────────
-from api_server.router_autopilot import router as autopilot_router
+from api_server.router_autopilot import router as autopilot_router, agents_router
 app.include_router(autopilot_router)
+app.include_router(agents_router)
 
 
 # ── Market Overview ───────────────────────────────────────────────────────────
@@ -4054,7 +4398,7 @@ STOCKS: NVDA↑ AAPL↓ MSFT↑
 · 에너지 섹터는 공급 우려로 강세 흐름 유지될 것으로 보임.
 · 영국 GDP 발표 부진 시 파운드화 하락 리스크 주의.""" + picks_instruction
     else:
-        system = """당신은 매크로 트레이딩 전략가입니다. 뉴스 헤드라인을 보고 투자 전략을 한국어로 작성하세요.
+        system = """당신은 매크로 트레이딩 전략가입니다. 뉴스 헤드라인과 요약을 보고 투자 전략을 한국어로 작성하세요. 제목만으로 속단하지 말고 제공된 요약 내용을 근거로 판단하세요.
 
 형식 규칙:
 - 마크다운 헤더(#, ##) 절대 금지

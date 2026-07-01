@@ -23,8 +23,15 @@ class IBClient:
         self._client_id = client_id
         self._ib = ib if ib is not None else IB()
 
-    async def stream_trades(self, symbol: str) -> AsyncIterator[TickByTickAllLast]:
-        await self._ib.connectAsync(self._host, self._port, self._client_id)
+    async def stream_trades(
+        self, symbol: str, connect_timeout: float = 4.0
+    ) -> AsyncIterator[TickByTickAllLast]:
+        # connect_timeout caps the wait so a missing/closed TWS gateway raises
+        # promptly instead of leaving the caller (e.g. a WebSocket handler)
+        # hanging — the endpoint relays the error and the widget shows offline.
+        await self._ib.connectAsync(
+            self._host, self._port, self._client_id, timeout=connect_timeout
+        )
         contract = Stock(symbol, "SMART", "USD")
         await self._ib.qualifyContractsAsync(contract)
         ticker = self._ib.reqTickByTickData(contract, TICK_TYPE)
@@ -32,6 +39,24 @@ class IBClient:
             for tick in ticker.tickByTicks:
                 yield tick
             ticker.tickByTicks.clear()
+
+    async def get_account_summary(self, connect_timeout: float = 4.0) -> dict:
+        """Net liquidation / cash / buying power from IB. Requires a running
+        TWS/Gateway; raises promptly (connect_timeout) if unreachable."""
+        await self._ib.connectAsync(
+            self._host, self._port, self._client_id, timeout=connect_timeout
+        )
+        try:
+            rows = await self._ib.reqAccountSummaryAsync()
+            d = {r.tag: r.value for r in rows}
+            return {
+                "net_liquidation": float(d.get("NetLiquidation", 0) or 0),
+                "total_cash": float(d.get("TotalCashValue", 0) or 0),
+                "buying_power": float(d.get("BuyingPower", 0) or 0),
+            }
+        finally:
+            if self._ib.isConnected():
+                self._ib.disconnect()
 
     async def get_daily_bars(
         self, symbol: str, end_date: str, duration: str, bar_size: str = DEFAULT_BAR_SIZE

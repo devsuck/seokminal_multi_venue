@@ -5,17 +5,22 @@ from backends.kis.auth import KISAuth
 ORDER_CASH_PATH = "/uapi/domestic-stock/v1/trading/order-cash"
 ORDER_INQUIRE_PATH = "/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
 ORDER_CANCEL_PATH = "/uapi/domestic-stock/v1/trading/order-rvsecncl"
+BALANCE_PATH = "/uapi/domestic-stock/v1/trading/inquire-balance"
 
 BUY_TR_ID = "VTTC0802U"
 SELL_TR_ID = "VTTC0801U"
 INQUIRE_TR_ID = "VTTC8001R"
 CANCEL_TR_ID = "VTTC0803U"
+BALANCE_TR_ID = "VTTC8434R"  # mock; real = TTTC8434R
 
 ORDER_DIVISION_CODES = {"LIMIT": "00", "MARKET": "01"}
 
 
 class KISOrderClient:
     """Client for KIS mock-trading (모의투자) order placement, query, and cancel."""
+
+    MOCK_URL = "https://openapivts.koreainvestment.com:29443"
+    REAL_URL = "https://openapi.koreainvestment.com:9443"
 
     def __init__(
         self,
@@ -24,16 +29,23 @@ class KISOrderClient:
         cano: str,
         acnt_prdt_cd: str,
         auth: KISAuth | None = None,
-        base_url: str = "https://openapivts.koreainvestment.com:29443",
+        base_url: str | None = None,
         session: requests.Session | None = None,
+        mock: bool = True,
     ) -> None:
         self._app_key = app_key
         self._app_secret = app_secret
         self._cano = cano
         self._acnt_prdt_cd = acnt_prdt_cd
-        self._base_url = base_url
+        self._mock = mock
+        # TR ids differ only by prefix: V=모의(mock), T=실전(real).
+        self._base_url = base_url or (self.MOCK_URL if mock else self.REAL_URL)
         self._session = session or requests.Session()
-        self._auth = auth or KISAuth(app_key, app_secret, base_url, self._session)
+        self._auth = auth or KISAuth(app_key, app_secret, self._base_url, self._session)
+
+    def _tr(self, mock_tr_id: str) -> str:
+        """Map a mock TR id (V…) to real (T…) when live."""
+        return mock_tr_id if self._mock else "T" + mock_tr_id[1:]
 
     def place_order(
         self,
@@ -43,7 +55,7 @@ class KISOrderClient:
         order_division: str,
         price: int | None = None,
     ) -> dict:
-        tr_id = BUY_TR_ID if side == "BUY" else SELL_TR_ID
+        tr_id = self._tr(BUY_TR_ID if side == "BUY" else SELL_TR_ID)
         ord_unpr = str(price) if order_division == "LIMIT" else "0"
         payload = self._call(
             "POST",
@@ -65,7 +77,7 @@ class KISOrderClient:
         payload = self._call(
             "GET",
             ORDER_INQUIRE_PATH,
-            INQUIRE_TR_ID,
+            self._tr(INQUIRE_TR_ID),
             params={
                 "CANO": self._cano,
                 "ACNT_PRDT_CD": self._acnt_prdt_cd,
@@ -101,7 +113,7 @@ class KISOrderClient:
         self._call(
             "POST",
             ORDER_CANCEL_PATH,
-            CANCEL_TR_ID,
+            self._tr(CANCEL_TR_ID),
             json_body={
                 "CANO": self._cano,
                 "ACNT_PRDT_CD": self._acnt_prdt_cd,
@@ -115,6 +127,51 @@ class KISOrderClient:
             },
         )
         return {"order_id": order_no, "status": "CANCELLED", "filled": 0.0, "remaining": 0.0}
+
+    def get_balance(self) -> dict:
+        """예수금/총평가/순자산 조회 (inquire-balance). 모의: VTTC8434R."""
+        payload = self._call(
+            "GET", BALANCE_PATH, self._tr(BALANCE_TR_ID),
+            params={
+                "CANO": self._cano, "ACNT_PRDT_CD": self._acnt_prdt_cd,
+                "AFHR_FLPR_YN": "N", "OFL_YN": "", "INQR_DVSN": "02",
+                "UNPR_DVSN": "01", "FUND_STTL_ICLD_YN": "N",
+                "FNCG_AMT_AUTO_RDPT_YN": "N", "PRCS_DVSN": "00",
+                "CTX_AREA_FK100": "", "CTX_AREA_NK100": "",
+            },
+        )
+        out2 = payload.get("output2") or []
+        s = out2[0] if isinstance(out2, list) and out2 else {}
+        return {
+            "deposit": float(s.get("dnca_tot_amt", 0) or 0),    # 예수금총금액
+            "total_eval": float(s.get("tot_evlu_amt", 0) or 0),  # 총평가금액
+            "net_asset": float(s.get("nass_amt", 0) or 0),       # 순자산금액
+        }
+
+    def get_holdings(self) -> list[dict]:
+        """보유 종목 리스트 (inquire-balance output1): 코드/수량/평단/현재가."""
+        payload = self._call(
+            "GET", BALANCE_PATH, self._tr(BALANCE_TR_ID),
+            params={
+                "CANO": self._cano, "ACNT_PRDT_CD": self._acnt_prdt_cd,
+                "AFHR_FLPR_YN": "N", "OFL_YN": "", "INQR_DVSN": "02",
+                "UNPR_DVSN": "01", "FUND_STTL_ICLD_YN": "N",
+                "FNCG_AMT_AUTO_RDPT_YN": "N", "PRCS_DVSN": "00",
+                "CTX_AREA_FK100": "", "CTX_AREA_NK100": "",
+            },
+        )
+        out = []
+        for r in payload.get("output1", []) or []:
+            qty = float(r.get("hldg_qty", 0) or 0)
+            if qty <= 0:
+                continue
+            out.append({
+                "code": r.get("pdno", ""),
+                "qty": qty,
+                "avg_price": float(r.get("pchs_avg_pric", 0) or 0),
+                "current": float(r.get("prpr", 0) or 0),
+            })
+        return out
 
     @staticmethod
     def _row_to_status_dict(row: dict) -> dict:

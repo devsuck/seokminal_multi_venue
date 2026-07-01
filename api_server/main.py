@@ -3626,6 +3626,111 @@ def insider_kr_recent(
     ]
 
 
+# ── Copy-Trade Autopilot (페이퍼) ────────────────────────────────────────────────
+# 스마트머니(의회·내부자) 공개 매수 신고를 페이퍼 계좌에 자동/수동 미러링.
+# AI 예측 아님 — 규칙 기반 추종. 실행은 Alpaca 페이퍼(무료·무한).
+
+class CopySignal(BaseModel):
+    source: str        # "congress" | "insider"
+    name: str          # 의원/내부자 이름
+    role: str | None = None
+    ticker: str
+    trade_type: str    # "BUY"
+    date: str          # 거래일
+    disclosed: str | None = None  # 공시일
+    amount: str | None = None
+    link: str | None = None
+
+
+def _is_buy(t: str | None) -> bool:
+    return bool(t) and any(k in t.lower() for k in ("buy", "purchase", "매수"))
+
+
+@app.get("/copytrade/signals", response_model=list[CopySignal])
+def copytrade_signals(limit: int = Query(60, ge=10, le=200)) -> list[CopySignal]:
+    """의회 + 미국 내부자 '매수' 신호 집계 (US 티커만, 페이퍼 미러 대상)."""
+    out: list[CopySignal] = []
+    # 의회
+    try:
+        for r in _congress_trades(limit=limit):
+            tk = (r.get("ticker") or "").strip().upper()
+            if tk and tk.isalpha() and _is_buy(r.get("trade_type")):
+                out.append(CopySignal(
+                    source="congress", name=r.get("reporter", ""), role=r.get("chamber"),
+                    ticker=tk, trade_type="BUY", date=r.get("trade_date", ""),
+                    disclosed=r.get("disclosure_date"), amount=r.get("amount"), link=r.get("link"),
+                ))
+    except Exception:  # noqa: BLE001
+        pass
+    # 미국 내부자 (EDGAR Form4)
+    try:
+        for r in _edgar_recent(days=14, max_filings=60):
+            tk = (r.get("ticker") or "").strip().upper()
+            if tk and tk.isalpha() and _is_buy(r.get("trade_type")):
+                amt = r.get("value_usd")
+                out.append(CopySignal(
+                    source="insider", name=r.get("reporter", ""), role=r.get("issuer"),
+                    ticker=tk, trade_type="BUY", date=r.get("transaction_date", ""),
+                    amount=f"${amt:,.0f}" if amt else None,
+                ))
+    except Exception:  # noqa: BLE001
+        pass
+    # 최신순
+    out.sort(key=lambda s: s.disclosed or s.date, reverse=True)
+    return out[:limit]
+
+
+class MirrorRequest(BaseModel):
+    ticker: str
+    notional: float = 500.0  # 미러 1건당 페이퍼 매수 금액 (USD)
+
+
+@app.post("/copytrade/mirror")
+def copytrade_mirror(body: MirrorRequest) -> dict:
+    """페이퍼 계좌에 notional 시장가 매수 (Alpaca paper). 실계좌 아님."""
+    key = os.environ.get("ALPACA_API_KEY", "")
+    sec = os.environ.get("ALPACA_SECRET_KEY", "")
+    if not key or not sec:
+        raise HTTPException(status_code=503, detail="ALPACA 키 없음")
+    from alpaca.trading.client import TradingClient
+    from alpaca.trading.requests import MarketOrderRequest
+    from alpaca.trading.enums import OrderSide, TimeInForce
+    client = TradingClient(api_key=key, secret_key=sec, paper=True)
+    try:
+        order = client.submit_order(MarketOrderRequest(
+            symbol=body.ticker.strip().upper(), notional=round(body.notional, 2),
+            side=OrderSide.BUY, time_in_force=TimeInForce.DAY,
+        ))
+        return {"order_id": str(order.id), "ticker": body.ticker.upper(),
+                "notional": body.notional, "status": str(order.status)}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"페이퍼 주문 실패: {exc}") from exc
+
+
+@app.get("/copytrade/positions")
+def copytrade_positions() -> list[dict]:
+    """페이퍼 계좌 보유 포지션 (미러 성과 확인용)."""
+    key = os.environ.get("ALPACA_API_KEY", "")
+    sec = os.environ.get("ALPACA_SECRET_KEY", "")
+    if not key or not sec:
+        raise HTTPException(status_code=503, detail="ALPACA 키 없음")
+    from alpaca.trading.client import TradingClient
+    client = TradingClient(api_key=key, secret_key=sec, paper=True)
+    try:
+        out = []
+        for p in client.get_all_positions():
+            out.append({
+                "ticker": p.symbol, "qty": float(p.qty),
+                "avg_price": float(p.avg_entry_price), "current": float(p.current_price),
+                "market_value": float(p.market_value),
+                "unrealized_pl": float(p.unrealized_pl),
+                "unrealized_plpc": float(p.unrealized_plpc) * 100,
+            })
+        return out
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"포지션 조회 실패: {exc}") from exc
+
+
 # ── /calendar/economic ─────────────────────────────────────────────────────────
 
 import time as _time

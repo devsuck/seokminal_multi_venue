@@ -70,7 +70,8 @@ app = FastAPI(title="Seokminal Dashboard API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    # 기본 로컬 개발. 배포(클라우드) 시 CORS_ORIGINS 환경변수(쉼표구분)로 도메인 지정.
+    allow_origins=[o.strip() for o in os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(",") if o.strip()],
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )

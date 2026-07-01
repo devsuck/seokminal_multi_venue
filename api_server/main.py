@@ -521,6 +521,7 @@ def get_backtest(
     xgb_n_estimators: int = Query(100, description="XGBoost number of trees"),
     xgb_max_depth: int = Query(4, description="XGBoost tree max depth"),
     xgb_learning_rate: float = Query(0.1, description="XGBoost learning rate"),
+    cost_bps: float = Query(5.0, ge=0, le=100, description="체결당 거래비용(슬리피지+수수료) bps. 왕복 2회 차감."),
 ) -> BacktestResponse:
     if strategy not in SUPPORTED_STRATEGIES:
         raise HTTPException(
@@ -540,9 +541,9 @@ def get_backtest(
         if not simple_bars:
             raise HTTPException(status_code=400, detail=f"no bars found for {instrument_id!r}")
         if strategy == "macd":
-            simple_params = {"fast": fast, "slow": slow, "signal_period": signal_period, "trade_size": trade_size}
+            simple_params = {"fast": fast, "slow": slow, "signal_period": signal_period, "trade_size": trade_size, "cost_bps": cost_bps}
         elif strategy == "rsi":
-            simple_params = {"period": period, "oversold": oversold, "overbought": overbought, "trade_size": trade_size}
+            simple_params = {"period": period, "oversold": oversold, "overbought": overbought, "trade_size": trade_size, "cost_bps": cost_bps}
         else:  # xgb
             simple_params = {
                 "train_ratio": xgb_train_ratio,
@@ -550,6 +551,7 @@ def get_backtest(
                 "max_depth": xgb_max_depth,
                 "learning_rate": xgb_learning_rate,
                 "trade_size": trade_size,
+                "cost_bps": cost_bps,
             }
         try:
             report = run_simple_backtest(simple_bars, strategy, simple_params)

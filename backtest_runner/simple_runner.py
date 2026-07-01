@@ -151,17 +151,25 @@ def _simulate_trades(
     ts_events: list[int],
     signals: list[str],
     trade_size: int,
+    cost_bps: float = 0.0,
 ) -> list[dict]:
-    """Simulate long/short trades based on BUY/SELL signals. Returns closed trade dicts."""
+    """Simulate long/short trades based on BUY/SELL signals. Returns closed trade dicts.
+
+    cost_bps: 체결 1회당 거래비용(슬리피지+수수료, bps). 왕복 = 진입+청산 2회 차감 →
+    백테스트가 실전 마이너스를 과장하지 않게(현실 비용 반영)."""
     position = 0  # 0=flat, 1=long, -1=short
     entry_price: float | None = None
     entry_ts_ns: int | None = None
     trades: list[dict] = []
 
+    def _cost(entry: float, exit_: float) -> float:
+        # 왕복(진입가+청산가) × 수량 × bps
+        return (abs(entry) + abs(exit_)) * trade_size * cost_bps / 10_000.0
+
     for price, ts, signal in zip(closes, ts_events, signals):
         if signal == "BUY" and position <= 0:
             if position < 0 and entry_price is not None:
-                pnl = (entry_price - price) * trade_size
+                pnl = (entry_price - price) * trade_size - _cost(entry_price, price)
                 trades.append({
                     "entry_ts_ns": entry_ts_ns,
                     "exit_ts_ns": ts,
@@ -176,7 +184,7 @@ def _simulate_trades(
             position = 1
         elif signal == "SELL" and position >= 0:
             if position > 0 and entry_price is not None:
-                pnl = (price - entry_price) * trade_size
+                pnl = (price - entry_price) * trade_size - _cost(entry_price, price)
                 trades.append({
                     "entry_ts_ns": entry_ts_ns,
                     "exit_ts_ns": ts,
@@ -195,7 +203,8 @@ def _simulate_trades(
     if position != 0 and entry_price is not None and closes:
         last_price = closes[-1]
         last_ts = ts_events[-1]
-        pnl = (last_price - entry_price) * trade_size if position > 0 else (entry_price - last_price) * trade_size
+        gross = (last_price - entry_price) * trade_size if position > 0 else (entry_price - last_price) * trade_size
+        pnl = gross - _cost(entry_price, last_price)
         trades.append({
             "entry_ts_ns": entry_ts_ns,
             "exit_ts_ns": last_ts,
@@ -314,5 +323,6 @@ def run_simple_backtest(bars: list, strategy: str, params: dict) -> dict:
     else:
         raise ValueError(f"unknown strategy {strategy!r}")
 
-    trades = _simulate_trades(closes, ts_events, signals, trade_size)
+    cost_bps = float(params.get("cost_bps", 5.0))  # 체결당 슬리피지+수수료 (기본 5bps)
+    trades = _simulate_trades(closes, ts_events, signals, trade_size, cost_bps)
     return _compute_stats(closes, ts_events, trades)

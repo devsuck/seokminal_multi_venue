@@ -86,7 +86,7 @@ def tick() -> dict:
         _save(cfg)
         return {"skipped": "market_closed"}
 
-    from insider.dart_client import get_recent_kr_corporate_actions
+    from insider.dart_client import get_recent_kr_corporate_actions, action_weight
     try:
         rows = get_recent_kr_corporate_actions(days=7, max_items=40)
     except Exception as e:  # noqa: BLE001
@@ -105,10 +105,11 @@ def tick() -> dict:
         if key in acted:
             continue
         try:
-            res = _buy(code, float(cfg["budget"]))
+            w = action_weight(r.get("trade_type", ""), r.get("report_type", ""))
+            res = _buy(code, float(cfg["budget"]) * w)
             acted.add(key)
             _log_event({"kind": "buy", "corp": r.get("corp_name"), "code": code,
-                        "action": r.get("trade_type"), **res})
+                        "action": r.get("trade_type"), "weight": w, **res})
             bought += 1
         except Exception as e:  # noqa: BLE001
             acted.add(key)  # 재시도 폭주 방지

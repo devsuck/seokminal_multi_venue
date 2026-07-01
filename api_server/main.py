@@ -3426,7 +3426,7 @@ def get_triggered_alerts() -> TriggeredAlertsResponse:
 
 # ── /insider ───────────────────────────────────────────────────────────────────
 
-from insider.dart_client import search_company as _dart_search, get_executive_stock_changes as _dart_trades, get_recent_kr_insider_feed as _dart_recent, get_recent_kr_corporate_actions as _dart_corp_actions
+from insider.dart_client import search_company as _dart_search, get_executive_stock_changes as _dart_trades, get_recent_kr_insider_feed as _dart_recent, get_recent_kr_corporate_actions as _dart_corp_actions, action_weight as _dart_weight
 from insider.congress_client import get_congress_trades as _congress_trades
 from insider.gov_spending_client import get_recent_contracts as _gov_contracts
 
@@ -3864,6 +3864,7 @@ class DartSignal(BaseModel):
     action_label: str     # 자사주 취득 등
     verdict: str          # BUY / AVOID / SKIP
     note: str             # 호재/악재/중립
+    weight: float = 1.0   # 매수 비중 배율 (소각 1.5 / 취득 1.0 / 신탁 0.6)
     date: str             # 접수일 (YYYYMMDD)
     dart_url: str | None = None
 
@@ -3878,10 +3879,11 @@ def dart_signals(days: int = Query(14, ge=1, le=60), max_items: int = Query(50, 
     out = []
     for r in rows:
         label, verdict, note = _DART_ACTION.get(r["trade_type"], (r["trade_type"], "SKIP", "—"))
+        w = _dart_weight(r["trade_type"], r.get("report_type", "")) if verdict == "BUY" else 1.0
         out.append(DartSignal(
             corp_name=r.get("corp_name", ""), ticker=r.get("ticker"),
             action_type=r["trade_type"], action_label=label, verdict=verdict, note=note,
-            date=r.get("trade_date", ""), dart_url=r.get("dart_url"),
+            weight=w, date=r.get("trade_date", ""), dart_url=r.get("dart_url"),
         ))
     return out
 

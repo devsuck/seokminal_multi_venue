@@ -188,6 +188,16 @@ def get_recent_kr_insider_feed(days: int = 30, max_corps: int = 20) -> list[dict
     return sorted(results, key=lambda x: x.get("rcept_dt", ""), reverse=True)
 
 
+def action_weight(trade_type: str, report_nm: str = "") -> float:
+    """매수 비중 배율 — 시그널 강도 기반.
+    소각(주식수 영구 감소)=최강, 직접취득=기본, 신탁계약(실매입 불확실)=약함."""
+    if trade_type == "CANCELLATION":
+        return 1.5
+    if trade_type == "BUYBACK":
+        return 0.6 if "신탁" in report_nm else 1.0
+    return 1.0
+
+
 def get_recent_kr_corporate_actions(days: int = 30, max_items: int = 40) -> list[dict]:
     """매매 판단에 영향 주는 기업행위만: 유상/무상증자, 자기주식 취득/소각.
     소유상황보고(보유자 보고)는 제외. DART list.json을 report_nm으로 필터."""

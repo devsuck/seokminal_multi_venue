@@ -19,8 +19,8 @@ STORE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file_
 
 def _key() -> str:
     k = os.environ.get("OPENDART_API_KEY", "")
-    if not k:  # .env 폴백
-        env = os.path.join(os.path.dirname(STORE_DIR), ".env")
+    if not k:  # .env 폴백 (repo 루트)
+        env = os.path.join(os.path.dirname(os.path.dirname(STORE_DIR)), ".env")
         if os.path.exists(env):
             for ln in open(env):
                 if ln.startswith("OPENDART_API_KEY="):

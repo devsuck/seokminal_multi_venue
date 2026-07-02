@@ -32,10 +32,16 @@ FAILURE_CLASS = {
 
 
 def main():
-    entries = load_all()
+    # hypothesis_id별 최신 상태만 (중복 제거)
+    latest: dict = {}
+    for e in load_all():
+        hid = e.get("hypothesis_id")
+        if hid:
+            latest[hid] = e
+    entries = list(latest.values())
     rejected = [e for e in entries if e.get("status") == "rejected"]
     blocked = [e for e in entries if "blocked" in (e.get("status") or "")]
-    candidates = [e for e in entries if e.get("status") in ("candidate", "watchlist", "paper_candidate")]
+    candidates = [e for e in entries if (e.get("status") or "").startswith(("candidate", "watchlist", "paper_candidate"))]
 
     lines = [
         "# Strategy Validation — Results Summary",

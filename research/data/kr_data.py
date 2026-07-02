@@ -50,6 +50,28 @@ def filter_universe(
     return out
 
 
+def list_delisted(market: str = "KOSDAQ", since: str = "2022-01-01") -> list[dict]:
+    """상장폐지 종목 (survivorship 통제용). DelistingDate >= since, 주권만.
+    이들을 universe에 넣어 펌프→폭락→상폐 이벤트 포함 → 상방편향 제거."""
+    import FinanceDataReader as fdr
+    dl = fdr.StockListing("KRX-DELISTING")
+    out = []
+    for _, r in dl.iterrows():
+        if str(r.get("Market", "")) != market:
+            continue
+        if str(r.get("SecuGroup", "")) != "주권":
+            continue
+        dd = r.get("DelistingDate")
+        if dd is None or pd.isna(dd):
+            continue
+        dds = str(dd)[:10]
+        if dds < since:
+            continue
+        out.append({"code": str(r["Symbol"]), "name": str(r.get("Name", "")),
+                    "delisting_date": dds, "listing_date": str(r.get("ListingDate", ""))[:10]})
+    return out
+
+
 def load_ohlcv(code: str, start: str, end: str) -> pd.DataFrame:
     """티커 일봉 (FDR.DataReader). Open/High/Low/Close/Volume. 거래대금=Close*Volume 프록시."""
     import FinanceDataReader as fdr

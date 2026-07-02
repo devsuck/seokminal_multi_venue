@@ -10,7 +10,7 @@ import argparse
 import random as _random
 import statistics as _st
 
-from research.data.kr_data import list_universe, filter_universe, load_ohlcv, load_stored, save_ohlcv
+from research.data.kr_data import list_universe, filter_universe, list_delisted, load_ohlcv, load_stored, save_ohlcv
 from research.strategies.kr_liquidity_wave import generate_trades, liquidity_bucket
 from research.validation.baselines import empirical_p_value
 from research.agents.experiment_registry import log_experiment
@@ -43,47 +43,73 @@ def load_universe(limit: int) -> list[dict]:
     return uni[:limit]
 
 
+def _load_bars(code):
+    df = load_stored(code)
+    if len(df) == 0:
+        try:
+            df = load_ohlcv(code, START, END)
+            if len(df):
+                save_ohlcv(code, df)
+        except Exception:
+            return None
+    return df if len(df) >= 60 else None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=120)
+    ap.add_argument("--delisted", type=int, default=200, help="상장폐지 종목 포함 수(survivorship 통제)")
     args = ap.parse_args()
 
     print("=" * 74)
-    print("KR LIQUIDITY WAVE PULLBACK v1 — ⚠️ RESEARCH_SANITY_CHECK_ONLY")
-    print("(survivorship/PIT/상장폐지/intraday/flow 없음 → 검증된 알파 아님)")
+    print("KR LIQUIDITY WAVE PULLBACK v1 — survivorship 통제(상장폐지 포함)")
+    print("(PIT universe/intraday/flow 여전히 없음 → sanity 개선판)")
     print("=" * 74)
 
-    uni = load_universe(args.limit)
-    print(f"universe(KOSDAQ small/mid, 유동성 상위): {len(uni)}종목")
+    survivors = load_universe(args.limit)
+    delisted = list_delisted("KOSDAQ", "2022-01-01")[: args.delisted]
+    print(f"survivor {len(survivors)} + delisted {len(delisted)} 종목")
 
-    all_trades = []      # 전략 트레이드
-    pool = []            # matched random 후보: (bucket, stock_bars, idx)
-    per_stock_trades = 0
-    for j, u in enumerate(uni, 1):
-        df = load_stored(u["code"])
-        if len(df) == 0:
-            try:
-                df = load_ohlcv(u["code"], START, END)
-                if len(df):
-                    save_ohlcv(u["code"], df)
-            except Exception:
-                continue
-        if len(df) < 60:
+    all_trades, pool = [], []
+    src_counts = {"survivor": 0, "delisted": 0}
+
+    # survivor (스냅샷 amount로 bucket)
+    for j, u in enumerate(survivors, 1):
+        df = _load_bars(u["code"])
+        if df is None:
             continue
         bars = _bars(df)
         bucket = liquidity_bucket(u["amount"])
-        tr = generate_trades(bars)
-        for t in tr:
-            t["bucket"] = bucket
-            hold = t["exit_idx"] - t["entry_idx"]
-            all_trades.append(t)
-        # random 후보 pool (같은 종목 non-event 진입점)
+        for t in generate_trades(bars):
+            t["bucket"] = bucket; t["source"] = "survivor"; all_trades.append(t)
+            src_counts["survivor"] += 1
         n = len(bars)
         for i in range(20, n - 11):
             pool.append((bucket, bars, i))
-        if j % 40 == 0:
-            print(f"  ...{j}/{len(uni)} 처리, 누적 트레이드 {len(all_trades)}")
+        if j % 50 == 0:
+            print(f"  survivor {j}/{len(survivors)}, 누적 {len(all_trades)}")
 
+    # delisted (역사적 유동성으로 게이트+bucket)
+    for j, u in enumerate(delisted, 1):
+        df = _load_bars(u["code"])
+        if df is None:
+            continue
+        bars = _bars(df)
+        tvs = [b["tval"] for b in bars]; pxs = [b["close"] for b in bars]
+        avg_tv = _st.mean(tvs) if tvs else 0
+        if avg_tv < 3e9 or (pxs and max(pxs) < 1000):  # 역사적 유동성 게이트
+            continue
+        bucket = liquidity_bucket(avg_tv)
+        for t in generate_trades(bars):
+            t["bucket"] = bucket; t["source"] = "delisted"; all_trades.append(t)
+            src_counts["delisted"] += 1
+        n = len(bars)
+        for i in range(20, n - 11):
+            pool.append((bucket, bars, i))
+        if j % 50 == 0:
+            print(f"  delisted {j}/{len(delisted)}, 누적 {len(all_trades)}")
+
+    print(f"\n트레이드 소스: survivor {src_counts['survivor']} / delisted {src_counts['delisted']}")
     K = len(all_trades)
     if K == 0:
         print("트레이드 0 — 이벤트 없음/데이터 부족")
@@ -132,6 +158,13 @@ def main():
     sh = _st.mean([_net(t["ret"], COST_LEVELS["base_20bps"]) for t in all_trades[mid:]])
     print(f"\nwalk-forward(base cost): 전반 {fh:+.4f} / 후반 {sh:+.4f}")
 
+    # survivor vs delisted 분해 (survivorship 통제 효과)
+    rt = COST_LEVELS["base_20bps"]
+    surv = [_net(t["ret"], rt) for t in all_trades if t.get("source") == "survivor"]
+    deli = [_net(t["ret"], rt) for t in all_trades if t.get("source") == "delisted"]
+    print(f"소스 분해(net base): survivor {_st.mean(surv):+.4f}(n={len(surv)}) / "
+          f"delisted {(_st.mean(deli) if deli else 0):+.4f}(n={len(deli)})")
+
     # 판정 (sanity 기준)
     base = results["base_20bps"]
     powered = K >= 50
@@ -149,13 +182,17 @@ def main():
     print(f"\nVERDICT: {verdict}")
     print("⚠️ RESEARCH_SANITY_CHECK_ONLY (검증된 알파 아님, 라이브 권고 아님)")
 
-    log_experiment({"hypothesis_id": "kr_liquidity_wave_pullback_v1", "status": "rejected" if "REJECT" in verdict else "watchlist" if "WATCHLIST" in verdict else "underpowered",
+    log_experiment({"hypothesis_id": "kr_liquidity_wave_pullback_v1_survctrl", "status": "rejected" if "REJECT" in verdict else "watchlist" if "WATCHLIST" in verdict else "underpowered",
                     "trade_count": K, "gross_mean": round(_st.mean(gross_rets), 6),
                     "net_base": base["net_mean"], "percentile_base": base["percentile"], "p_base": base["p"],
                     "cost_stress": {k: v["net_mean"] for k, v in results.items()},
                     "wf_first": round(fh, 6), "wf_second": round(sh, 6),
-                    "data_quality": "RESEARCH_SANITY_CHECK_ONLY", "verdict": verdict,
-                    "note": "survivorship/PIT/delisting 미제어, 거래대금=Close*Vol 프록시, 고정파라미터"})
+                    "survivor_net": round(_st.mean(surv), 6) if surv else None,
+                    "delisted_net": round(_st.mean(deli), 6) if deli else None,
+                    "delisted_trades": len(deli),
+                    "data_quality": "RESEARCH_SANITY_CHECK_ONLY (survivorship 통제, PIT/flow 여전히 없음)",
+                    "verdict": verdict,
+                    "note": "상장폐지 포함(survivorship 통제), 거래대금=Close*Vol 프록시, PIT universe 아님, 고정파라미터"})
 
 
 if __name__ == "__main__":

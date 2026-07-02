@@ -20,7 +20,8 @@ NOTIONAL = 10_000.0
 HL_COST = hl_effective_cost_bps("major", taker=True)  # 체결당 bps
 
 DEFAULTS_REVERSAL = {"z_window": 30, "trail": 3, "z_entry": 2.0, "hold_days": 3}
-DEFAULTS_XSECT = {"trail": 3, "basket_pct": 0.2, "min_prior_days": 30}
+# rebalance_days=1 기본(하위호환). weekly=7. cost_bps 미지정 시 HL taker(major).
+DEFAULTS_XSECT = {"trail": 3, "basket_pct": 0.2, "min_prior_days": 30, "rebalance_days": 1}
 
 
 def build_daily_panel(coin: str) -> dict:
@@ -98,15 +99,17 @@ def random_reversal(panel: dict, n_positions: int, hold: int, n_runs: int, seed:
 
 # ── 가설2: cross-sectional funding ───────────────────────────────────────────
 def _xsect_schedule(panels: dict, params: dict) -> list[tuple]:
-    """리밸런스 스케줄: [(d, dn, scored=[(coin, trailing_funding)], nb)].
-    전략·random이 동일 스케줄·동일 바스켓크기 사용 → 공정 비교."""
+    """리밸런스 스케줄: [(d, dn, hold_dates, scored=[(coin, trailing_funding)], nb)].
+    rebalance_days 간격(1=daily, 7=weekly). hold_dates=보유기간(funding 누적).
+    전략·random이 동일 스케줄·바스켓크기 → 공정 비교."""
     p = {**DEFAULTS_XSECT, **params}
-    trail, bpct, minp = p["trail"], p["basket_pct"], p["min_prior_days"]
+    trail, bpct, minp, step = p["trail"], p["basket_pct"], p["min_prior_days"], int(p["rebalance_days"])
     close_by = {c: pn["close"] for c, pn in panels.items()}
     all_dates = sorted(set().union(*[set(pn["dates"]) for pn in panels.values()])) if panels else []
     sched = []
-    for di in range(len(all_dates) - 1):
-        d, dn = all_dates[di], all_dates[di + 1]
+    for di in range(0, len(all_dates) - step, step):
+        d, dn = all_dates[di], all_dates[di + step]
+        hold_dates = all_dates[di:di + step]  # 보유일들(funding 누적)
         uni = tradable_at(d, close_by, minp)
         scored = []
         for c in uni:
@@ -121,42 +124,46 @@ def _xsect_schedule(panels: dict, params: dict) -> list[tuple]:
         if len(scored) < 5:
             continue
         nb = max(1, int(len(scored) * bpct))
-        sched.append((d, dn, scored, nb))
+        sched.append((d, dn, hold_dates, scored, nb))
     return sched
 
 
-def _xsect_position(panels, coin, d, dn, side):
+def _xsect_position(panels, coin, d, dn, hold_dates, side, cost_bps):
     pn = panels[coin]
-    return position_pnl(pn["close"][d], pn["close"][dn], side, NOTIONAL,
-                        pn["daily_funding"].get(d, 0.0), HL_COST, HL_COST)
+    fsum = sum(pn["daily_funding"].get(dd, 0.0) for dd in hold_dates)  # 보유기간 funding 누적
+    return position_pnl(pn["close"][d], pn["close"][dn], side, NOTIONAL, fsum, cost_bps, cost_bps)
 
 
 def cross_sectional_funding(panels: dict, params: dict | None = None) -> list[dict]:
-    """일 리밸런스: trailing funding 하위 롱 / 상위 숏(동일가중, 1d). 시점별 universe만."""
-    sched = _xsect_schedule(panels, params or {})
+    """리밸런스: trailing funding 하위 롱 / 상위 숏(동일가중). rebalance_days로 빈도."""
+    params = params or {}
+    cost = params.get("cost_bps", HL_COST)
+    sched = _xsect_schedule(panels, params)
     positions = []
-    for d, dn, scored, nb in sched:
+    for d, dn, hold_dates, scored, nb in sched:
         scored = sorted(scored, key=lambda x: x[1])
         for c, _ in scored[:nb]:
-            positions.append(_xsect_position(panels, c, d, dn, "long"))
+            positions.append(_xsect_position(panels, c, d, dn, hold_dates, "long", cost))
         for c, _ in scored[-nb:]:
-            positions.append(_xsect_position(panels, c, d, dn, "short"))
+            positions.append(_xsect_position(panels, c, d, dn, hold_dates, "short", cost))
     return positions
 
 
 def random_cross_sectional(panels: dict, params: dict | None, n_runs: int, seed: int) -> list[float]:
-    """동일 스케줄·동일 롱숏 수, 랜덤 코인 선택 → run별 net 합 분포(funding-aware)."""
-    sched = _xsect_schedule(panels, params or {})
+    """동일 스케줄·롱숏 수·홀딩·비용, 랜덤 코인 → run별 net 합 분포(funding-aware)."""
+    params = params or {}
+    cost = params.get("cost_bps", HL_COST)
+    sched = _xsect_schedule(panels, params)
     rng = _random.Random(seed)
     out = []
     for _ in range(n_runs):
         tot = 0.0
-        for d, dn, scored, nb in sched:
+        for d, dn, hold_dates, scored, nb in sched:
             coins = [c for c, _ in scored]
             picks = rng.sample(coins, min(len(coins), 2 * nb))
             for c in picks[:nb]:
-                tot += _xsect_position(panels, c, d, dn, "long")["net"]
+                tot += _xsect_position(panels, c, d, dn, hold_dates, "long", cost)["net"]
             for c in picks[nb:2 * nb]:
-                tot += _xsect_position(panels, c, d, dn, "short")["net"]
+                tot += _xsect_position(panels, c, d, dn, hold_dates, "short", cost)["net"]
         out.append(round(tot, 4))
     return out

@@ -63,7 +63,7 @@ def _fetch_window(key: str, bgn: str, end: str, d: dict, out: list, seen: set, p
             if kid in seen:
                 continue
             seen.add(kid)
-            out.append({"stock_code": sc, "corp_name": it.get("corp_name", ""),
+            out.append({"stock_code": sc, "corp_code": it.get("corp_code", ""), "corp_name": it.get("corp_name", ""),
                         "date": f"{rcept[:4]}-{rcept[4:6]}-{rcept[6:8]}", "report_nm": nm, "event": d["_name"]})
         if page >= total_pages:
             return
@@ -86,6 +86,40 @@ def pull_events(event: str, years: float = 2.0, pace_s: float = 0.15, window_day
         _fetch_window(key, cur.strftime("%Y%m%d"), w_end.strftime("%Y%m%d"), d, out, seen, pace_s)
         cur = w_end + dt.timedelta(days=1)
         time.sleep(pace_s)
+    return out
+
+
+DECISION = "https://opendart.fss.or.kr/api/tsstkAqDecsn.json"
+
+
+def _num(s) -> float | None:
+    try:
+        v = float(str(s).replace(",", ""))
+        return v if v != 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def pull_buyback_details(corp_codes: list[str], bgn: str, end: str, pace_s: float = 0.1, log=print) -> list[dict]:
+    """자기주식취득결정 상세(취득예정금액/주식수/목적/기간). corp_code별."""
+    key = _key()
+    out = []
+    for i, cc in enumerate(corp_codes, 1):
+        try:
+            r = requests.get(DECISION, params={"crtfc_key": key, "corp_code": cc, "bgn_de": bgn, "end_de": end}, timeout=20).json()
+        except Exception:
+            time.sleep(1.0); continue
+        if r.get("status") != "000":
+            continue
+        for d in r.get("list", []):
+            rn = str(d.get("rcept_no", ""))
+            out.append({"corp_code": cc, "rcept_dt": rn[:8],
+                        "plan_shares": _num(d.get("aqpln_stk_ostk")), "plan_amount": _num(d.get("aqpln_prc_ostk")),
+                        "purpose": str(d.get("aq_pp", "")), "method": str(d.get("aq_mth", "")),
+                        "aq_bgd": str(d.get("aqexpd_bgd", "")), "aq_edd": str(d.get("aqexpd_edd", ""))})
+        time.sleep(pace_s)
+        if i % 100 == 0:
+            log(f"  detail {i}/{len(corp_codes)}")
     return out
 
 

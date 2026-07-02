@@ -4,7 +4,7 @@
 """
 from __future__ import annotations
 
-STATUS = "paper_candidate_forward_test_required"
+STATUS = "paper_candidate_yellow"  # REJECT 아님. median breakeven·right-tail 의존 → 기대치 하향, forward-test 필수
 VERSION = "kr_buyback_drift_v1"
 FROZEN_AT = "2026-07-02"
 

@@ -23,6 +23,7 @@ FAILURE_CLASS = {
     "cross_sectional_funding": "cost_killed (일 리밸런스 과잉거래)",
     "cross_sectional_funding_weekly": "indistinguishable_from_random (net+ but 82.6pct, WF 불안정)",
     "delta_neutral_carry_hl": "blocked_by_data (메이저 spot 부재)",
+    "futures_tsmom": "decayed/marginal (Sharpe 0.44 최고근접·buyhold초과·91.5pct지만 <95·WF후반 붕괴=감쇠)",
 }
 
 

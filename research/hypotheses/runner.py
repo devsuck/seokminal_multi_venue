@@ -52,12 +52,12 @@ def _slice(d: dict, a: int, b: int) -> dict:
     return {k: (v[a:b] if isinstance(v, list) else v) for k, v in d.items()}
 
 
-def _evaluate(ohlc: dict, aux: dict, signals_fn: SignalFn, params: dict) -> dict:
+def _evaluate(ohlc: dict, aux: dict, signals_fn: SignalFn, params: dict, cost_bps: float = COST_BPS) -> dict:
     feat = common_features(ohlc)
     sig = signals_fn(ohlc, feat, aux, params)
     trades = run_event_backtest(
         ohlc["high"], ohlc["low"], ohlc["close"],
-        sig["entry"], feat["atr_abs"], trade_size=TRADE_SIZE, cost_bps=COST_BPS,
+        sig["entry"], feat["atr_abs"], trade_size=TRADE_SIZE, cost_bps=cost_bps,
         stop_atr=STOP_ATR, target_atr=TARGET_ATR, time_stop_bars=TIME_STOP, vwap=feat["vwap"],
     )
     holds = [max(1, t["exit_idx"] - t["entry_idx"]) for t in trades] or [TIME_STOP]

@@ -1,8 +1,12 @@
-# Research — Alpha Validation Framework
+# Research — Strategy Validation Terminal
 
 목적: **엣지 검증.** "좋아 보이는 백테스트"가 아니라 "비용·랜덤·워크포워드 후에도 살아남는 엣지인지" 판정.
+포지셔닝: ❌ AI 트레이딩 봇 → ⭕ **전략을 냉정하게 죽이는 검증 터미널.**
 
 원칙: **구조는 알파가 아니다.** 하네스가 먼저, 데이터 그 다음, 전략은 마지막. 못 이기면 폐기.
+
+> **현황(2026-07-02): 10개 가설 검증 → 검증된 엣지 0개.** 결과: [`reports/VALIDATION_SUMMARY.md`](reports/VALIDATION_SUMMARY.md).
+> 알파 사냥 중단. Lv3 자율루프 보류. 실투자는 패시브/저빈도. 고급 알파원은 학습·제품기능 한정.
 
 ## 구조
 

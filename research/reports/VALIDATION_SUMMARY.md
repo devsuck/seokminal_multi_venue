@@ -3,8 +3,8 @@
 > **검증된 엣지: 0개.** 이 시스템은 "돈 버는 봇"이 아니라 **전략을 냉정하게 죽이는 검증 터미널**이다.
 > 방법: 비용 반영 + random same-frequency 분포 + walk-forward + BH-FDR + underpowered guard + gross/net 분해.
 
-- 테스트한 가설: **15**
-- REJECT: **11**  |  BLOCKED(데이터): 1  |  후보: 3
+- 테스트한 가설: **16**
+- REJECT: **11**  |  BLOCKED(데이터): 1  |  후보: 4
 - **Lv3 자율 리서치 에이전트: 진입 보류**(탐색할 검증 엣지 0개)
 
 ## 판정 테이블
@@ -25,8 +25,9 @@
 | kr_liquidity_wave_pullback_v1 | rejected |  | REJECT (survivorship 통제 후 유의성 소멸: p=0.136·86.6pct·severe비용 음수·delisted −3%가 상방편향 확증) |
 | kr_liquidity_wave_pullback_v1_survctrl | underpowered |  | superseded (게이트 결함, delisted 1개만 포함) |
 | kr_liquidity_wave_pullback_v1_eventwin | underpowered |  | REJECT (이벤트윈도우 게이트=제대로된 survivorship 통제판, delisted 39개) |
-| kr_dart_buyback_drift_v1 | watchlist |  | WATCHLIST (자기주식취득 buyback: net +1.85% random 100pct p=0.002, WF 양쪽 양수, 유상증자 대조 −2.65%=coherent. KR 최강 신호, PIT 미검토) |
+| kr_dart_buyback_drift_v1 | watchlist |  | superseded by _PIT (FDR 생존편향, p=0.002 부풀려짐) |
 | kr_liquidity_wave_pullback_v1_PIT | rejected |  | REJECT 확정 (KRX 공식 PIT/survivorship-free 1923종목: gross −1.26% 음수, net −1.66% random 0.2pct = 랜덤보다 나쁨. survivor-only +2.28%는 100% 편향) |
+| kr_dart_buyback_drift_v1_PIT | watchlist |  | WATCHLIST→PAPER 후보 (전체 PIT/survivorship-free 2906종목: buyback net +1.73% random 97pct p=0.032, WF 양쪽 양수, 비용스트레스 통과, 유상증자 대조 낮음. 급등주 죽인 테스트 생존=진짜 엣지, TSMOM 다음 2번째) |
 
 ## 실패 기전 분류
 - **signal_dead**: gross(비용 0)도 음수 → 신호 자체 없음. (ORB, ATR압축)

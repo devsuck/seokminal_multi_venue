@@ -97,25 +97,21 @@ def random_reversal(panel: dict, n_positions: int, hold: int, n_runs: int, seed:
 
 
 # ── 가설2: cross-sectional funding ───────────────────────────────────────────
-def cross_sectional_funding(panels: dict, params: dict | None = None) -> list[dict]:
-    """일 리밸런스: trailing funding 하위 바스켓 롱 / 상위 숏 (동일가중, 1d 홀딩).
-    시점별 tradable universe만(survivorship 방지)."""
-    p = {**DEFAULTS_XSECT, **(params or {})}
+def _xsect_schedule(panels: dict, params: dict) -> list[tuple]:
+    """리밸런스 스케줄: [(d, dn, scored=[(coin, trailing_funding)], nb)].
+    전략·random이 동일 스케줄·동일 바스켓크기 사용 → 공정 비교."""
+    p = {**DEFAULTS_XSECT, **params}
     trail, bpct, minp = p["trail"], p["basket_pct"], p["min_prior_days"]
     close_by = {c: pn["close"] for c, pn in panels.items()}
     all_dates = sorted(set().union(*[set(pn["dates"]) for pn in panels.values()])) if panels else []
-    positions = []
+    sched = []
     for di in range(len(all_dates) - 1):
         d, dn = all_dates[di], all_dates[di + 1]
         uni = tradable_at(d, close_by, minp)
-        # trailing funding + 다음날 종가 존재하는 코인만
         scored = []
         for c in uni:
-            pn = panels[c]
-            ds = pn["dates"]
-            if d not in pn["close"] or dn not in pn["close"] or d not in pn["daily_funding"]:
-                continue
-            if d not in ds:
+            pn = panels[c]; ds = pn["dates"]
+            if d not in pn["close"] or dn not in pn["close"] or d not in pn["daily_funding"] or d not in ds:
                 continue
             k = ds.index(d)
             if k < trail:
@@ -124,16 +120,43 @@ def cross_sectional_funding(panels: dict, params: dict | None = None) -> list[di
             scored.append((c, tavg))
         if len(scored) < 5:
             continue
-        scored.sort(key=lambda x: x[1])
         nb = max(1, int(len(scored) * bpct))
-        longs = scored[:nb]      # 낮은 funding 롱
-        shorts = scored[-nb:]    # 높은 funding 숏
-        for c, _ in longs:
-            pn = panels[c]
-            positions.append(position_pnl(pn["close"][d], pn["close"][dn], "long", NOTIONAL,
-                                          pn["daily_funding"].get(d, 0.0), HL_COST, HL_COST))
-        for c, _ in shorts:
-            pn = panels[c]
-            positions.append(position_pnl(pn["close"][d], pn["close"][dn], "short", NOTIONAL,
-                                          pn["daily_funding"].get(d, 0.0), HL_COST, HL_COST))
+        sched.append((d, dn, scored, nb))
+    return sched
+
+
+def _xsect_position(panels, coin, d, dn, side):
+    pn = panels[coin]
+    return position_pnl(pn["close"][d], pn["close"][dn], side, NOTIONAL,
+                        pn["daily_funding"].get(d, 0.0), HL_COST, HL_COST)
+
+
+def cross_sectional_funding(panels: dict, params: dict | None = None) -> list[dict]:
+    """일 리밸런스: trailing funding 하위 롱 / 상위 숏(동일가중, 1d). 시점별 universe만."""
+    sched = _xsect_schedule(panels, params or {})
+    positions = []
+    for d, dn, scored, nb in sched:
+        scored = sorted(scored, key=lambda x: x[1])
+        for c, _ in scored[:nb]:
+            positions.append(_xsect_position(panels, c, d, dn, "long"))
+        for c, _ in scored[-nb:]:
+            positions.append(_xsect_position(panels, c, d, dn, "short"))
     return positions
+
+
+def random_cross_sectional(panels: dict, params: dict | None, n_runs: int, seed: int) -> list[float]:
+    """동일 스케줄·동일 롱숏 수, 랜덤 코인 선택 → run별 net 합 분포(funding-aware)."""
+    sched = _xsect_schedule(panels, params or {})
+    rng = _random.Random(seed)
+    out = []
+    for _ in range(n_runs):
+        tot = 0.0
+        for d, dn, scored, nb in sched:
+            coins = [c for c, _ in scored]
+            picks = rng.sample(coins, min(len(coins), 2 * nb))
+            for c in picks[:nb]:
+                tot += _xsect_position(panels, c, d, dn, "long")["net"]
+            for c in picks[nb:2 * nb]:
+                tot += _xsect_position(panels, c, d, dn, "short")["net"]
+        out.append(round(tot, 4))
+    return out

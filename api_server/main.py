@@ -2268,7 +2268,7 @@ def get_crypto_assets() -> CryptoAssetsResponse:
 @app.get("/crypto/candles", response_model=CryptoCandlesResponse)
 def get_crypto_candles(
     coin: str = Query("BTC"),
-    interval: Literal["1d", "4h", "1h", "15m"] = Query("1d"),
+    interval: Literal["1m", "15m", "1h", "4h", "1d", "1M"] = Query("1d"),
     days: int = Query(90, ge=1, le=365),
 ) -> CryptoCandlesResponse:
     try:

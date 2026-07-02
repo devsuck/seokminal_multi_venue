@@ -1,7 +1,10 @@
 __pycache__/
 *.pyc
 .env
-catalog/
+/catalog/
 .venv/
 *.egg-info/
-data/
+/data/
+
+# 생성된 알파 검증 리포트(재생성 가능)
+research/reports/alpha/

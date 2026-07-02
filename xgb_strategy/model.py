@@ -2,6 +2,7 @@
 from __future__ import annotations
 from xgboost import XGBClassifier
 from xgb_strategy.features import compute_features
+from xgb_strategy.labeling import triple_barrier_labels
 
 
 def train_model(
@@ -10,17 +11,43 @@ def train_model(
     n_estimators: int = 100,
     max_depth: int = 4,
     learning_rate: float = 0.1,
+    highs: list[float] | None = None,
+    lows: list[float] | None = None,
+    labeling: str = "next_bar",
+    tb_up: float = 1.5,
+    tb_dn: float = 1.5,
+    tb_horizon: int = 10,
 ):
-    """Train XGBClassifier on first train_ratio of closes. Returns fitted model."""
+    """Train XGBClassifier on first train_ratio of closes. Returns fitted model.
+
+    labeling:
+      "next_bar"       — 라벨 = 다음 봉 상승 여부(1/0). 기존 방식(노이즈 큼).
+      "triple_barrier" — 위/아래 ATR 배리어 중 어느 쪽 먼저 닿는지(1/0). highs/lows 필요.
+    """
     feats = compute_features(closes)
     train_n = int(len(closes) * train_ratio)
 
+    # 라벨 벡터 준비
+    tb_labels: list[int | None] | None = None
+    if labeling == "triple_barrier":
+        if highs is None or lows is None:
+            raise ValueError("triple_barrier labeling requires highs and lows")
+        tb_labels = triple_barrier_labels(highs, lows, closes, tb_up, tb_dn, tb_horizon)
+
     X, y = [], []
     for i in range(train_n - 1):
-        if feats[i] is not None and i + 1 < len(closes):
+        if feats[i] is None:
+            continue
+        if tb_labels is not None:
+            label = tb_labels[i]
+            if label is None:
+                continue
+        else:
+            if i + 1 >= len(closes):
+                continue
             label = 1 if closes[i + 1] > closes[i] else 0
-            X.append(feats[i])
-            y.append(label)
+        X.append(feats[i])
+        y.append(label)
 
     # Ensure both classes are present (XGBoost requires at least one sample per class)
     if len(X) > 1 and len(set(y)) < 2:

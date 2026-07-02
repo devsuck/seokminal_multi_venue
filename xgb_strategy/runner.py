@@ -13,11 +13,21 @@ def generate_xgb_signals(bars: list, params: dict) -> list[str]:
     n_estimators = int(params.get("n_estimators", 100))
     max_depth = int(params.get("max_depth", 4))
     learning_rate = float(params.get("learning_rate", 0.1))
+    labeling = str(params.get("labeling", "next_bar"))
+    tb_up = float(params.get("tb_up", 1.5))
+    tb_dn = float(params.get("tb_dn", 1.5))
+    tb_horizon = int(params.get("tb_horizon", 10))
 
     closes = [float(b.close) for b in bars]
+    highs = [float(b.high) for b in bars]
+    lows = [float(b.low) for b in bars]
     train_n = int(len(closes) * train_ratio)
 
-    model = train_model(closes, train_ratio, n_estimators, max_depth, learning_rate)
+    model = train_model(
+        closes, train_ratio, n_estimators, max_depth, learning_rate,
+        highs=highs, lows=lows, labeling=labeling,
+        tb_up=tb_up, tb_dn=tb_dn, tb_horizon=tb_horizon,
+    )
     feats = compute_features(closes)
 
     # Only predict on test portion; training window → HOLD

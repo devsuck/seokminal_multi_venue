@@ -42,6 +42,8 @@ def run_portfolio(
     weights: dict = {}
     daily = []
     out_dates = []
+    turnovers = []       # 리밸런스별 턴오버
+    cost_drag = 0.0      # 누적 비용 차감(수익률 단위)
     prev_d = None
     for i, d in enumerate(all_dates):
         if prev_d is not None:
@@ -53,14 +55,20 @@ def run_portfolio(
                 new_w = weight_fn(panels, d, params, rng)
                 allk = set(weights) | set(new_w)
                 turnover = sum(abs(new_w.get(a, 0.0) - weights.get(a, 0.0)) for a in allk)
-                r -= turnover * cost_bps / 10_000.0 / n
+                c = turnover * cost_bps / 10_000.0 / n
+                r -= c
+                cost_drag += c
+                turnovers.append(turnover)
                 weights = new_w
             daily.append(r)
             out_dates.append(d)
         else:
             weights = weight_fn(panels, d, params, rng)
         prev_d = d
-    return {"daily_returns": daily, "dates": out_dates, "metrics": portfolio_metrics(daily)}
+    avg_turnover = (sum(turnovers) / len(turnovers)) if turnovers else 0.0
+    return {"daily_returns": daily, "dates": out_dates, "metrics": portfolio_metrics(daily),
+            "avg_turnover": round(avg_turnover, 4), "cost_drag": round(cost_drag, 6),
+            "n_rebalances": len(turnovers)}
 
 
 def portfolio_metrics(daily: list[float]) -> dict:

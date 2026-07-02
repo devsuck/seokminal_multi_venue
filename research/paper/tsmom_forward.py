@@ -95,7 +95,7 @@ def sleeve_contribution(pn: dict) -> dict:
     return out
 
 
-def generate(since: str | None = None):
+def generate(since: str | None = None, write: bool = True):
     pn = panels()
     last_date = max(max(p["dates"]) for p in pn.values())
     env = backtest_envelope(pn)
@@ -124,10 +124,11 @@ def generate(since: str | None = None):
         "forward_months": fwd, "envelope_deviation": deviations,
         "baseline_ref": CFG.BASELINE,
     }
-    _write_md(report)
-    _append_ledger({"as_of": last_date, "regime_score": regime.get("regime_score"),
-                    "trending_frac": regime.get("trending_frac"),
-                    "base_sharpe": base["metrics"]["sharpe"], "forward_months": fwd})
+    if write:
+        _write_md(report)
+        _append_ledger({"as_of": last_date, "regime_score": regime.get("regime_score"),
+                        "trending_frac": regime.get("trending_frac"),
+                        "base_sharpe": base["metrics"]["sharpe"], "forward_months": fwd})
     return report
 
 

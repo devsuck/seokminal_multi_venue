@@ -4809,6 +4809,10 @@ app.include_router(risk_router)
 from api_server.dart_autobot import router as dart_bot_router, start_loop as _dart_bot_start
 app.include_router(dart_bot_router)
 
+# ── Strategy Validation Terminal (research 산출물) ────────────────────────────────
+from api_server.research_api import router as research_router
+app.include_router(research_router)
+
 
 @app.on_event("startup")
 async def _start_dart_bot() -> None:

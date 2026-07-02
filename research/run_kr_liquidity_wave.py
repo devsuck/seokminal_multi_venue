@@ -96,10 +96,13 @@ def main():
             continue
         bars = _bars(df)
         tvs = [b["tval"] for b in bars]; pxs = [b["close"] for b in bars]
-        avg_tv = _st.mean(tvs) if tvs else 0
-        if avg_tv < 3e9 or (pxs and max(pxs) < 1000):  # 역사적 유동성 게이트
+        if len(tvs) < 20:
             continue
-        bucket = liquidity_bucket(avg_tv)
+        # 이벤트윈도우 유동성: 20일 롤링평균 최대치(펌프 시점에 유동성 있었으면 자격)
+        roll_max = max(_st.mean(tvs[i - 20:i]) for i in range(20, len(tvs) + 1))
+        if roll_max < 3e9 or (pxs and max(pxs) < 1000):
+            continue
+        bucket = liquidity_bucket(roll_max)
         for t in generate_trades(bars):
             t["bucket"] = bucket; t["source"] = "delisted"; all_trades.append(t)
             src_counts["delisted"] += 1
@@ -182,7 +185,7 @@ def main():
     print(f"\nVERDICT: {verdict}")
     print("⚠️ RESEARCH_SANITY_CHECK_ONLY (검증된 알파 아님, 라이브 권고 아님)")
 
-    log_experiment({"hypothesis_id": "kr_liquidity_wave_pullback_v1_survctrl", "status": "rejected" if "REJECT" in verdict else "watchlist" if "WATCHLIST" in verdict else "underpowered",
+    log_experiment({"hypothesis_id": "kr_liquidity_wave_pullback_v1_eventwin", "status": "rejected" if "REJECT" in verdict else "watchlist" if "WATCHLIST" in verdict else "underpowered",
                     "trade_count": K, "gross_mean": round(_st.mean(gross_rets), 6),
                     "net_base": base["net_mean"], "percentile_base": base["percentile"], "p_base": base["p"],
                     "cost_stress": {k: v["net_mean"] for k, v in results.items()},

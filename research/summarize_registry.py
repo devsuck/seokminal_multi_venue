@@ -25,7 +25,9 @@ FAILURE_CLASS = {
     "delta_neutral_carry_hl": "blocked_by_data (메이저 spot 부재)",
     "futures_tsmom": "decayed/marginal (Sharpe 0.44 최고근접·buyhold초과·91.5pct지만 <95·WF후반 붕괴=감쇠)",
     "futures_tsmom_32mkt": "PAPER_CANDIDATE (Sharpe 0.56·random95.5pct·WF안정·비용robust, 32시장 확장)",
-    "kr_liquidity_wave_pullback_v1": "WEAK sanity-only (net+ 100bps까지, but 90.8pct·WF후반쏠림·survivorship 상방편향)",
+    "kr_liquidity_wave_pullback_v1": "REJECT (survivorship 통제 후 유의성 소멸: p=0.136·86.6pct·severe비용 음수·delisted −3%가 상방편향 확증)",
+    "kr_liquidity_wave_pullback_v1_survctrl": "superseded (게이트 결함, delisted 1개만 포함)",
+    "kr_liquidity_wave_pullback_v1_eventwin": "REJECT (이벤트윈도우 게이트=제대로된 survivorship 통제판, delisted 39개)",
 }
 
 

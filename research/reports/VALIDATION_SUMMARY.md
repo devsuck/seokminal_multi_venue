@@ -3,8 +3,8 @@
 > **검증된 엣지: 0개.** 이 시스템은 "돈 버는 봇"이 아니라 **전략을 냉정하게 죽이는 검증 터미널**이다.
 > 방법: 비용 반영 + random same-frequency 분포 + walk-forward + BH-FDR + underpowered guard + gross/net 분해.
 
-- 테스트한 가설: **13**
-- REJECT: **10**  |  BLOCKED(데이터): 1  |  후보: 2
+- 테스트한 가설: **14**
+- REJECT: **11**  |  BLOCKED(데이터): 1  |  후보: 2
 - **Lv3 자율 리서치 에이전트: 진입 보류**(탐색할 검증 엣지 0개)
 
 ## 판정 테이블
@@ -24,7 +24,10 @@
 | futures_tsmom | candidate |  | decayed/marginal (Sharpe 0.44 최고근접·buyhold초과·91.5pct지만 <95·WF후반 붕괴=감쇠) |
 | futures_tsmom_32mkt | paper_candidate |  | PAPER_CANDIDATE (Sharpe 0.56·random95.5pct·WF안정·비용robust, 32시장 확장) |
 | futures_tsmom_32mkt | paper_candidate_forward_test_required |  | PAPER_CANDIDATE (Sharpe 0.56·random95.5pct·WF안정·비용robust, 32시장 확장) |
-| kr_liquidity_wave_pullback_v1 | underpowered |  | WEAK sanity-only (net+ 100bps까지, but 90.8pct·WF후반쏠림·survivorship 상방편향) |
+| kr_liquidity_wave_pullback_v1 | underpowered |  | REJECT (survivorship 통제 후 유의성 소멸: p=0.136·86.6pct·severe비용 음수·delisted −3%가 상방편향 확증) |
+| kr_liquidity_wave_pullback_v1_survctrl | underpowered |  | superseded (게이트 결함, delisted 1개만 포함) |
+| kr_liquidity_wave_pullback_v1_eventwin | underpowered |  | REJECT (이벤트윈도우 게이트=제대로된 survivorship 통제판, delisted 39개) |
+| kr_liquidity_wave_pullback_v1 | rejected |  | REJECT (survivorship 통제 후 유의성 소멸: p=0.136·86.6pct·severe비용 음수·delisted −3%가 상방편향 확증) |
 
 ## 실패 기전 분류
 - **signal_dead**: gross(비용 0)도 음수 → 신호 자체 없음. (ORB, ATR압축)

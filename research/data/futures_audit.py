@@ -16,13 +16,26 @@ from ib_async import IB
 from ib_async.contract import ContFuture
 from research.data.ib_downloader import _to_epoch
 
-# (symbol, exchange, asset_class) — TSMOM 무상관 바스켓
+# (symbol, exchange, asset_class) — 넓은 후보. 되는 것만 골라 loader로.
 BASKET = [
-    ("ES", "CME", "equity"), ("NQ", "CME", "equity"),
-    ("MES", "CME", "equity_micro"), ("MNQ", "CME", "equity_micro"),
-    ("ZN", "CBOT", "bond"), ("ZB", "CBOT", "bond"),
-    ("6E", "CME", "fx"), ("6J", "CME", "fx"),
-    ("CL", "NYMEX", "commodity"), ("GC", "COMEX", "commodity"),
+    # 지수
+    ("ES", "CME", "equity"), ("NQ", "CME", "equity"), ("RTY", "CME", "equity"),
+    ("YM", "CBOT", "equity"), ("EMD", "CME", "equity"), ("NKD", "CME", "equity"),
+    # 금리/채권
+    ("ZN", "CBOT", "rates"), ("ZB", "CBOT", "rates"), ("ZF", "CBOT", "rates"),
+    ("ZT", "CBOT", "rates"), ("UB", "CBOT", "rates"), ("ZQ", "CBOT", "rates"),
+    # 금속
+    ("GC", "COMEX", "metals"), ("SI", "COMEX", "metals"), ("HG", "COMEX", "metals"),
+    ("PL", "NYMEX", "metals"), ("PA", "NYMEX", "metals"),
+    # 에너지
+    ("CL", "NYMEX", "energy"), ("NG", "NYMEX", "energy"), ("RB", "NYMEX", "energy"),
+    ("HO", "NYMEX", "energy"),
+    # 곡물(CBOT)
+    ("ZC", "CBOT", "grains"), ("ZS", "CBOT", "grains"), ("ZW", "CBOT", "grains"),
+    ("ZL", "CBOT", "grains"), ("ZM", "CBOT", "grains"),
+    # 소프트/축산(ICE/CME — 구독 필요할 수 있음)
+    ("KC", "NYBOT", "softs"), ("SB", "NYBOT", "softs"), ("CT", "NYBOT", "softs"),
+    ("CC", "NYBOT", "softs"), ("LE", "CME", "livestock"), ("HE", "CME", "livestock"),
 ]
 
 

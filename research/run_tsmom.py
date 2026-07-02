@@ -15,7 +15,7 @@ from research.backtest.portfolio_backtester import run_portfolio, portfolio_metr
 from research.validation.baselines import empirical_p_value
 from research.hypotheses.tsmom import build_panel, tsmom_weights, buyhold_weights, random_weights
 from research.hypotheses.tsmom import DEFAULTS
-from research.data.futures_loader import BASKET
+from research.data.futures_loader import BASKET, ASSET_CLASS
 from research.agents.experiment_registry import log_experiment
 
 N_RUNS = 200
@@ -76,6 +76,16 @@ def main():
     print(f"vs random: sharpe pct={pv['percentile']} p={pv['p_value']} "
           f"(rand median sharpe={pv['random_median']}, n={len(rand_sharpes)})")
     print(f"walk-forward: 전반 sharpe={fh['sharpe']} / 후반 sharpe={sh['sharpe']}")
+
+    # 자산군별 성과 분해
+    print("\n자산군 분해:")
+    classes = {}
+    for a in panels:
+        classes.setdefault(ASSET_CLASS.get(a, "?"), []).append(a)
+    for cls, syms in sorted(classes.items()):
+        sub = {a: panels[a] for a in syms}
+        cm = run_portfolio(sub, tsmom_weights, {}, COST_BPS, REBAL)["metrics"]
+        print(f"  {cls:10} ({len(syms):2}시장) sharpe={cm['sharpe']} ann_ret={cm['ann_return']}")
 
     passed = (sm["sharpe"] and sm["sharpe"] > 0 and (pv["percentile"] or 0) >= 95
               and (pv["p_value"] or 1) < 0.05 and (fh["sharpe"] or -9) > 0 and (sh["sharpe"] or -9) > 0

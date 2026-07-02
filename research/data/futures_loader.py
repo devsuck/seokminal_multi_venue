@@ -16,12 +16,23 @@ from ib_async.contract import ContFuture
 from research.data.ib_downloader import _to_epoch
 from research.data.intraday_store import save_bars, quality_report
 
-# (symbol, exchange) — 실패해도 계속. FX는 IDEALPRO 스팟 별도.
-BASKET = [
-    ("ES", "CME"), ("NQ", "CME"), ("RTY", "CME"), ("YM", "CBOT"),        # 지수
-    ("ZN", "CBOT"), ("ZB", "CBOT"), ("ZF", "CBOT"), ("ZT", "CBOT"),      # 채권
-    ("CL", "NYMEX"), ("GC", "COMEX"), ("NG", "NYMEX"), ("SI", "COMEX"), ("HG", "COMEX"),  # 원자재
+# (symbol, exchange, asset_class) — audit로 IB 구독없이 되는 것 확인된 32시장.
+BASKET_FULL = [
+    ("ES", "CME", "equity"), ("NQ", "CME", "equity"), ("RTY", "CME", "equity"),
+    ("YM", "CBOT", "equity"), ("EMD", "CME", "equity"), ("NKD", "CME", "equity"),
+    ("ZN", "CBOT", "rates"), ("ZB", "CBOT", "rates"), ("ZF", "CBOT", "rates"),
+    ("ZT", "CBOT", "rates"), ("UB", "CBOT", "rates"), ("ZQ", "CBOT", "rates"),
+    ("GC", "COMEX", "metals"), ("SI", "COMEX", "metals"), ("HG", "COMEX", "metals"),
+    ("PL", "NYMEX", "metals"), ("PA", "NYMEX", "metals"),
+    ("CL", "NYMEX", "energy"), ("NG", "NYMEX", "energy"), ("RB", "NYMEX", "energy"),
+    ("HO", "NYMEX", "energy"),
+    ("ZC", "CBOT", "grains"), ("ZS", "CBOT", "grains"), ("ZW", "CBOT", "grains"),
+    ("ZL", "CBOT", "grains"), ("ZM", "CBOT", "grains"),
+    ("KC", "NYBOT", "softs"), ("SB", "NYBOT", "softs"), ("CT", "NYBOT", "softs"),
+    ("CC", "NYBOT", "softs"), ("LE", "CME", "livestock"), ("HE", "CME", "livestock"),
 ]
+BASKET = [(s, e) for s, e, _ in BASKET_FULL]
+ASSET_CLASS = {s: ac for s, e, ac in BASKET_FULL}
 
 
 async def fetch(ib: IB, symbol: str, exchange: str) -> list[dict]:

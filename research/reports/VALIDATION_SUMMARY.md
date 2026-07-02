@@ -3,8 +3,8 @@
 > **검증된 엣지: 0개.** 이 시스템은 "돈 버는 봇"이 아니라 **전략을 냉정하게 죽이는 검증 터미널**이다.
 > 방법: 비용 반영 + random same-frequency 분포 + walk-forward + BH-FDR + underpowered guard + gross/net 분해.
 
-- 테스트한 가설: **11**
-- REJECT: **10**  |  BLOCKED(데이터): 1  |  후보: 0
+- 테스트한 가설: **13**
+- REJECT: **10**  |  BLOCKED(데이터): 1  |  후보: 2
 - **Lv3 자율 리서치 에이전트: 진입 보류**(탐색할 검증 엣지 0개)
 
 ## 판정 테이블
@@ -21,6 +21,10 @@
 | cross_sectional_funding | rejected | -42804.2301 | cost_killed (일 리밸런스 과잉거래) |
 | cross_sectional_funding_weekly | rejected | 13621.733 | indistinguishable_from_random (net+ but 82.6pct, WF 불안정) |
 | futures_tsmom | rejected |  | decayed/marginal (Sharpe 0.44 최고근접·buyhold초과·91.5pct지만 <95·WF후반 붕괴=감쇠) |
+| futures_tsmom | candidate |  | decayed/marginal (Sharpe 0.44 최고근접·buyhold초과·91.5pct지만 <95·WF후반 붕괴=감쇠) |
+| futures_tsmom_32mkt | paper_candidate |  | PAPER_CANDIDATE (Sharpe 0.56·random95.5pct·WF안정·비용robust, 32시장 확장) |
+| futures_tsmom_32mkt | paper_candidate_forward_test_required |  | PAPER_CANDIDATE (Sharpe 0.56·random95.5pct·WF안정·비용robust, 32시장 확장) |
+| kr_liquidity_wave_pullback_v1 | underpowered |  | WEAK sanity-only (net+ 100bps까지, but 90.8pct·WF후반쏠림·survivorship 상방편향) |
 
 ## 실패 기전 분류
 - **signal_dead**: gross(비용 0)도 음수 → 신호 자체 없음. (ORB, ATR압축)

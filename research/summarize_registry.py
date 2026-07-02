@@ -24,6 +24,8 @@ FAILURE_CLASS = {
     "cross_sectional_funding_weekly": "indistinguishable_from_random (net+ but 82.6pct, WF 불안정)",
     "delta_neutral_carry_hl": "blocked_by_data (메이저 spot 부재)",
     "futures_tsmom": "decayed/marginal (Sharpe 0.44 최고근접·buyhold초과·91.5pct지만 <95·WF후반 붕괴=감쇠)",
+    "futures_tsmom_32mkt": "PAPER_CANDIDATE (Sharpe 0.56·random95.5pct·WF안정·비용robust, 32시장 확장)",
+    "kr_liquidity_wave_pullback_v1": "WEAK sanity-only (net+ 100bps까지, but 90.8pct·WF후반쏠림·survivorship 상방편향)",
 }
 
 

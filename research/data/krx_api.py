@@ -88,8 +88,9 @@ def build_series(market: str, min_bars: int = 60) -> dict:
         df = pd.read_parquet(f)
         for _, r in df.iterrows():
             code = str(r["ISU_CD"])
-            s = series.setdefault(code, {"name": str(r.get("ISU_NM", "")), "dates": [], "open": [],
-                                         "high": [], "low": [], "close": [], "tval": [], "marcap": [], "sect": []})
+            s = series.setdefault(code, {"name": str(r.get("ISU_NM", "")), "market": str(r.get("MKT_NM", "")),
+                                         "dates": [], "open": [], "high": [], "low": [], "close": [],
+                                         "tval": [], "marcap": [], "sect": []})
             bd = str(r["BAS_DD"])
             s["dates"].append(f"{bd[:4]}-{bd[4:6]}-{bd[6:8]}")
             s["open"].append(float(r["TDD_OPNPRC"] or 0)); s["high"].append(float(r["TDD_HGPRC"] or 0))

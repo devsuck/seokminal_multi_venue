@@ -62,11 +62,25 @@ def _kr_market_open(now: _dt.datetime | None = None) -> bool:
     return 9 * 60 <= mins <= 15 * 60 + 30
 
 
+def _current_price(code: str) -> float | None:
+    """현재가 (KOSPI .KS → KOSDAQ .KQ 폴백). 둘 다 빈 응답이면 None."""
+    import yfinance as yf
+    for suffix in (".KS", ".KQ"):
+        try:
+            hist = yf.Ticker(f"{code}{suffix}").history(period="1d")
+            if len(hist) and "Close" in hist:
+                return float(hist["Close"].iloc[-1])
+        except Exception:
+            continue
+    return None
+
+
 def _buy(code: str, krw: float) -> dict:
     """KIS 모의 시장가 매수 (원화예산÷현재가). tick 전용 헬퍼."""
-    import yfinance as yf
     from backends.kis.order_client import KISOrderClient
-    px = float(yf.Ticker(f"{code}.KS").history(period="1d")["Close"].iloc[-1])
+    px = _current_price(code)
+    if px is None or px <= 0:
+        raise ValueError("현재가 조회 실패 (상장폐지/신규상장/코스닥 심볼)")
     qty = int(krw // px)
     if qty < 1:
         raise ValueError(f"예산 부족 (현재가 ₩{px:,.0f})")
@@ -121,7 +135,10 @@ def tick() -> dict:
             bought += 1
         except Exception as e:  # noqa: BLE001
             acted.add(key)  # 재시도 폭주 방지
-            _log_event({"kind": "fail", "corp": r.get("corp_name"), "code": code, "msg": str(e)[:80]})
+            msg = str(e)
+            # 매매불가 종목/모의 미지원 = 정상 조건 → skip (실패 아님)
+            kind = "skip" if ("매매불가" in msg or "매매 불가" in msg or "처리가 안" in msg) else "fail"
+            _log_event({"kind": kind, "corp": r.get("corp_name"), "code": code, "msg": msg[:80]})
         if bought >= 5:
             break
 

@@ -34,7 +34,14 @@ EVENT_DEFS = {
     "buyback_cancel": {"include": ["소각"], "exclude": [], "bias": "bullish"},
     "rights_issue": {"include": ["유상증자"], "exclude": [], "bias": "bearish"},
     "cb_issue": {"include": ["전환사채"], "exclude": [], "bias": "bearish"},
+    "bonus_issue": {"include": ["무상증자"], "exclude": ["감자"], "bias": "bullish"},
+    "cb_release": {"include": ["조기상환", "만기전"], "exclude": ["발행"], "bias": "bullish"},
 }
+
+
+def report_matches(nm: str, include: list[str], exclude: list[str]) -> bool:
+    """report_nm이 include 중 하나 포함 && exclude 전무 → True."""
+    return any(k in nm for k in include) and not any(k in nm for k in exclude)
 
 
 def _fetch_window(key: str, bgn: str, end: str, d: dict, out: list, seen: set, pace_s: float):
@@ -43,7 +50,7 @@ def _fetch_window(key: str, bgn: str, end: str, d: dict, out: list, seen: set, p
     while True:
         try:
             r = requests.get(DART, params={"crtfc_key": key, "bgn_de": bgn, "end_de": end,
-                                           "pblntf_ty": "B", "page_no": page, "page_count": 100},
+                                           "pblntf_ty": d.get("pblntf_ty", "B"), "page_no": page, "page_count": 100},
                              timeout=20).json()
         except Exception:
             time.sleep(1.0); continue
@@ -56,7 +63,7 @@ def _fetch_window(key: str, bgn: str, end: str, d: dict, out: list, seen: set, p
         for it in r.get("list", []):
             nm = it.get("report_nm", "")
             sc = (it.get("stock_code") or "").strip()
-            if not sc or not any(k in nm for k in d["include"]) or any(k in nm for k in d["exclude"]):
+            if not sc or not report_matches(nm, d["include"], d["exclude"]):
                 continue
             rcept = it.get("rcept_dt", "")
             kid = (sc, rcept, nm[:20])
@@ -87,6 +94,35 @@ def pull_events(event: str, years: float = 2.0, pace_s: float = 0.15, window_day
         cur = w_end + dt.timedelta(days=1)
         time.sleep(pace_s)
     return out
+
+
+def refresh_events(event: str, days: int = 120, pace_s: float = 0.15) -> int:
+    """증분 갱신 — 최근 days 윈도우만 pull → 기존과 merge·dedup·저장. 반환=신규 수.
+    v2 forward(OOS) 자동 축적용. 기존 이벤트 보존."""
+    d = {**EVENT_DEFS[event], "_name": event}
+    key = _key()
+    if not key:
+        return 0
+    existing = load_events(event)
+    seen_key = {(r.get("stock_code"), r.get("date")) for r in existing}
+    fresh, fseen = [], set()
+    today = dt.date.today()
+    cur = today - dt.timedelta(days=days)
+    while cur < today:
+        w_end = min(cur + dt.timedelta(days=85), today)
+        _fetch_window(key, cur.strftime("%Y%m%d"), w_end.strftime("%Y%m%d"), d, fresh, fseen, pace_s)
+        cur = w_end + dt.timedelta(days=1)
+        time.sleep(pace_s)
+    added = 0
+    out = list(existing)
+    for r in fresh:
+        k = (r.get("stock_code"), r.get("date"))
+        if k not in seen_key:
+            seen_key.add(k); out.append(r); added += 1
+    if added:
+        out.sort(key=lambda r: r.get("date", ""))
+        save_events(event, out)
+    return added
 
 
 DECISION = "https://opendart.fss.or.kr/api/tsstkAqDecsn.json"

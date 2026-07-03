@@ -54,3 +54,6 @@ def test_display_maps_canonical_to_uppercase():
     assert DISPLAY["candidate"] == "CANDIDATE"
     assert DISPLAY["reject_bh"] == "REJECT_BH"
     assert DISPLAY["reject_redteam"] == "REJECT_REDTEAM"
+    assert DISPLAY["watchlist"] == "WATCHLIST"
+    assert DISPLAY["pending_bh"] == "PENDING"
+    assert DISPLAY["reject_stats"] == "REJECT_STATS"

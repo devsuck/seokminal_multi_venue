@@ -32,14 +32,18 @@ DISPLAY: dict[str, str] = {
 
 
 def _robust(net: float | None, wf_first: float | None, wf_second: float | None) -> bool:
-    return (net or 0) > 0 and (wf_first or 0) > 0 and (wf_second or 0) > 0
+    return (net is not None and net > 0
+            and wf_first is not None and wf_first > 0
+            and wf_second is not None and wf_second > 0)
 
 
 def _weak(net: float | None, percentile: float | None) -> bool:
-    return (net or 0) > 0 and (percentile or 0) >= 80
+    return net is not None and net > 0 and percentile is not None and percentile >= 80
 
 
-def classify(*, net, percentile, p, wf_first, wf_second, redteam_verdict, bh_survivor):
+def classify(*, net: float | None, percentile: float | None, p: float | None,
+             wf_first: float | None, wf_second: float | None,
+             redteam_verdict: str, bh_survivor: bool | None) -> tuple[str, str]:
     """(status, verdict_text) — 두 시스템 공유. 위 docstring 규칙 적용."""
     redteam_ok = redteam_verdict == "CLEARED"
     robust = _robust(net, wf_first, wf_second)

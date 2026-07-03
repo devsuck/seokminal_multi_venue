@@ -274,6 +274,64 @@ def buyback_bot() -> dict:
     return s
 
 
+@router.get("/execution")
+def execution_console() -> dict:
+    """집행 콘솔 — 검증된 buyback 엣지의 라이브 준비 상태 한 화면.
+    동결 config + 정직한 기대치 + 페이퍼 손익 + 실전제약 + arm 게이트(사람만).
+    실주문 없음. 라이브 arm/집행은 사람 ADMIN + autonomy>=MIN_LIVE."""
+    import datetime as _dt
+    import jarvis
+    from research.paper import buyback_config as CFG
+    from jarvis.paper.buyback_bot import summary, sync
+    from jarvis.execution.arm import arm_state, check_micro_live_eligible
+
+    sid = CFG.VERSION            # "kr_buyback_drift_v1" — 표시/config 버전
+    reg_id = "kr_dart_buyback_drift_v1"  # registry/deploy/arm FSM id(별개)
+    paper = summary()
+    if paper["total"] == 0:
+        try:
+            paper = sync()
+        except Exception:  # noqa: BLE001
+            pass
+
+    # 페이퍼 관찰 기간(동결 시점부터)
+    try:
+        frozen = _dt.date.fromisoformat(CFG.FROZEN_AT)
+        paper_months = round((_dt.date.today() - frozen).days / 30.0, 1)
+    except Exception:  # noqa: BLE001
+        paper_months = 0.0
+
+    js = jarvis.status()
+    armed = arm_state(reg_id)
+    elig = check_micro_live_eligible(reg_id, paper_months)
+
+    return {
+        "strategy_id": sid, "registry_id": reg_id, "status": CFG.STATUS, "frozen_at": CFG.FROZEN_AT,
+        "config": {"event": CFG.EVENT, "markets": CFG.MARKETS, "entry": CFG.ENTRY,
+                   "hold_days": CFG.HOLD_DAYS, "cost_bps": CFG.COST_BASE_BPS},
+        "edge": {  # 정직한 기대치 — 평균 아닌 중앙값(팻테일 경고)
+            "net_mean": CFG.BASELINE["net_mean"], "net_median": CFG.BASELINE["net_median"],
+            "trimmed10": CFG.BASELINE["trimmed10"], "win_rate": CFG.BASELINE["win_rate"],
+            "p_median": CFG.BASELINE["p_median"], "wf_first": CFG.BASELINE["wf_first"],
+            "wf_second": CFG.BASELINE["wf_second"], "trade_count": CFG.BASELINE["trade_count"],
+            "honest_note": "평균 +1.73%는 팻테일(상위5% 114% 기여). 기대치=중앙값/trimmed(+0.2~0.8%). 수익 lumpy → 분산 필수.",
+        },
+        "live_readiness": CFG.LIVE_READINESS,
+        "paper": {"total": paper.get("total"), "open": paper.get("open"), "closed": paper.get("closed"),
+                  "paper_pnl_mean": paper.get("paper_pnl_mean"), "paper_win_rate": paper.get("paper_win_rate"),
+                  "cum_paper_pnl": paper.get("cum_paper_pnl"), "recent_closed": paper.get("recent_closed", [])[:5]},
+        "arm_gate": {
+            "armed": bool(armed and armed.get("armed")),
+            "autonomy_level": js.get("autonomy_level"), "min_live_level": 6,
+            "live_execution": js.get("live_execution"),
+            "eligible": elig["eligible"], "reasons": elig.get("reasons", []),
+            "paper_months": paper_months, "min_paper_months": CFG.MIN_OBSERVATION_MONTHS,
+            "human_action": "라이브 소액 = 사람 ADMIN이 arm() + autonomy>=6. 현재 BLOCKED(안전). AI 자가 arm 불가.",
+        },
+        "forbidden": CFG.FORBIDDEN,
+    }
+
+
 @router.get("/jarvis/detail")
 def jarvis_detail(audit_n: int = 40) -> dict:
     """생애주기 전략 목록 + forward 배포 + 감사 로그 tail(파이프라인 시각화용)."""

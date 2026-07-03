@@ -37,3 +37,16 @@ FORBIDDEN = [
     "cost 완화", "관리종목 포함", "paper 1~2개월 좋다고 live",
     "분해 결과로 파라미터 튜닝",
 ]
+
+# 실전 준비 제약 (Phase 122 수용력·타이밍 연구 결과 = 동결 사실). 라이브 arm 전 관문.
+LIVE_READINESS = {
+    "monthly_events": 70,               # 월 평균 이벤트 수
+    "concentration_pct": 6.7,           # 이벤트당 최대 집중도(%) — 몰빵 금지
+    "liquidity_per_event_eok": 0.7,     # 이벤트당 유동성(억)
+    "monthly_capacity_eok": 46,         # 소자본 월 수용력(억). 대자본이면 슬리피지로 엣지 소멸
+    "timing_delay_1d_pct": -0.62,       # 진입 1일 지연 시 수익(%). 즉시 체결 필수 = 핵심 리스크
+    "expectation": "median",            # 기대치는 평균(+1.73%, 팻테일) 아닌 중앙값/trimmed(+0.2~0.8%)
+    "diversification": "required",      # lumpy 수익 → 분산 필수, 한 종목 몰빵 금지
+    "min_paper_months": MIN_OBSERVATION_MONTHS,
+    "preferred_paper_months": PREFERRED_OBSERVATION_MONTHS,
+}

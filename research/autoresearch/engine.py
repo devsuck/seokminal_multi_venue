@@ -188,5 +188,6 @@ def latest_bh_survivor(fam_id: str) -> bool | None:
         return None
     for e in data.get("leaderboard", []):
         if e.get("cid") == f"ev_{fam_id}":
-            return bool(e.get("bh_survivor"))
+            v = e.get("bh_survivor")
+            return bool(v) if v is not None else None  # 키 없음/null = 미확정(reject 아님)
     return None

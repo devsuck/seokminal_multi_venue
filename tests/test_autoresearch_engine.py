@@ -32,6 +32,21 @@ def test_latest_bh_survivor_family_absent_returns_none(tmp_path, monkeypatch):
     assert engine.latest_bh_survivor("buyback") is None
 
 
+def test_latest_bh_survivor_key_missing_returns_none(tmp_path, monkeypatch):
+    # cid는 맞지만 bh_survivor 키 없음(손상/마이그레이션) → 미확정 None(reject 아님)
+    status = tmp_path / "status.json"
+    status.write_text(json.dumps({"leaderboard": [{"cid": "ev_buyback"}]}), encoding="utf-8")
+    monkeypatch.setattr(engine, "STATUS", str(status))
+    assert engine.latest_bh_survivor("buyback") is None
+
+
+def test_latest_bh_survivor_corrupt_json_returns_none(tmp_path, monkeypatch):
+    status = tmp_path / "status.json"
+    status.write_text("{not valid json", encoding="utf-8")
+    monkeypatch.setattr(engine, "STATUS", str(status))
+    assert engine.latest_bh_survivor("buyback") is None
+
+
 def test_run_batch_uses_classify_for_verdicts(monkeypatch, tmp_path):
     """run_batch가 classify 경유 — bh 생존+레드팀 CLEARED+robust면 CANDIDATE,
     wf 음수면 WATCHLIST로 강등(새 강건성 게이트)."""

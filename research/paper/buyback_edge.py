@@ -14,6 +14,31 @@ _cache: dict = {"ts": 0.0, "data": None}
 _TTL = 600.0
 
 
+_MIN_OOS_EVENTS = 20   # 이벤트 레벨 판단 최소 표본(사전등록)
+
+
+def _event_level(rows: list) -> dict:
+    """이벤트 레벨 OOS 검정 — 월 코호트(월 ~1개)보다 빨리 쌓임(월 ~70건).
+    사전등록: p_worse = Mann-Whitney 단측 P(OOS 분포가 in-sample보다 나쁨).
+    arm 게이트(월 기준 동결)는 불변 — 보조 증거."""
+    in_r = [r for d, r in rows if d < CFG.FROZEN_AT]
+    oos_r = [r for d, r in rows if d >= CFG.FROZEN_AT]
+    import statistics as _st
+    out = {"n_oos": len(oos_r), "n_in_sample": len(in_r),
+           "oos_median": round(_st.median(oos_r), 6) if oos_r else None,
+           "in_sample_median": round(_st.median(in_r), 6) if in_r else None,
+           "powered": len(oos_r) >= _MIN_OOS_EVENTS, "min_events": _MIN_OOS_EVENTS,
+           "p_worse": None}
+    if oos_r and in_r:
+        try:
+            from scipy.stats import mannwhitneyu
+            # alternative="less": OOS가 확률적으로 더 작다(나쁘다) = decay 방향 단측
+            out["p_worse"] = round(float(mannwhitneyu(oos_r, in_r, alternative="less").pvalue), 4)
+        except Exception:  # noqa: BLE001
+            pass
+    return out
+
+
 def _compute(need_months: int) -> dict:
     from research.paper.buyback_forward import generate
     r = generate(since=CFG.FROZEN_AT, write=False)
@@ -36,7 +61,8 @@ def _compute(need_months: int) -> dict:
         status = "confirmed"         # 충분한 OOS + envelope 안 = 살아있음
     return {"status": status, "in_sample_months": env.get("n_months", 0),
             "envelope": {"p10": p10, "avg": env.get("cohort_median_avg"), "p90": p90},
-            "oos_months": n_oos, "oos_in_envelope": n_in, "need_months": need_months, "oos": oos}
+            "oos_months": n_oos, "oos_in_envelope": n_in, "need_months": need_months, "oos": oos,
+            "event_level": _event_level(r.get("rows", []))}
 
 
 def edge_status(need_months: int | None = None, force: bool = False, read_only: bool = False) -> dict:

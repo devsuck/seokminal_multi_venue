@@ -42,7 +42,7 @@ def _ret(bars, event_date):
 def generate(since: str | None = None, write: bool = True) -> dict:
     series = _series()
     bb = load_events("buyback")
-    # (event_month, net) — 20일 완결된 것만
+    # (event_date, net) — 20일 완결된 것만. 전체 날짜 보존(이벤트 레벨 OOS 분할용).
     rows = []
     for e in bb:
         b = series.get(e["stock_code"])
@@ -50,10 +50,10 @@ def generate(since: str | None = None, write: bool = True) -> dict:
             continue
         r = _ret(b, e["date"])
         if r is not None:
-            rows.append((e["date"][:7], r))
+            rows.append((e["date"], r))
     by_month: dict = {}
-    for m, r in rows:
-        by_month.setdefault(m, []).append(r)
+    for d, r in rows:
+        by_month.setdefault(d[:7], []).append(r)
 
     # 월 코호트 중앙값/평균
     cohorts = {m: {"n": len(rs), "median": round(_st.median(rs), 6), "mean": round(_st.mean(rs), 6)}
@@ -75,7 +75,8 @@ def generate(since: str | None = None, write: bool = True) -> dict:
     result = {"version": CFG.VERSION, "status": CFG.STATUS,
               "config_frozen": {"entry": CFG.ENTRY, "hold": CFG.HOLD_DAYS, "cost_base": CFG.COST_BASE_BPS},
               "overall": overall, "envelope": envelope, "cohorts": cohorts,
-              "forward_cohorts": fwd, "baseline_ref": CFG.BASELINE}
+              "forward_cohorts": fwd, "baseline_ref": CFG.BASELINE,
+              "rows": rows}   # (event_date, ret) raw — 이벤트 레벨 OOS 검정용(md/ledger엔 미기록)
     if write:
         _write_md(result)
         with open(LEDGER, "a") as f:

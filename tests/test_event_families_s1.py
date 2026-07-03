@@ -51,3 +51,25 @@ def test_s1_families_schema():
         assert fam["exclude"] == ex
         assert fam.get("pblntf_ty") == "B"
         assert fam.get("thesis")
+
+
+# ── 배치 편입 (engine) ────────────────────────────────────────
+def test_new_families_enter_batch_when_powered(monkeypatch):
+    import research.autoresearch.engine as eng
+    # 모든 family에 이벤트 100건 있는 것처럼 → 전부 실행 가능 Candidate
+    monkeypatch.setattr(eng, "load_events", lambda fid: [{}] * 100)
+    cands = eng._event_family_candidates({"X": {}})
+    cids = {c.cid for c in cands}
+    for fid in S1_FAMILIES:
+        assert f"ev_{fid}" in cids, f"ev_{fid} 배치 미편입"
+        c = next(c for c in cands if c.cid == f"ev_{fid}")
+        assert not c.meta.get("underpowered")
+
+
+def test_new_families_underpowered_when_no_data(monkeypatch):
+    import research.autoresearch.engine as eng
+    monkeypatch.setattr(eng, "load_events", lambda fid: [])   # 커버리지 0
+    cands = eng._event_family_candidates({"X": {}})
+    for fid in S1_FAMILIES:
+        c = next(c for c in cands if c.cid == f"ev_{fid}")
+        assert c.meta.get("underpowered") is True

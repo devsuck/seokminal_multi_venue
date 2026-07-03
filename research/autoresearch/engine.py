@@ -72,16 +72,20 @@ def _event_family_candidates(series: dict) -> list[Candidate]:
 
 
 # ── 엔진 훅(대기): 가짜 결과 안 만듦, 정직하게 status만 ───────────────
+# factor 배선됨(engines_factor). tsmom/regime은 '새 정보 없음'으로 정직 보류:
+#   tsmom 변형(룩백·슬리브)은 Phase 103 robustness로 같은 데이터에서 이미 분석
+#   — 재슬롯 = 이중계상. regime은 buyback×레짐(v2 shadow)·TSMOM×레짐(기각) 완료.
 _PENDING_ENGINES = [
-    ("factor", "횡단면 팩터 스크린(모멘텀/밸류/저변동) — 엔진 배선 대기"),
-    ("tsmom", "시계열 모멘텀 변형(마켓×룩백 격자) — 엔진 배선 대기"),
-    ("regime", "레짐 필터(변동성/추세 국면별 조건부 엣지) — 엔진 배선 대기"),
+    ("tsmom", "변형(룩백·슬리브)은 robustness로 기분석 — 새 시장/데이터 오면 배선"),
+    ("regime", "생존자×레짐 이미 검증(v2 shadow·기각) — 새 조합 생기면 배선"),
 ]
 
 
 def collect_candidates() -> tuple[list[Candidate], dict]:
     series = load_series()
     cands = _event_family_candidates(series)
+    from research.autoresearch.engines_factor import factor_candidates
+    cands += factor_candidates(series)   # KR 횡단면 팩터(사전등록 3: size·amihud·turnover)
     return cands, series
 
 

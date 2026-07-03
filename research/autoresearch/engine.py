@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from research.scanner.event_study import event_study, load_series
+from research.scanner.verdict import classify, DISPLAY
 from research.scanner.families import FAMILIES, redteam_spec
 from research.data.kr_dart_events import load_events
 from research.validation.multiple_testing import benjamini_hochberg
@@ -113,13 +114,11 @@ def run_batch() -> dict:
         c, res = r["cand"], r["res"]
         rt = review_strategy(res["_spec"], res["evidence"]) if res.get("_spec") else {"verdict": "N/A", "failed": [], "missing": []}
         bh_survivor = bool(survivors[i]) if i < len(survivors) else False
-        redteam_ok = rt["verdict"] == "CLEARED"
-        if bh_survivor and redteam_ok:
-            verdict = "CANDIDATE"
-        elif not bh_survivor:
-            verdict = "REJECT_BH"        # 배치 다중검정서 탈락(우연 가능)
-        else:
-            verdict = "REJECT_REDTEAM"   # BH는 넘었지만 통제 실패(confound 등)
+        status, _text = classify(
+            net=res.get("net"), percentile=res.get("percentile"), p=res.get("p"),
+            wf_first=res.get("wf_first"), wf_second=res.get("wf_second"),
+            redteam_verdict=rt["verdict"], bh_survivor=bh_survivor)
+        verdict = DISPLAY.get(status, status.upper())
         entry = {
             "cid": c.cid, "category": c.category, "thesis": c.thesis, "direction": c.direction,
             "n": res.get("n"), "net": res.get("net"), "median": res.get("median"),
@@ -134,7 +133,7 @@ def run_batch() -> dict:
         # 지식 축적(registry)
         log_experiment({
             "hypothesis_id": f"auto_{c.cid}",
-            "status": "candidate" if verdict == "CANDIDATE" else "rejected",
+            "status": "candidate" if status == "candidate" else ("watchlist" if status == "watchlist" else "rejected"),
             "n": res.get("n"), "net": res.get("net"), "percentile": res.get("percentile"), "p": res.get("p"),
             "wf_first": res.get("wf_first"), "wf_second": res.get("wf_second"),
             "redteam": rt["verdict"], "direction": c.direction, "data_quality": "KRX PIT survivorship-free",
@@ -142,7 +141,7 @@ def run_batch() -> dict:
         })
 
     # 정렬: CANDIDATE 우선 → percentile → net
-    order = {"CANDIDATE": 0, "REJECT_REDTEAM": 1, "REJECT_BH": 2}
+    order = {"CANDIDATE": 0, "WATCHLIST": 1, "REJECT_REDTEAM": 2, "REJECT_BH": 3}
     leaderboard.sort(key=lambda e: (order.get(e["verdict"], 9), -(e["percentile"] or 0), -(e["net"] or 0)))
 
     finished = dt.datetime.now().isoformat(timespec="seconds")

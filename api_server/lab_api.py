@@ -274,6 +274,46 @@ def buyback_bot() -> dict:
     return s
 
 
+_edge_cache: dict = {"ts": 0.0, "data": None}
+
+
+def _edge_alive(need_months: int) -> dict:
+    """forward(OOS, 동결 이후) 월 코호트가 in-sample envelope 안에 있나 = 엣지 생존.
+    series 로드 무거움 → 600s 캐시. status: no_oos_yet/drifting/accumulating/confirmed."""
+    import time
+    if _edge_cache["data"] is not None and time.time() - _edge_cache["ts"] < 600:
+        return _edge_cache["data"]
+    from research.paper import buyback_config as CFG
+    try:
+        from research.paper.buyback_forward import generate
+        r = generate(since=CFG.FROZEN_AT, write=False)
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "unavailable", "error": str(exc)[:60], "oos_months": 0,
+                "in_sample_months": 0, "envelope": {}, "oos": [], "need_months": need_months}
+    env = r.get("envelope", {})
+    p10, p90 = env.get("cohort_median_p10"), env.get("cohort_median_p90")
+    fwd = r.get("forward_cohorts", {}) or {}
+    oos, n_in = [], 0
+    for m, c in sorted(fwd.items()):
+        inside = p10 is not None and p90 is not None and p10 <= c["median"] <= p90
+        n_in += 1 if inside else 0
+        oos.append({"month": m, "median": c["median"], "n": c["n"], "in_envelope": inside})
+    n_oos = len(oos)
+    if n_oos == 0:
+        status = "no_oos_yet"        # 동결 후 완결 월 없음 = 카운트다운 0
+    elif n_in / n_oos < 0.5:
+        status = "drifting"          # 과반이 envelope 밖 = 엣지 소멸 경고
+    elif n_oos < need_months:
+        status = "accumulating"      # envelope 안이나 월 부족
+    else:
+        status = "confirmed"         # 충분한 OOS + envelope 안 = 살아있음
+    out = {"status": status, "in_sample_months": env.get("n_months", 0),
+           "envelope": {"p10": p10, "avg": env.get("cohort_median_avg"), "p90": p90},
+           "oos_months": n_oos, "oos_in_envelope": n_in, "need_months": need_months, "oos": oos}
+    _edge_cache.update(ts=time.time(), data=out)
+    return out
+
+
 @router.get("/execution")
 def execution_console() -> dict:
     """집행 콘솔 — 검증된 buyback 엣지의 라이브 준비 상태 한 화면.
@@ -317,6 +357,7 @@ def execution_console() -> dict:
             "honest_note": "평균 +1.73%는 팻테일(상위5% 114% 기여). 기대치=중앙값/trimmed(+0.2~0.8%). 수익 lumpy → 분산 필수.",
         },
         "live_readiness": CFG.LIVE_READINESS,
+        "edge_alive": _edge_alive(CFG.MIN_OBSERVATION_MONTHS),
         "paper": {"total": paper.get("total"), "open": paper.get("open"), "closed": paper.get("closed"),
                   "paper_pnl_mean": paper.get("paper_pnl_mean"), "paper_win_rate": paper.get("paper_win_rate"),
                   "cum_paper_pnl": paper.get("cum_paper_pnl"), "recent_closed": paper.get("recent_closed", [])[:5]},

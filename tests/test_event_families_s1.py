@@ -26,6 +26,11 @@ def test_report_matches_no_include_is_false():
     assert report_matches("배당결정", ["유상증자"], []) is False
 
 
+def test_report_matches_conflict_exclude_wins():
+    # include·exclude 둘 다 포함되면 exclude 우선(제외) — 동결 필터 무결성
+    assert report_matches("자기주식처분 및 자기주식취득 정정신고", ["자기주식처분"], ["취득"]) is False
+
+
 # ── FAMILIES 스키마 ───────────────────────────────────────────
 def test_s1_families_present():
     for fid in S1_FAMILIES:

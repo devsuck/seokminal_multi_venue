@@ -211,6 +211,50 @@ class LabEngine:
             self.current = None
             self.metrics = {}
 
+    # ── 배치 되먹임 ──────────────────────────────────────────
+    def reconcile_from_batch(self, status: dict | None = None) -> dict:
+        """Auto-Research 배치 완료 후 되먹임 — 이미 emit된 pending_bh 판정을 배치
+        결과로 확정(candidate/watchlist/reject_*). event_study 재계산 없이 classify
+        재사용(단일 진실원). status=None이면 배치 status.json에서 읽음."""
+        from research.scanner.verdict import classify
+        if status is None:
+            try:
+                from research.autoresearch.engine import load_status
+                status = load_status()
+            except Exception:  # noqa: BLE001
+                return {"reconciled": 0}
+        entries = {e.get("cid"): e for e in (status or {}).get("leaderboard", [])}
+        reconciled = 0
+        with self._lock:
+            for v in self._verdicts:
+                if v.get("status") != "pending_bh":
+                    continue
+                hid = v.get("id", "")
+                if not hid.startswith("real_"):
+                    continue
+                entry = entries.get(f"ev_{hid[len('real_'):]}")
+                if not entry:
+                    continue
+                new_status, new_verdict = classify(
+                    net=entry.get("net"), percentile=entry.get("percentile"), p=entry.get("p"),
+                    wf_first=entry.get("wf_first"), wf_second=entry.get("wf_second"),
+                    redteam_verdict=entry.get("redteam", "N/A"), bh_survivor=entry.get("bh_survivor"))
+                if new_status == "pending_bh":
+                    continue  # 배치도 미확정(정상 배치엔 bh_survivor bool이라 발생 안 함)
+                self.stats["pending"] = max(0, self.stats["pending"] - 1)
+                if new_status.startswith(("watchlist", "candidate", "paper")):
+                    self.stats["edges"] += 1
+                else:
+                    self.stats["rejects"] += 1
+                v["status"] = new_status
+                v["verdict"] = new_verdict
+                v["reconciled"] = True
+                reconciled += 1
+            if reconciled:
+                self._log.append({"ts": _now(), "stage": "learn", "level": "accent",
+                                  "msg": f"배치 되먹임: pending {reconciled}건 확정."})
+        return {"reconciled": reconciled}
+
     # ── 스냅샷 ───────────────────────────────────────────────
     def snapshot(self) -> dict:
         with self._lock:

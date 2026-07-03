@@ -305,6 +305,11 @@ def execution_console() -> dict:
     armed = arm_state(reg_id)
     elig = check_micro_live_eligible(reg_id, paper_months)
 
+    # 사전등록 arm/kill 판정(동결 기준, 결정적). edge는 read_only(계산 0, service 워밍 캐시).
+    from jarvis.execution.arm_criteria import evaluate as arm_eval
+    from research.paper.buyback_edge import edge_status
+    decision = arm_eval(edge_status(read_only=True), paper_months)
+
     return {
         "strategy_id": sid, "registry_id": reg_id, "status": CFG.STATUS, "frozen_at": CFG.FROZEN_AT,
         "config": {"event": CFG.EVENT, "markets": CFG.MARKETS, "entry": CFG.ENTRY,
@@ -328,6 +333,7 @@ def execution_console() -> dict:
             "paper_months": paper_months, "min_paper_months": CFG.MIN_OBSERVATION_MONTHS,
             "human_action": "라이브 소액 = 사람 ADMIN이 arm() + autonomy>=6. 현재 BLOCKED(안전). AI 자가 arm 불가.",
         },
+        "arm_decision": decision,  # 사전등록 GO/WAIT/KILL (arm_criteria_v1, 동결)
         "forbidden": CFG.FORBIDDEN,
     }
 

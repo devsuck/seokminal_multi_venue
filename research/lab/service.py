@@ -42,6 +42,7 @@ class ResearchService:
         self._last_edge_ts = 0.0
         self.last_edge_warm: str | None = None
         self.edge_status_cache: str | None = None
+        self.arm_decision: str | None = None
 
     def _load(self) -> dict:
         p = state_path(_CFG)
@@ -137,6 +138,12 @@ class ResearchService:
             s = edge_status(force=True)
             self.last_edge_warm = _now()
             self.edge_status_cache = s.get("status")
+            # 사전등록 arm/kill 판정도 status에 노출 — KILL이 뜨면 이게 알림 채널(/status 폰 접근).
+            import datetime as _dt
+            from research.paper import buyback_config as CFG
+            from jarvis.execution.arm_criteria import evaluate as arm_eval
+            months = (_dt.date.today() - _dt.date.fromisoformat(CFG.FROZEN_AT)).days / 30.0
+            self.arm_decision = arm_eval(s, round(months, 1)).get("decision")
         except Exception:  # noqa: BLE001
             pass
 
@@ -175,6 +182,7 @@ class ResearchService:
             "last_autoresearch": self.last_autoresearch, "autoresearch_candidates": self.autoresearch_candidates,
             "autoresearch_reconciled": self.autoresearch_reconciled,
             "last_edge_warm": self.last_edge_warm, "edge_status": self.edge_status_cache,
+            "arm_decision": self.arm_decision,
             "note": "pending 큐 + buyback 24h 갱신 + Auto-Research 24h 배치 + lab 되먹임 + 엣지 6h 워밍. live 불가. $0.",
         }
 

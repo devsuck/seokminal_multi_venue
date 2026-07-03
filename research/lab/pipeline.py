@@ -37,7 +37,7 @@ class LabEngine:
         self.metrics: dict = {}
         self.autopilot = False
         self.live_guard = "disarmed"  # 항상 disarmed — 자동 live 매매 없음
-        self.stats = {"processed": 0, "edges": 0, "rejects": 0, "blocked": 0}
+        self.stats = {"processed": 0, "edges": 0, "rejects": 0, "blocked": 0, "pending": 0}
         self._seed()
 
     # ── 큐 관리 ──────────────────────────────────────────────
@@ -177,6 +177,7 @@ class LabEngine:
         status = res["status"]
         self._log_line("execute", f"판정: {res['verdict']}",
                        "pos" if status.startswith(("watchlist", "candidate", "paper")) else
+                       "accent" if status == "pending_bh" else
                        "warn" if status.startswith("blocked") else "neg")
         time.sleep(0.5)
         self._log_line("execute", "가드레일: live 매매 자동 실행 없음. paper→live는 사람 게이트.", "warn")
@@ -189,7 +190,9 @@ class LabEngine:
         self._set("learning", "learn", 40)
         with self._lock:
             self.stats["processed"] += 1
-            if status.startswith(("watchlist", "candidate", "paper")):
+            if status == "pending_bh":
+                self.stats["pending"] += 1
+            elif status.startswith(("watchlist", "candidate", "paper")):
                 self.stats["edges"] += 1
             elif status.startswith("blocked"):
                 self.stats["blocked"] += 1

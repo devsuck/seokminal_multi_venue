@@ -175,3 +175,21 @@ def test_autopilot_drains_queue(monkeypatch):
     snap = eng.snapshot()
     assert snap["autopilot"] is False        # 소진 후 자동 정지
     assert eng.stats["processed"] >= n
+
+
+def test_pending_bh_counts_as_pending_not_reject(monkeypatch):
+    monkeypatch.setattr(pl.time, "sleep", lambda *a, **k: None)
+    eng = pl.LabEngine()
+    # evaluate를 가짜로: pending_bh 결과 반환
+    fake = {"data_mode": "real_event", "status": "pending_bh",
+            "verdict": "PENDING — 배치 대기", "powered": True,
+            "audit": {"ok": True, "note": "n", "n_bars": 100, "events": 100},
+            "backtest": {"strategy_net": 5.0, "n_trades": 100, "cost_bps": 40.0},
+            "random": {"percentile": 99.0, "p_value": 0.001, "random_median": 0.0, "n_runs": "perm"},
+            "walk_forward": {"first": 1.0, "second": 1.0, "both_positive": True}}
+    monkeypatch.setattr(pl, "evaluate", lambda h: fake)
+    _seed_fast(eng, [_hb("plumb_pending")])
+    eng.start(hid="plumb_pending")
+    _drain(eng)
+    assert eng.stats["pending"] == 1
+    assert eng.stats["rejects"] == 0

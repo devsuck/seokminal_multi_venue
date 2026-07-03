@@ -39,6 +39,9 @@ class ResearchService:
         self.last_autoresearch: str | None = None
         self.autoresearch_candidates = 0
         self.autoresearch_reconciled = 0
+        self._last_edge_ts = 0.0
+        self.last_edge_warm: str | None = None
+        self.edge_status_cache: str | None = None
 
     def _load(self) -> dict:
         p = state_path(_CFG)
@@ -123,10 +126,25 @@ class ResearchService:
         except Exception:  # noqa: BLE001
             pass
 
+    def _warm_edge(self) -> None:
+        """6시간 스로틀 buyback 엣지 생존 캐시 워밍 — 프론트 /execution/edge가 즉시
+        응답하도록(series 로드 무거움 → 배경서 미리 계산). OOS 월은 느리게 변해 6h 충분."""
+        if time.time() - self._last_edge_ts < 21600:
+            return
+        self._last_edge_ts = time.time()
+        try:
+            from research.paper.buyback_edge import edge_status
+            s = edge_status(force=True)
+            self.last_edge_warm = _now()
+            self.edge_status_cache = s.get("status")
+        except Exception:  # noqa: BLE001
+            pass
+
     def _tick(self) -> None:
         self.ticks += 1
         self._refresh_buyback()
         self._autoresearch_batch()
+        self._warm_edge()
         from jarvis.research_queue import pending, run_pending
         if not pending():
             self.last_run = _now()
@@ -156,7 +174,8 @@ class ResearchService:
             "last_buyback_refresh": self.last_refresh, "buyback_added_total": self.refresh_added_total,
             "last_autoresearch": self.last_autoresearch, "autoresearch_candidates": self.autoresearch_candidates,
             "autoresearch_reconciled": self.autoresearch_reconciled,
-            "note": "pending 큐 처리 + buyback 24h 증분갱신 + Auto-Research 24h 배치 + lab 되먹임. live 불가. $0.",
+            "last_edge_warm": self.last_edge_warm, "edge_status": self.edge_status_cache,
+            "note": "pending 큐 + buyback 24h 갱신 + Auto-Research 24h 배치 + lab 되먹임 + 엣지 6h 워밍. live 불가. $0.",
         }
 
 

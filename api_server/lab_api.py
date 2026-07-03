@@ -357,7 +357,6 @@ def execution_console() -> dict:
             "honest_note": "평균 +1.73%는 팻테일(상위5% 114% 기여). 기대치=중앙값/trimmed(+0.2~0.8%). 수익 lumpy → 분산 필수.",
         },
         "live_readiness": CFG.LIVE_READINESS,
-        "edge_alive": _edge_alive(CFG.MIN_OBSERVATION_MONTHS),
         "paper": {"total": paper.get("total"), "open": paper.get("open"), "closed": paper.get("closed"),
                   "paper_pnl_mean": paper.get("paper_pnl_mean"), "paper_win_rate": paper.get("paper_win_rate"),
                   "cum_paper_pnl": paper.get("cum_paper_pnl"), "recent_closed": paper.get("recent_closed", [])[:5]},
@@ -371,6 +370,14 @@ def execution_console() -> dict:
         },
         "forbidden": CFG.FORBIDDEN,
     }
+
+
+@router.get("/execution/edge")
+def execution_edge() -> dict:
+    """엣지 생존 모니터 — OOS vs 동결 envelope. series 로드 무거움(600s 캐시)라
+    콘솔과 분리(프로그레시브 로드). 콘솔은 즉시, 엣지 카드만 async."""
+    from research.paper import buyback_config as CFG
+    return _edge_alive(CFG.MIN_OBSERVATION_MONTHS)
 
 
 @router.get("/jarvis/detail")

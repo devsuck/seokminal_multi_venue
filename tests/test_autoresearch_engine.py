@@ -35,8 +35,6 @@ def test_latest_bh_survivor_family_absent_returns_none(tmp_path, monkeypatch):
 def test_run_batch_uses_classify_for_verdicts(monkeypatch, tmp_path):
     """run_batch가 classify 경유 — bh 생존+레드팀 CLEARED+robust면 CANDIDATE,
     wf 음수면 WATCHLIST로 강등(새 강건성 게이트)."""
-    from research.scanner import verdict as V
-
     # 결정 로직만 검증: collect_candidates·permutation을 가짜로 대체
     class _C:
         cid = "ev_fake"; category = "event_family"; thesis = "t"; direction = "bullish"

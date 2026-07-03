@@ -67,6 +67,61 @@ def test_underpowered_flag():
     assert r["status"] == "underpowered_demo"
 
 
+def test_real_event_pending_when_no_batch(monkeypatch):
+    """배치 미확정(bh_survivor=None) + 강한 통계 → pending_bh(candidate 도장 보류)."""
+    from research.lab import evaluator as ev
+    from research.lab.hypotheses import Hypothesis
+
+    # event_study·load_series·load_events·redteam·bh를 가짜로 대체
+    monkeypatch.setattr(ev, "_lab_bh_survivor", lambda fam_id: None, raising=True)
+
+    h = Hypothesis(id="real_x", name="x", family="event", market="KR", thesis="t", kill="k",
+                   entry="", hold="", universe="", cost_bps=40.0, data_mode="real_event",
+                   precomputed_id="buyback")
+
+    import research.data.kr_dart_events as kde
+    import research.scanner.event_study as es
+    import research.scanner.families as fam
+    import jarvis.redteam.review as rv
+    monkeypatch.setattr(kde, "load_events", lambda fid: [{}] * 100)
+    monkeypatch.setattr(es, "load_series", lambda: {"X": {}})
+    monkeypatch.setattr(es, "event_study", lambda ev_, s_, d_: {
+        "n": 100, "net": 5.0, "median": 0.1, "percentile": 99.0, "p": 0.001,
+        "wf_first": 1.0, "wf_second": 1.0, "top_tail_share": 0.2, "evidence": {}, "verdict": "OK"})
+    monkeypatch.setattr(fam, "FAMILIES", {"buyback": {"direction": "bullish", "thesis": "t"}})
+    monkeypatch.setattr(fam, "redteam_spec", lambda fid, f: {"required": []})
+    monkeypatch.setattr(rv, "review_strategy", lambda spec, evid: {"verdict": "CLEARED", "failed": []})
+
+    r = ev.evaluate_real_event(h)
+    assert r["status"] == "pending_bh"
+
+
+def test_real_event_candidate_when_bh_survivor(monkeypatch):
+    """배치 확정 생존(bh_survivor=True) + 레드팀 CLEARED + robust → candidate."""
+    from research.lab import evaluator as ev
+    from research.lab.hypotheses import Hypothesis
+    import research.data.kr_dart_events as kde
+    import research.scanner.event_study as es
+    import research.scanner.families as fam
+    import jarvis.redteam.review as rv
+
+    monkeypatch.setattr(ev, "_lab_bh_survivor", lambda fam_id: True, raising=True)
+    monkeypatch.setattr(kde, "load_events", lambda fid: [{}] * 100)
+    monkeypatch.setattr(es, "load_series", lambda: {"X": {}})
+    monkeypatch.setattr(es, "event_study", lambda ev_, s_, d_: {
+        "n": 100, "net": 5.0, "median": 0.1, "percentile": 99.0, "p": 0.001,
+        "wf_first": 1.0, "wf_second": 1.0, "top_tail_share": 0.2, "evidence": {}, "verdict": "OK"})
+    monkeypatch.setattr(fam, "FAMILIES", {"buyback": {"direction": "bullish", "thesis": "t"}})
+    monkeypatch.setattr(fam, "redteam_spec", lambda fid, f: {"required": []})
+    monkeypatch.setattr(rv, "review_strategy", lambda spec, evid: {"verdict": "CLEARED", "failed": []})
+
+    h = Hypothesis(id="real_x", name="x", family="event", market="KR", thesis="t", kill="k",
+                   entry="", hold="", universe="", cost_bps=40.0, data_mode="real_event",
+                   precomputed_id="buyback")
+    r = ev.evaluate_real_event(h)
+    assert r["status"] == "candidate"
+
+
 # ── pipeline ─────────────────────────────────────────────────
 def _drain(engine, timeout=5.0):
     t0 = time.time()

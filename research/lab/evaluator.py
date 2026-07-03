@@ -80,6 +80,16 @@ def evaluate_synthetic(h: Hypothesis, cost_bps: float | None = None, n_runs: int
     }
 
 
+def _lab_bh_survivor(fam_id: str) -> bool | None:
+    """최신 Auto-Research 배치서 이 family의 BH-FDR 생존 여부. 미확정이면 None.
+    (테스트에서 monkeypatch 가능하도록 얇은 래퍼)."""
+    try:
+        from research.autoresearch.engine import latest_bh_survivor
+        return latest_bh_survivor(fam_id)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def evaluate_blocked(h: Hypothesis) -> dict:
     """데이터 게이트 — 실제로 파이프 미구축이면 BLOCKED_BY_DATA."""
     return {
@@ -150,18 +160,14 @@ def evaluate_real_event(h: Hypothesis) -> dict:
                 "backtest": None, "random": None, "walk_forward": None,
                 "verdict": "UNDERPOWERED — 매칭 표본 부족"}
 
+    from research.scanner.verdict import classify
     rt = review_strategy(redteam_spec(fam_id, fam), res["evidence"])
     net, pct, p = res["net"], res["percentile"], res["p"]
     wf1, wf2 = res["wf_first"], res["wf_second"]
-    redteam_ok = rt["verdict"] == "CLEARED"
-    if not redteam_ok:
-        status, verdict = "reject_real", f"REJECT — 레드팀 통제 실패: {','.join(rt.get('failed', []))}"
-    elif net > 0 and (pct or 0) >= 95 and (p or 1) < 0.05 and wf1 > 0 and wf2 > 0:
-        status, verdict = "candidate_real", "CANDIDATE — random·비용·WF·레드팀 전부 통과 (실데이터)"
-    elif net > 0 and (pct or 0) >= 80:
-        status, verdict = "watchlist_real", f"WATCHLIST — 양수·pct {pct}, 확신 부족(옐로)"
-    else:
-        status, verdict = "reject_real", "REJECT — 매칭 random·비용 못 넘음"
+    bh_survivor = _lab_bh_survivor(fam_id)   # 배치 되먹임: 확정 True/False, 미확정 None
+    status, verdict = classify(
+        net=net, percentile=pct, p=p, wf_first=wf1, wf_second=wf2,
+        redteam_verdict=rt["verdict"], bh_survivor=bh_survivor)
 
     return {
         "data_mode": "real_event",

@@ -43,6 +43,10 @@ class ResearchService:
         self.last_edge_warm: str | None = None
         self.edge_status_cache: str | None = None
         self.arm_decision: str | None = None
+        self._last_tsmom_ts = 0.0
+        self.tsmom_last_month: str | None = None
+        self.tsmom_in_envelope: bool | None = None
+        self.watchdog_new_total = 0
 
     def _load(self) -> dict:
         p = state_path(_CFG)
@@ -144,6 +148,37 @@ class ResearchService:
             from jarvis.execution.arm_criteria import evaluate as arm_eval
             months = (_dt.date.today() - _dt.date.fromisoformat(CFG.FROZEN_AT)).days / 30.0
             self.arm_decision = arm_eval(s, round(months, 1)).get("decision")
+            # 감시견: 상태 변화만 이벤트로(스팸 없음). KILL/이탈/조기경보 = critical.
+            ev = s.get("event_level") or {}
+            pw = ev.get("p_worse")
+            from jarvis.watchdog import observe
+            self.watchdog_new_total += len(observe({
+                "edge": s.get("status"), "arm": self.arm_decision,
+                "oos_months": s.get("oos_months"),
+                "p_worse_alert": (pw is not None and pw < 0.05) if ev.get("powered") else None,
+            }))
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _warm_tsmom(self) -> None:
+        """24시간 스로틀 TSMOM forward 체크 — 월간 운영의식의 관찰 절반 자동화.
+        generate(write=False)는 저장된 선물 데이터만 읽음(가벼움, IB 연결 불필요)."""
+        if time.time() - self._last_tsmom_ts < 86400:
+            return
+        self._last_tsmom_ts = time.time()
+        try:
+            from research.paper.tsmom_forward import generate
+            r = generate(write=False)
+            fm = r.get("forward_months", {}) or {}
+            env = r.get("backtest_envelope", {})
+            if fm and env.get("p10") is not None:
+                last = sorted(fm)[-1]
+                self.tsmom_last_month = last
+                self.tsmom_in_envelope = env["p10"] <= fm[last] <= env["p90"]
+                from jarvis.watchdog import observe
+                self.watchdog_new_total += len(observe({
+                    "tsmom_out_of_env": not self.tsmom_in_envelope,
+                }))
         except Exception:  # noqa: BLE001
             pass
 
@@ -152,6 +187,13 @@ class ResearchService:
         self._refresh_buyback()
         self._autoresearch_batch()
         self._warm_edge()
+        self._warm_tsmom()
+        # 데이터 pull 큐 — 세션 babysit 없이 장시간 pull 처리(재개 지원, 한 번에 하나)
+        try:
+            from research.data.pull_queue import tick as pull_tick
+            pull_tick()
+        except Exception:  # noqa: BLE001
+            pass
         from jarvis.research_queue import pending, run_pending
         if not pending():
             self.last_run = _now()
@@ -183,8 +225,27 @@ class ResearchService:
             "autoresearch_reconciled": self.autoresearch_reconciled,
             "last_edge_warm": self.last_edge_warm, "edge_status": self.edge_status_cache,
             "arm_decision": self.arm_decision,
-            "note": "pending 큐 + buyback 24h 갱신 + Auto-Research 24h 배치 + lab 되먹임 + 엣지 6h 워밍. live 불가. $0.",
+            "tsmom_last_month": self.tsmom_last_month, "tsmom_in_envelope": self.tsmom_in_envelope,
+            "watchdog": self._watchdog_summary(),
+            "pull_queue": self._pull_queue_summary(),
+            "note": "pending 큐 + buyback 24h 갱신 + Auto-Research 24h 배치 + lab 되먹임 + 엣지 6h 워밍 + 감시견. live 불가. $0.",
         }
+
+    def _watchdog_summary(self) -> dict:
+        try:
+            from jarvis.watchdog import has_critical, recent_events
+            return {"events": recent_events(5), "critical": has_critical(),
+                    "new_total": self.watchdog_new_total}
+        except Exception:  # noqa: BLE001
+            return {"events": [], "critical": False, "new_total": 0}
+
+    def _pull_queue_summary(self) -> dict:
+        try:
+            from research.data.pull_queue import status as pq_status
+            s = pq_status()
+            return {"pending": s["pending"], "running": s["running"]}
+        except Exception:  # noqa: BLE001
+            return {"pending": 0, "running": None}
 
 
 SERVICE = ResearchService()

@@ -569,9 +569,13 @@ def _session_exists(name: str) -> bool:
 @agents_router.get("")
 def list_agents() -> dict:
     agents = agent_store.list_agents()
+    from jarvis.execution.agent_gate import validation_of
     # Reflect real tmux liveness so a crashed session doesn't read as running.
     for a in agents:
         a["session_live"] = _session_exists(_agent_tmux(a["id"]))
+        v = validation_of(a)
+        a["validated"] = v["validated"]
+        a["validation_reason"] = v["reason"]
     return {"agents": agents, "profiles": agent_store.AGENT_PROFILES}
 
 
@@ -855,7 +859,9 @@ def daytrade_tick(agent_id: str, cycle: int = 0) -> dict:
     leverage = float(profile.get("leverage", 1))
     position_pct = float(profile.get("position_pct", 0.10))
     universe = _DAYTRADE_UNIVERSE.get(venue, _DAYTRADE_UNIVERSE["US"])
-    paper = bool(agent.get("paper", True))  # per-agent choice (live = real money)
+    # registry 게이트: 미검증 전략은 live 불가(페이퍼 강제) — 연구 트랙과 같은 기준
+    from jarvis.execution.agent_gate import enforce_paper
+    paper, _gate_note = enforce_paper(agent)
     # TradFi (xyz builder DEX) has no usable testnet liquidity → paper agents
     # trade crypto only; live agents get the full multi-asset universe.
     if venue == "HL" and paper:
@@ -869,6 +875,8 @@ def daytrade_tick(agent_id: str, cycle: int = 0) -> dict:
     budget = max(alloc - agent_perf.compute_performance(_cycles).invested, 0.0)
 
     actions: list[str] = []
+    if _gate_note:
+        actions.append(_gate_note)  # 감사 흔적: 왜 live가 페이퍼로 강등됐는지 사이클에 남김
     fill = None
     fill_symbol = None
 

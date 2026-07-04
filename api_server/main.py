@@ -72,6 +72,8 @@ app.add_middleware(
     CORSMiddleware,
     # 기본 로컬 개발. 배포(클라우드) 시 CORS_ORIGINS 환경변수(쉼표구분)로 도메인 지정.
     allow_origins=[o.strip() for o in os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(",") if o.strip()],
+    # 폰에서 LAN(192.168/10/172.16-31)·Tailscale(100.x) IP:3000 접근 허용.
+    allow_origin_regex=r"http://(192\.168|10|172\.(1[6-9]|2\d|3[01])|100)\.[0-9.]+:3000",
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
@@ -2413,6 +2415,23 @@ async def get_ib_bars(
             ib_client._ib.disconnect()
 
 
+# ── IB Options Chain ─────────────────────────────────────────────────────────────
+
+
+@app.get("/ib/options/chain")
+async def ib_options_chain(symbol: str = Query(..., description="US 주식 ticker")):
+    """주식 옵션 체인 (지연 데이터, OPRA 구독 불필요).
+    Returns: {expiry: [{strike, right, bid, ask, last, volume, iv, delta}]}
+    """
+    import random
+    ib_client = IBClient(client_id=random.randint(500, 599))
+    try:
+        chain = await ib_client.get_option_chain(symbol.upper())
+        return {"symbol": symbol.upper(), "chain": chain}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"IB 옵션 체인 오류: {exc}")
+
+
 # ── KR Universe Search ──────────────────────────────────────────────────────────
 
 
@@ -4197,12 +4216,17 @@ def dart_positions() -> list[dict]:
         raise HTTPException(status_code=503, detail="KIS 모의 키 없음")
     kis = KISOrderClient(kk, ks, kc, os.environ.get("KIS_ACNT_PRDT_CD", "01"), mock=True)
     try:
+        from api_server.kr_names import name_for
         out = []
         for h in kis.get_holdings():
             entry = float(h.get("avg_price", 0) or 0)
             cur = float(h.get("current", 0) or 0)
+            code = h.get("code")
+            nm = h.get("name") or code
+            if not nm or nm == code:      # KIS가 이름 안 주면 pykrx로 보강
+                nm = name_for(code) or code
             out.append({
-                "code": h.get("code"), "name": h.get("name", h.get("code")),
+                "code": code, "name": nm,
                 "qty": h.get("qty"), "avg_price": entry, "current": cur,
                 "return_pct": round((cur - entry) / entry * 100, 2) if entry else None,
             })
@@ -4813,10 +4837,22 @@ app.include_router(dart_bot_router)
 from api_server.research_api import router as research_router
 app.include_router(research_router)
 
+# ── AI LAB (자율 리서치 루프: 자체생각→검토→집행→학습) ─────────────────────────────
+from api_server.lab_api import router as lab_router
+app.include_router(lab_router)
+
 
 @app.on_event("startup")
 async def _start_dart_bot() -> None:
     _dart_bot_start()
+    # Jarvis 부트(시드 + paper_candidate 자동 forward 배선) + 서버사이드 리서치 서비스(D).
+    try:
+        import jarvis
+        jarvis.boot()
+        from research.lab.service import SERVICE
+        SERVICE.start()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # ── Market Overview ───────────────────────────────────────────────────────────

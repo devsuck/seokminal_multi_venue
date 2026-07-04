@@ -177,6 +177,79 @@ class IBClient:
             )
         return bars
 
+    async def get_option_chain(
+        self,
+        symbol: str,
+        max_expiries: int = 4,
+        connect_timeout: float = 4.0,
+    ) -> dict:
+        """주식의 옵션 체인 조회 (지연 데이터, OPRA 구독 불필요).
+
+        Returns:
+            {expiry: [{strike, right, bid, ask, last, volume, open_interest, iv, delta}]}
+        """
+        await self._ib.connectAsync(self._host, self._port, self._client_id, timeout=connect_timeout)
+        try:
+            stock = Stock(symbol, "SMART", "USD")
+            await self._ib.qualifyContractsAsync(stock)
+
+            # 사용 가능한 만기·행사가 조회
+            chains = await self._ib.reqSecDefOptParamsAsync(
+                underlyingSymbol=symbol,
+                futFopExchange="",
+                underlyingSecType="STK",
+                underlyingConId=stock.conId,
+            )
+            if not chains:
+                return {}
+
+            chain = chains[0]
+            expirations = sorted(chain.expirations)[:max_expiries]
+            strikes = sorted(chain.strikes)
+
+            # 현재 주가 근처 ±20% 행사가만 (체인 축소)
+            tickers = self._ib.reqTickers(stock)
+            await asyncio.sleep(0.5)
+            mid = None
+            if tickers and tickers[0].marketPrice() > 0:
+                mid = tickers[0].marketPrice()
+            if mid:
+                lo, hi = mid * 0.80, mid * 1.20
+                strikes = [s for s in strikes if lo <= s <= hi]
+            strikes = strikes[:30]  # 최대 30개 행사가
+
+            result: dict[str, list] = {}
+            for expiry in expirations:
+                contracts = [
+                    Option(symbol, expiry, s, r, "SMART", currency="USD")
+                    for s in strikes for r in ("C", "P")
+                ]
+                # 지연 스냅샷 요청 (15분 지연, OPRA 불필요)
+                self._ib.reqMarketDataType(3)  # 3 = delayed
+                tks = self._ib.reqTickers(*contracts)
+                await asyncio.sleep(2.0)  # 데이터 수신 대기
+
+                rows = []
+                for tk in tks:
+                    c = tk.contract
+                    rows.append({
+                        "strike": c.strike,
+                        "right": c.right,
+                        "bid": tk.bid if tk.bid and tk.bid > 0 else None,
+                        "ask": tk.ask if tk.ask and tk.ask > 0 else None,
+                        "last": tk.last if tk.last and tk.last > 0 else None,
+                        "volume": int(tk.volume) if tk.volume and tk.volume > 0 else 0,
+                        "open_interest": int(tk.callOpenInterest if c.right == "C" else tk.putOpenInterest) if hasattr(tk, "callOpenInterest") else 0,
+                        "iv": round(tk.modelGreeks.impliedVol, 4) if tk.modelGreeks and tk.modelGreeks.impliedVol else None,
+                        "delta": round(tk.modelGreeks.delta, 4) if tk.modelGreeks and tk.modelGreeks.delta else None,
+                    })
+                result[expiry] = sorted(rows, key=lambda x: (x["strike"], x["right"]))
+
+            return result
+        finally:
+            if self._ib.isConnected():
+                self._ib.disconnect()
+
     async def get_daily_bars_crypto(
         self, symbol: str, end_date: str, duration: str, bar_size: str = DEFAULT_BAR_SIZE
     ) -> list[BarData]:

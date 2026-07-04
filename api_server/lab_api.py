@@ -52,6 +52,22 @@ def jarvis_status() -> dict:
 
 
 _tasks_cache: dict = {"ts": 0.0, "data": None}
+# forward 통계 배경 워밍(6h) — generate()가 무거워서 요청 경로에서 직접 못 부름.
+# _warm_edge(service) 패턴과 동일: endpoint는 캐시 병합만, 계산은 스레드.
+_task_fw_cache: dict = {"ts": 0.0, "by_runner": {}, "warming": False}
+
+
+def _warm_task_forwards(runners: list[str]) -> None:
+    import time
+    try:
+        for rn in runners:
+            fw = _task_forward(rn)
+            if fw and not fw.get("error"):
+                _task_fw_cache["by_runner"][rn] = fw
+    finally:
+        _task_fw_cache["ts"] = time.time()
+        _task_fw_cache["warming"] = False
+        _tasks_cache["data"] = None  # 다음 요청에 워밍 결과 반영
 
 
 def _task_forward(runner: str | None) -> dict | None:
@@ -100,7 +116,7 @@ def lab_tasks() -> dict:
             continue
         dep = deployment_of(r["strategy_id"])
         runner = dep["runner"] if dep else None
-        # 무거운 generate() 안 부름 — 배포 규칙만(가벼움). 상세는 포트폴리오/봇 카드.
+        # 요청 경로에선 generate() 안 부름(무거움) — 규칙 즉시 + 통계는 배경 워밍 캐시 병합.
         fw = None
         if dep:
             rules = dep.get("rules") or {}
@@ -114,9 +130,18 @@ def lab_tasks() -> dict:
             else:
                 exit_rule = "-"
             fw = {"entry": rules.get("cadence") or "-", "exit": exit_rule,
-                  "cost_bps": None, "stats": {}, "monthly": []}
+                  "cost_bps": None, "stats": {}, "monthly": [], "stats_warming": True}
+            warmed = _task_fw_cache["by_runner"].get(runner)
+            if warmed:
+                fw = {**fw, **warmed, "stats_warming": False}
         tasks.append({"strategy_id": r["strategy_id"], "status": r["status"],
                       "runner": runner, "deployed": dep is not None, "forward": fw})
+    # 6h 스로틀 배경 워밍 킥오프(요청은 즉시 반환)
+    warm_runners = sorted({t["runner"] for t in tasks if t["runner"]})
+    if warm_runners and not _task_fw_cache["warming"] and time.time() - _task_fw_cache["ts"] > 21600:
+        import threading
+        _task_fw_cache["warming"] = True
+        threading.Thread(target=_warm_task_forwards, args=(warm_runners,), daemon=True).start()
     data = {"tasks": tasks, "count": len(tasks)}
     _tasks_cache.update(ts=time.time(), data=data)
     return data

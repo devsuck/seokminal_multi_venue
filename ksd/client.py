@@ -29,10 +29,24 @@ _ENDPOINTS: dict[str, tuple[str, str]] = {
 
 
 def isin_from_code(code: str) -> str:
-    """6자리 종목코드 → 12자리 ISIN. 이미 12자리면 그대로."""
+    """6자리 종목코드 → 12자리 ISIN(보통주 KR7). 이미 12자리면 그대로.
+
+    체크디짓은 ISIN 표준(문자→숫자 변환 후 Luhn)으로 계산 —
+    종목마다 다르므로 '3' 하드코딩 금지(예: 138040 → KR7138040001).
+    """
     if len(code) == 12:
         return code
-    return f"KR7{code}003"
+    base = f"KR7{code}00"
+    digits = "".join(str(int(ch, 36)) for ch in base)
+    total = 0
+    for i, ch in enumerate(reversed(digits)):
+        d = int(ch)
+        if i % 2 == 0:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+    return base + str((10 - total % 10) % 10)
 
 
 class KSDClient:

@@ -1,8 +1,9 @@
-"""SEC Form 4 내부자 매수 drift 포워드 테스트.
+"""미국 내부자 오픈마켓 매수 drift 포워드 테스트 (OpenInsider 데이터).
 
-가설: 임원/이사 오픈마켓 매수(Form 4 코드 P) → D+1 진입 → 20일 drift.
-공시일 기준(disclosure_date). 자기 회사 주식 직접 매수 = 경영진 자신감 신호.
-CLI: PYTHONPATH=. python3 research/paper/form4_forward.py --tickers AAPL MSFT TSLA
+가설: 임원/이사/10% 주주 오픈마켓 매수 공시(Form 4 P코드) →
+      D+1 진입 → 20일 보유 → 양의 drift.
+공시일(disclosure_date) 기준 — 시장이 정보를 아는 시점.
+CLI: PYTHONPATH=. python3 research/paper/form4_forward.py
 """
 from __future__ import annotations
 
@@ -15,26 +16,27 @@ from datetime import datetime
 HOLD_DAYS = 20
 COST_BASE_BPS = 5
 LEDGER = os.path.join(os.path.dirname(__file__), "form4_forward_ledger.jsonl")
-
-# S&P500 구성 종목 일부 — 실험용 기본 유니버스 (풀 유니버스는 오래 걸림)
-DEFAULT_TICKERS = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "BRK-B",
-    "JPM", "JNJ", "V", "PG", "UNH", "HD", "MA", "DIS", "PYPL", "BAC",
-    "XOM", "CVX", "PFE", "KO", "PEP", "ABBV", "MRK", "TMO", "COST",
-    "WMT", "CSCO", "INTC", "NFLX", "ADBE", "CRM", "ORCL", "AMD",
-]
+REPORT = os.path.join(os.path.dirname(__file__), "form4_forward_report.md")
 
 
 def _price_series(ticker: str) -> dict | None:
     try:
         import yfinance as yf
-        df = yf.download(ticker, start="2018-01-01", auto_adjust=True, progress=False)
+        df = yf.download(ticker, start="2020-01-01", auto_adjust=True, progress=False)
         if df.empty or len(df) < 20:
             return None
+        # yfinance 1.4+ MultiIndex: columns = (field, ticker)
+        cols = df.columns
+        if hasattr(cols, "levels"):
+            opens = df[("Open", ticker)].values
+            closes = df[("Close", ticker)].values
+        else:
+            opens = df["Open"].values
+            closes = df["Close"].values
         return {
             "dates": [d.strftime("%Y-%m-%d") for d in df.index],
-            "open": [float(x) for x in df["Open"].values],
-            "close": [float(x) for x in df["Close"].values],
+            "open": [float(x) for x in opens],
+            "close": [float(x) for x in closes],
         }
     except Exception:
         return None
@@ -52,12 +54,10 @@ def _ret(bars: dict, event_date: str) -> float | None:
     return (bars["close"][xi] / entry - 1) - COST_BASE_BPS / 10_000.0
 
 
-def generate(tickers: list[str] | None = None, since: str | None = None, write: bool = True) -> dict:
-    from research.data.sec_edgar import load_form4_universe
-    if tickers is None:
-        tickers = DEFAULT_TICKERS
+def generate(since: str | None = None, write: bool = True) -> dict:
+    from research.data.openinsider import load_events
+    events = load_events(min_date="2022-01-01")
 
-    events = load_form4_universe(tickers)
     _price_cache: dict[str, dict | None] = {}
     rows = []
 
@@ -96,10 +96,10 @@ def generate(tickers: list[str] | None = None, since: str | None = None, write: 
 
     fwd = {m: cohorts[m] for m in cohorts if since and m >= since}
     result = {
-        "version": "us_form4_buy_drift_v1",
+        "version": "us_insider_buy_drift_v1",
         "status": "research",
-        "config_frozen": {"entry": "D+1_open", "hold": HOLD_DAYS, "cost_base": COST_BASE_BPS,
-                          "filter": "open_market_purchase_code_P"},
+        "data_source": "openinsider.com (Form 4 P-purchase, $10k+)",
+        "config_frozen": {"entry": "D+1_open", "hold": HOLD_DAYS, "cost_base": COST_BASE_BPS},
         "overall": overall, "envelope": envelope, "cohorts": cohorts,
         "forward_cohorts": fwd, "rows": [(d, r) for d, r, _ in rows],
     }
@@ -115,7 +115,15 @@ def generate(tickers: list[str] | None = None, since: str | None = None, write: 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--tickers", nargs="*")
+    ap.add_argument("--since", help="이후 코호트만 표시 (YYYY-MM)")
     args = ap.parse_args()
-    r = generate(tickers=args.tickers, write=False)
-    print(f"n={r['overall']['n']}  median={r['overall']['median']}  win_rate={r['overall']['win_rate']}")
+    r = generate(since=args.since, write=False)
+    ov = r["overall"]
+    print(f"n={ov['n']}  median={ov['median']}  mean={ov['mean']}  win_rate={ov['win_rate']}")
+    env = r["envelope"]
+    if env["n_months"] > 0:
+        print(f"envelope n_months={env['n_months']} p10={env['cohort_median_p10']} p90={env['cohort_median_p90']} avg={env['cohort_median_avg']}")
+    if r["cohorts"]:
+        print("\n월별 코호트 (최근 12개월):")
+        for m, c in list(r["cohorts"].items())[-12:]:
+            print(f"  {m}: n={c['n']} median={c['median']:+.4f}")

@@ -24,10 +24,18 @@ def _price_series(ticker: str) -> dict | None:
         df = yf.download(ticker, start="2018-01-01", auto_adjust=True, progress=False)
         if df.empty or len(df) < 20:
             return None
-        dates = [d.strftime("%Y-%m-%d") for d in df.index]
-        opens = [float(x) for x in df["Open"].values]
-        closes = [float(x) for x in df["Close"].values]
-        return {"dates": dates, "open": opens, "close": closes}
+        cols = df.columns
+        if hasattr(cols, "levels"):
+            opens = df[("Open", ticker)].values
+            closes = df[("Close", ticker)].values
+        else:
+            opens = df["Open"].values
+            closes = df["Close"].values
+        return {
+            "dates": [d.strftime("%Y-%m-%d") for d in df.index],
+            "open": [float(x) for x in opens],
+            "close": [float(x) for x in closes],
+        }
     except Exception:
         return None
 

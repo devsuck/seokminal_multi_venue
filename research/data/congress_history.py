@@ -41,30 +41,57 @@ def _norm(row: dict, chamber: str) -> dict:
     }
 
 
-def _fetch_chamber(chamber: str, path: str, key: str, pages: int = 5) -> list[dict]:
+def _fetch_chamber_latest(chamber: str, path: str, key: str) -> list[dict]:
+    """FMP stable/{path}: 최근 100건만 반환 (플랜 제한, 페이지네이션 없음)."""
+    import requests
+    try:
+        r = requests.get(f"{_BASE}/{path}", params={"apikey": key}, timeout=_TIMEOUT)
+        r.raise_for_status()
+        return [_norm(x, chamber) for x in (r.json() or [])]
+    except Exception:
+        return []
+
+
+def _fetch_quiverquant() -> list[dict]:
+    """Quiver Quantitative 무료 API — 역사적 Congress 매매 (키 불필요, rate-limit 있음).
+    https://api.quiverquant.com/beta/live/congresstrading
+    """
     import requests
     rows: list[dict] = []
-    for page in range(1, pages + 1):
-        try:
-            r = requests.get(f"{_BASE}/{path}", params={"apikey": key, "page": page}, timeout=_TIMEOUT)
-            r.raise_for_status()
-            data = r.json()
-            if not data:
-                break
-            rows.extend(_norm(x, chamber) for x in data)
-            time.sleep(0.2)
-        except Exception:
-            break
+    try:
+        r = requests.get(
+            "https://api.quiverquant.com/beta/live/congresstrading",
+            headers={"Accept": "application/json"},
+            timeout=20,
+        )
+        if r.status_code != 200:
+            return []
+        for item in r.json():
+            t = str(item.get("Transaction", "")).lower()
+            trade_type = "BUY" if "purchase" in t or "buy" in t else "SELL" if "sale" in t or "sold" in t else "OTHER"
+            rows.append({
+                "chamber": item.get("Chamber", ""),
+                "trade_date": item.get("TransactionDate", ""),
+                "disclosure_date": item.get("ReportDate", item.get("TransactionDate", "")),
+                "reporter": item.get("Representative", ""),
+                "ticker": (item.get("Ticker") or "").upper().strip(),
+                "trade_type": trade_type,
+                "amount_str": str(item.get("Range", "")),
+            })
+    except Exception:
+        pass
     return rows
 
 
 def pull_history(pages: int = 10) -> list[dict]:
-    """상·하원 BUY 이벤트 풀링. ticker 없는 것 제외."""
-    key = _key()
-    rows: list[dict] = []
-    for chamber, path in (("senate", "senate-trading"), ("house", "house-trading")):
-        rows.extend(_fetch_chamber(chamber, path, key, pages))
-    # BUY only, ticker 필수
+    """상·하원 BUY 이벤트 풀링. Quiver Quantitative 우선, FMP 보조."""
+    rows: list[dict] = _fetch_quiverquant()
+
+    if not rows:  # fallback: FMP stable latest (최근 200건)
+        key = _key()
+        for chamber, path in (("senate", "senate-latest"), ("house", "house-latest")):
+            rows.extend(_fetch_chamber_latest(chamber, path, key))
+
     rows = [r for r in rows if r["trade_type"] == "BUY" and r["ticker"] and r["disclosure_date"]]
     rows.sort(key=lambda x: x["disclosure_date"], reverse=True)
     return rows

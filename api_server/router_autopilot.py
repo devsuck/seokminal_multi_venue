@@ -804,6 +804,7 @@ def intraday_scores(symbols: str) -> dict:
 # ── Deterministic day-trade tick (no LLM) ─────────────────────────────────────
 
 from api_server import daytrade_logic
+from api_server.lv5_learner import compute_lv5_params
 
 _DAYTRADE_UNIVERSE = {
     "US": ["SPY", "QQQ", "NVDA", "TSLA", "AAPL", "AMD", "META", "AMZN", "MSFT", "GOOGL"],
@@ -858,6 +859,7 @@ def daytrade_tick(agent_id: str, cycle: int = 0) -> dict:
     threshold = float(profile.get("buy_score_threshold", 55))
     leverage = float(profile.get("leverage", 1))
     position_pct = float(profile.get("position_pct", 0.10))
+    autonomy_lv = int(agent.get("autonomy", 2))
     universe = _DAYTRADE_UNIVERSE.get(venue, _DAYTRADE_UNIVERSE["US"])
     # registry 게이트: 미검증 전략은 live 불가(페이퍼 강제) — 연구 트랙과 같은 기준
     from jarvis.execution.agent_gate import enforce_paper
@@ -874,11 +876,41 @@ def daytrade_tick(agent_id: str, cycle: int = 0) -> dict:
     _cycles = agent_store.read_cycles(agent_id, limit=1000)
     budget = max(alloc - agent_perf.compute_performance(_cycles).invested, 0.0)
 
+    # Lv5 자가학습: 이력 분석 → threshold/position_pct 자동 조정
+    lv5_state: dict = {}
+    lv5_agent_note: str = ""
+    _market_ctx: dict = {}
+    if autonomy_lv >= 5:
+        lv5_state = compute_lv5_params(_cycles, threshold, position_pct)
+        threshold = lv5_state["threshold"]
+        position_pct = lv5_state["position_pct"]
+        # 에이전틱 오버레이: 캐시된 Claude 분석 적용 → universe 재구성 포함
+        from api_server.lv5_agent import trigger_review_if_needed, apply_cached_strategy
+        from api_server.lv5_context import get_cached_context
+        threshold, position_pct, universe, _agent_pause, lv5_agent_note = apply_cached_strategy(
+            agent_id, threshold, position_pct, universe,
+        )
+        # 시장 컨텍스트 (VIX/어닝/뉴스) — 30분 캐시, 빠름
+        _market_ctx = get_cached_context(venue, universe)
+        # 10사이클마다 백그라운드 3-Phase 에이전틱 리뷰 트리거 (tick 블로킹 없음)
+        trigger_review_if_needed(
+            agent_id, venue, threshold, position_pct, universe, _cycles, cycle,
+        )
+        if _agent_pause:
+            lv5_state["pause"] = True
+
     actions: list[str] = []
     if _gate_note:
-        actions.append(_gate_note)  # 감사 흔적: 왜 live가 페이퍼로 강등됐는지 사이클에 남김
+        actions.append(_gate_note)
+    if lv5_state.get("lv5_note"):
+        actions.append(lv5_state["lv5_note"])
+    if lv5_agent_note:
+        actions.append(lv5_agent_note)
     fill = None
     fill_symbol = None
+
+    # Lv5 pause: 연속 손절 감지 시 entry skip (청산만 수행)
+    lv5_pause = lv5_state.get("pause", False)
 
     if venue == "HL":
         get_positions, place_order, close_position, set_leverage, get_candles = _hl_funcs()
@@ -913,7 +945,19 @@ def daytrade_tick(agent_id: str, cycle: int = 0) -> dict:
         held_syms = {h["symbol"] for h in held}
         # entry
         entry = daytrade_logic.decide_entry(scores, threshold, allow_short=True)
-        if entry and entry["symbol"] not in held_syms and budget > 0:
+        if entry and autonomy_lv >= 5:
+            from api_server.lv5_dsl import apply_dsl, get_cached_dsl
+            import datetime as _dt_dsl
+            _thr_dsl, _pct_dsl, _skip_dsl, _reason_dsl = apply_dsl(
+                get_cached_dsl(agent_id), entry["symbol"], threshold, position_pct,
+                hour=_dt_dsl.datetime.now().hour, vix=_market_ctx.get("vix"),
+                days_to_earnings=_market_ctx.get("earnings_days", {}).get(entry["symbol"]),
+            )
+            if _skip_dsl:
+                actions.append(_reason_dsl); entry = None
+            else:
+                position_pct = _pct_dsl
+        if entry and entry["symbol"] not in held_syms and budget > 0 and not lv5_pause:
             size = daytrade_logic.position_size(budget, position_pct, leverage, entry["entry"] or 0)
             size = round(size, 4)
             if size > 0:
@@ -961,7 +1005,19 @@ def daytrade_tick(agent_id: str, cycle: int = 0) -> dict:
                 actions.append(f"청산 {ex['symbol']} FAILED: {str(e)[:50]}")
         held_syms = {h["symbol"] for h in held}
         entry = daytrade_logic.decide_entry(scores, threshold, allow_short=False)  # KR 롱 온리
-        if entry and entry["symbol"] not in held_syms and budget > 0:
+        if entry and autonomy_lv >= 5:
+            from api_server.lv5_dsl import apply_dsl, get_cached_dsl
+            import datetime as _dt_dsl
+            _thr_dsl, _pct_dsl, _skip_dsl, _reason_dsl = apply_dsl(
+                get_cached_dsl(agent_id), entry["symbol"], threshold, position_pct,
+                hour=_dt_dsl.datetime.now().hour, vix=_market_ctx.get("vix"),
+                days_to_earnings=_market_ctx.get("earnings_days", {}).get(entry["symbol"]),
+            )
+            if _skip_dsl:
+                actions.append(_reason_dsl); entry = None
+            else:
+                position_pct = _pct_dsl
+        if entry and entry["symbol"] not in held_syms and budget > 0 and not lv5_pause:
             qty = int(daytrade_logic.position_size(budget, position_pct, 1.0, entry["entry"] or 0))
             if qty > 0:
                 try:
@@ -998,7 +1054,19 @@ def daytrade_tick(agent_id: str, cycle: int = 0) -> dict:
                     actions.append(f"close {ex['symbol']} FAILED: {e}")
             held_syms = {h["symbol"] for h in held}
             entry = daytrade_logic.decide_entry(scores, threshold, allow_short=False)
-            if entry and entry["symbol"] not in held_syms and budget > 0:
+            if entry and autonomy_lv >= 5:
+                from api_server.lv5_dsl import apply_dsl, get_cached_dsl
+                import datetime as _dt_dsl
+                _thr_dsl, _pct_dsl, _skip_dsl, _reason_dsl = apply_dsl(
+                    get_cached_dsl(agent_id), entry["symbol"], threshold, position_pct,
+                    hour=_dt_dsl.datetime.now().hour, vix=_market_ctx.get("vix"),
+                    days_to_earnings=_market_ctx.get("earnings_days", {}).get(entry["symbol"]),
+                )
+                if _skip_dsl:
+                    actions.append(_reason_dsl); entry = None
+                else:
+                    position_pct = _pct_dsl
+            if entry and entry["symbol"] not in held_syms and budget > 0 and not lv5_pause:
                 qty = int(daytrade_logic.position_size(budget, position_pct, 1.0, entry["entry"] or 0))
                 if qty > 0:
                     try:
@@ -1068,11 +1136,16 @@ def daytrade_tick(agent_id: str, cycle: int = 0) -> dict:
     note_bits = actions if actions else ["실행 없음 — 조건 미충족"]
     payload = {
         "cycle": cycle, "decision": decision, "symbol": top_sym,
-        "score": top_score, "max_score": 100,
+        "score": top_score, "max_score": 100, "best_score": top_score,
         "action": "; ".join(actions) if actions else "none",
-        "next_trigger": f"conviction ≥ {threshold} 신호",
-        "cash_pct": None, "note": " | ".join(note_bits)[:300],
-        "fill": fill, "markets": {"US": None, "KR": None},
+        "next_trigger": f"conviction ≥ {threshold:.0f} 신호",
+        "cash_pct": None, "note": " | ".join(note_bits)[:400],
+        "fill": fill, "fill_symbol": fill_symbol, "markets": {"US": None, "KR": None},
+        "lv5_threshold": threshold if autonomy_lv >= 5 else None,
+        "lv5_note": lv5_state.get("lv5_note"),
+        "lv5_agent_note": lv5_agent_note or None,
+        "lv5_win_rate": lv5_state.get("win_rate"),
+        "lv5_n_trades": lv5_state.get("n_trades"),
     }
     agent_store.record_cycle(agent_id, payload)
     return {"agent_id": agent_id, "venue": venue, "decision": decision,
@@ -1296,8 +1369,8 @@ def account_balances() -> dict:
     except Exception as e:
         out["venues"]["hl"] = {"error": str(e)[:120]}
 
-    # Allocated to agents, split by venue (type → venue).
-    us = hl_paper = hl_live = 0.0
+    # Allocated to agents, split by venue (type/market → venue).
+    us = kr = hl_paper = hl_live = 0.0
     for a in agent_store.list_agents():
         alloc = float(a["account_alloc"])
         if a["type"] == "hl_daytrade":
@@ -1305,10 +1378,13 @@ def account_balances() -> dict:
                 hl_paper += alloc
             else:
                 hl_live += alloc
-        else:  # swing / daytrade → Alpaca (US)
+        elif a.get("market") == "KR":
+            kr += alloc  # kr_macro → KIS, not Alpaca
+        else:  # swing / autonomous → Alpaca (US)
             us += alloc
     out["allocated"] = {
         "us_alpaca": round(us, 2),
+        "kr_kis": round(kr, 2),
         "hl_testnet": round(hl_paper, 2),
         "hl_mainnet": round(hl_live, 2),
     }
@@ -1328,7 +1404,7 @@ def account_balances() -> dict:
          "allocated": round(us, 2), "error": ven.get("alpaca", {}).get("error")},
         {"venue": "kis_mock", "label": "한투 · 모의(한국주식)", "ccy": "KRW",
          "mode": "paper", "balance": _num(ven.get("kis_mock", {}), "net_asset"),
-         "allocated": 0.0, "error": ven.get("kis_mock", {}).get("error")},
+         "allocated": round(kr, 2), "error": ven.get("kis_mock", {}).get("error")},
         {"venue": "kis_live", "label": "한투 · 실계좌(한국주식)", "ccy": "KRW",
          "mode": "live", "balance": _num(ven.get("kis_live", {}), "net_asset"),
          "allocated": 0.0, "error": ven.get("kis_live", {}).get("error")},

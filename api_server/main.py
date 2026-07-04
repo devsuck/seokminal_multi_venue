@@ -4841,6 +4841,10 @@ app.include_router(research_router)
 from api_server.lab_api import router as lab_router
 app.include_router(lab_router)
 
+# ── Living Knowledge Graph (AI 인프라 공급망 그래프) ────────────────────────────
+from api_server.graph_api import router as graph_router
+app.include_router(graph_router)
+
 
 @app.on_event("startup")
 async def _start_dart_bot() -> None:
@@ -4853,6 +4857,21 @@ async def _start_dart_bot() -> None:
         SERVICE.start()
     except Exception:  # noqa: BLE001
         pass
+    # Living Knowledge Graph 6h 자동 업데이트 스케줄러.
+    import asyncio
+    async def _lkg_scheduler() -> None:
+        import os as _os
+        from api_server.graph_api import run_ai_update
+        await asyncio.sleep(60)  # 서버 완전 기동 후 1분 대기
+        while True:
+            try:
+                key = _os.environ.get("FINNHUB_API_KEY", "")
+                if key:
+                    run_ai_update(key)
+            except Exception:  # noqa: BLE001
+                pass
+            await asyncio.sleep(6 * 3600)  # 6시간 주기
+    asyncio.create_task(_lkg_scheduler())
 
 
 # ── Market Overview ───────────────────────────────────────────────────────────

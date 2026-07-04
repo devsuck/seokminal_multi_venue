@@ -82,6 +82,40 @@ SEED_QUEUE: list[Hypothesis] = [
         cost_bps=5.0, data_mode="synthetic_demo",
         n_trades=90, holding=[3], edge_bps=12.0, seed=305,
     ),
+    # ── 새 데이터 소스 활용 가설 ──────────────────────────────────────────
+    Hypothesis(
+        id="us_congress_buy_drift_v1",
+        name="US 의회 매수 공시 drift",
+        family="event", market="US",
+        thesis="상·하원의원 오픈마켓 매수(PTR 공시) D+1 진입 20일 보유. "
+               "정보 우위(내부 정책 정보) + 신뢰 신호. Senate EFD 무료 데이터 사용.",
+        kill="random baseline p≥0.1 or WF 불일관 or 공시일 후 20일 미경과 이벤트 과다.",
+        entry="공시일 D+1 시가", hold="20d",
+        universe="US 전종목 (Senate EFD PTR, $1k+ 거래)",
+        cost_bps=5.0, data_mode="blocked",
+    ),
+    Hypothesis(
+        id="kr_nps_acquisition_drift_v1",
+        name="KR 국민연금 대량취득 drift",
+        family="event", market="KR",
+        thesis="국민연금 대량보유상황보고서 취득 공시 D+1 진입 20일 보유. "
+               "국민연금 = 가장 큰 기관 수요자, 취득 = 중장기 보유 의도. DART 지분공시(D) 무료.",
+        kill="DART 문서 파싱 실패 or random p≥0.1 or 지분율 변동 1% 미만 이벤트 희소.",
+        entry="공시일 D+1 시가", hold="20d",
+        universe="KR 전종목 (DART 지분공시 국민연금 취득)",
+        cost_bps=40.0, data_mode="blocked",
+    ),
+    Hypothesis(
+        id="pairs_statarb_v1",
+        name="페어트레이딩 stat-arb",
+        family="factor", market="US",
+        thesis="동일섹터 ETF 쌍 공적분 z-score 2σ 진입 0.5σ 청산. 시장중립.",
+        kill="EG 공적분 p≥0.05 or IS Sharpe<0.5 or OOS 붕괴 — 검증 결과: REJECT "
+             "(12쌍 전부 공적분 없음, IS 과적합, OOS 붕괴).",
+        entry="z>2σ 시가", hold="half-life까지",
+        universe="US ETF 동일섹터 쌍 12개",
+        cost_bps=10.0, data_mode="blocked",
+    ),
 ]
 
 

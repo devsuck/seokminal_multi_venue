@@ -38,17 +38,27 @@ def autopilot(req: AutopilotReq) -> dict:
     return ENGINE.set_autopilot(req.on)
 
 
+_jarvis_cache: dict = {"ts": 0.0, "data": None}
+_jarvis_detail_cache: dict = {"ts": 0.0, "data": None}
+_JARVIS_TTL = 10.0  # 10초 TTL — 5초 폴링 대비 충분
+
+
 @router.get("/jarvis")
 def jarvis_status() -> dict:
     """Jarvis Quant OS 거버넌스 상태 — 자율레벨·live 차단·전략 생애주기 요약."""
+    import time
+    if _jarvis_cache["data"] is not None and time.time() - _jarvis_cache["ts"] < _JARVIS_TTL:
+        return _jarvis_cache["data"]
     import jarvis
     from jarvis.registry import StrategyRegistry
-    reg = StrategyRegistry()
-    rows = reg.all_current()
+    rows = StrategyRegistry().all_current()
     counts: dict = {}
     for r in rows:
         counts[r["status"]] = counts.get(r["status"], 0) + 1
-    return {**jarvis.status(), "registry_counts": counts, "registry_total": len(rows)}
+    result = {**jarvis.status(), "registry_counts": counts, "registry_total": len(rows)}
+    _jarvis_cache["data"] = result
+    _jarvis_cache["ts"] = time.time()
+    return result
 
 
 _tasks_cache: dict = {"ts": 0.0, "data": None}
@@ -374,17 +384,22 @@ def execution_edge() -> dict:
 @router.get("/jarvis/detail")
 def jarvis_detail(audit_n: int = 40) -> dict:
     """생애주기 전략 목록 + forward 배포 + 감사 로그 tail(파이프라인 시각화용)."""
-    import jarvis
+    import time
+    if _jarvis_detail_cache["data"] is not None and time.time() - _jarvis_detail_cache["ts"] < _JARVIS_TTL:
+        return _jarvis_detail_cache["data"]
     from jarvis.audit import tail
     from jarvis.paper.deploy import all_deployments
     from jarvis.registry import StrategyRegistry
     rows = StrategyRegistry().all_current()
-    return {
+    result = {
         "strategies": [{"strategy_id": r["strategy_id"], "status": r["status"],
                         "frozen": r.get("frozen", False), "flags": r.get("flags", [])} for r in rows],
         "deployments": all_deployments(),
         "audit": tail(audit_n),
     }
+    _jarvis_detail_cache["data"] = result
+    _jarvis_detail_cache["ts"] = time.time()
+    return result
 
 
 # ── Auto-Research (karpathy/autoresearch 정직 이식: 배치 BH-FDR 게이트) ──
@@ -431,3 +446,87 @@ def buyback_analysis() -> dict:
 
     _threading.Thread(target=_bg, daemon=True).start()
     return {"pending": True, "losers": [], "exit_sim": {}, "note": "계산 시작… 잠시 후 새로고침(가격 시리즈 빌드 ~80s)"}
+
+
+class PromotePaperReq(BaseModel):
+    cid: str           # AutoResearch cid (e.g. "fac_kr_size_smb")
+    name: str = ""     # 선택: 표시명 (없으면 cid 사용)
+
+
+@router.post("/registry/promote-paper")
+def promote_to_paper(req: PromotePaperReq) -> dict:
+    """AutoResearch CANDIDATE → StrategyRegistry paper_candidate + forward 배선.
+
+    단계: DRAFT → DATA_AUDIT_PASSED → BACKTESTED → WATCHLIST → PAPER_CANDIDATE → PAPER_ACTIVE
+    BH-FDR + redteam 이미 통과한 CANDIDATE만 허용. 중복 등록 시 현 상태 반환.
+    """
+    try:
+        from research.autoresearch.engine import load_status as load_results
+        from jarvis.registry import StrategyRegistry, Status
+        from jarvis.paper.deploy import deploy as paper_deploy
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"의존 모듈 로드 실패: {e}")
+
+    # ── 1. AutoResearch leaderboard에서 CANDIDATE 확인 ──
+    try:
+        ar = load_results()
+        leaderboard = ar.get("leaderboard", [])
+    except Exception:
+        leaderboard = []
+
+    entry = next((e for e in leaderboard if e.get("cid") == req.cid), None)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"{req.cid!r}: AutoResearch leaderboard에 없음")
+    if entry.get("verdict") != "CANDIDATE":
+        raise HTTPException(
+            status_code=400,
+            detail=f"{req.cid!r}: CANDIDATE가 아님 (verdict={entry.get('verdict')!r}). 페이퍼 승격 불가.",
+        )
+
+    # ── 2. StrategyRegistry 등록 / 이미 있으면 현 상태 확인 ──
+    reg = StrategyRegistry()
+    sid = req.cid
+    name = req.name or req.cid
+    config = {
+        "cid": sid, "category": entry.get("category", ""), "thesis": entry.get("thesis", ""),
+        "net": entry.get("net"), "p": entry.get("p"), "percentile": entry.get("percentile"),
+        "bh_survivor": entry.get("bh_survivor"), "redteam": entry.get("redteam"),
+    }
+
+    st = reg.state(sid)
+    if st is not None:
+        cur = st["status"]
+        if cur in (Status.PAPER_CANDIDATE.value, Status.PAPER_CANDIDATE_FWD.value,
+                   Status.PAPER_ACTIVE.value):
+            dep = paper_deploy(sid) if cur == Status.PAPER_CANDIDATE.value else {"deployed": False, "reason": f"already_{cur}"}
+            return {"strategy_id": sid, "status": cur, "already_existed": True, "deployment": dep}
+        if cur in (Status.REJECTED.value, Status.RETIRED.value):
+            raise HTTPException(status_code=400, detail=f"{sid!r}: {cur} 상태 — 재등록/부활 불가")
+        # 중간 단계 → 빠른 전이
+        transitions = []
+        for step, target in [
+            (Status.DRAFT.value, Status.DATA_AUDIT_PASSED),
+            (Status.DATA_AUDIT_PASSED.value, Status.BACKTESTED),
+            (Status.BACKTESTED.value, Status.WATCHLIST),
+            (Status.WATCHLIST.value, Status.PAPER_CANDIDATE),
+        ]:
+            if reg.state(sid)["status"] == step:
+                reg.transition(sid, target, "autoresearch CANDIDATE promote",
+                               evidence=config, data_version="autoresearch_bh_fdr",
+                               config=config if target == Status.PAPER_CANDIDATE else None)
+                transitions.append(target.value)
+    else:
+        # 신규 등록 → 빠른 전이 체인
+        reg.register(sid, name=name, config=config, data_version="autoresearch_bh_fdr",
+                     asset_class="factor", family="autoresearch")
+        for target in [Status.DATA_AUDIT_PASSED, Status.BACKTESTED, Status.WATCHLIST, Status.PAPER_CANDIDATE]:
+            reg.transition(sid, target, "autoresearch CANDIDATE promote",
+                           evidence=config if target == Status.PAPER_CANDIDATE else None,
+                           config=config if target == Status.PAPER_CANDIDATE else None)
+
+    # ── 3. Forward 배선 (paper_candidate → paper_active) ──
+    dep = paper_deploy(sid)
+    return {
+        "strategy_id": sid, "name": name, "status": reg.state(sid)["status"],
+        "already_existed": st is not None, "deployment": dep,
+    }

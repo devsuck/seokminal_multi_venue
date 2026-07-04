@@ -83,14 +83,46 @@ def _fetch_quiverquant() -> list[dict]:
     return rows
 
 
-def pull_history(pages: int = 10) -> list[dict]:
-    """상·하원 BUY 이벤트 풀링. Quiver Quantitative 우선, FMP 보조."""
-    rows: list[dict] = _fetch_quiverquant()
+def _fetch_senate_efd() -> list[dict]:
+    """Senate EFD PTR 무료 스크래퍼 (senate_efd.py). 키 불필요."""
+    try:
+        from research.data.senate_efd import load_events as senate_load
+        efd_events = senate_load(min_date="2020-01-01")
+        return [
+            {
+                "chamber": "senate",
+                "trade_date": e.get("trade_date", ""),
+                "disclosure_date": e.get("disclosure_date", ""),
+                "reporter": e.get("reporter", ""),
+                "ticker": e.get("ticker", ""),
+                "trade_type": "BUY",
+                "amount_str": e.get("amount_str", ""),
+            }
+            for e in efd_events
+        ]
+    except Exception:
+        return []
 
-    if not rows:  # fallback: FMP stable latest (최근 200건)
-        key = _key()
-        for chamber, path in (("senate", "senate-latest"), ("house", "house-latest")):
-            rows.extend(_fetch_chamber_latest(chamber, path, key))
+
+def pull_history(pages: int = 10) -> list[dict]:
+    """상·하원 BUY 이벤트 풀링.
+    우선순위: Senate EFD(무료) → Quiver Quantitative → FMP 보조.
+    """
+    # 1순위: Senate EFD 무료 파싱
+    rows: list[dict] = _fetch_senate_efd()
+
+    # 2순위: Quiver Quantitative (무료 but 제한적)
+    if not rows:
+        rows = _fetch_quiverquant()
+
+    # 3순위: FMP (API 키 필요, 최근 200건만)
+    if not rows:
+        try:
+            key = _key()
+            for chamber, path in (("senate", "senate-latest"), ("house", "house-latest")):
+                rows.extend(_fetch_chamber_latest(chamber, path, key))
+        except Exception:
+            pass
 
     rows = [r for r in rows if r["trade_type"] == "BUY" and r["ticker"] and r["disclosure_date"]]
     rows.sort(key=lambda x: x["disclosure_date"], reverse=True)

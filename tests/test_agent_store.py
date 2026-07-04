@@ -116,7 +116,7 @@ def test_autonomy_defaults_and_persists(store):
 def test_autonomy_invalid_rejected(store):
     import pytest
     with pytest.raises(ValueError, match="autonomy"):
-        store.create_agent("X", "swing", 100.0, autonomy=5)
+        store.create_agent("X", "swing", 100.0, autonomy=6)  # 6 범위 초과
 
 
 def test_market_scope_defaults_and_persists(store):

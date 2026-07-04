@@ -38,31 +38,66 @@ AGENT_PROFILES: dict[str, dict] = {
         "universe_size": 15,
         "buy_score_threshold": 22,
         "force_eod_close": True,
-        "tp_pct": 0.04,   # +4% take-profit
-        "sl_pct": 0.02,   # -2% stop-loss (tight for intraday)
+        "tp_pct": 0.04,
+        "sl_pct": 0.02,
+        "lv5_agentic": True,  # autonomy≥5: Claude CLI 에이전틱 자가학습 루프 활성
     },
     "kr_daytrade": {
         "label": "데이트레이딩 (한국주식)",
         "venue": "KR",
         "cadence_seconds": 5 * 60,
-        "buy_score_threshold": 55,   # intraday conviction 0~100
+        "buy_score_threshold": 55,
         "position_pct": 0.10,
-        "force_eod_close": True,      # 장 마감 전 청산
-        "paper": True,               # KIS 모의
+        "force_eod_close": True,
+        "paper": True,
         "tp_pct": 0.03,
         "sl_pct": 0.02,
+        "lv5_agentic": True,
     },
     "hl_daytrade": {
         "label": "데이트레이딩 (Hyperliquid 무기한)",
         "venue": "HL",
         "cadence_seconds": 5 * 60,
-        "buy_score_threshold": 55,   # intraday conviction 0~100
-        "leverage": 3,               # default leverage multiplier
-        "position_pct": 0.10,        # equity fraction per position (pre-leverage)
-        "force_eod_close": False,    # crypto trades 24/7 — no enforced EOD flat
-        "paper": True,               # testnet paper trading
-        "tp_pct": 0.05,   # leverage-adjusted move (5% of price)
+        "buy_score_threshold": 55,
+        "leverage": 3,
+        "position_pct": 0.10,
+        "force_eod_close": False,
+        "paper": True,
+        "tp_pct": 0.05,
         "sl_pct": 0.03,
+        "lv5_agentic": True,
+    },
+    "autonomous": {
+        # Lv5 자율형 학습 AI — 뉴스·공시·전 기능을 활용해 스스로 전략을 생성·학습.
+        # 실 집행 없음(paper=True), 손실 허용 샌드박스.
+        "label": "자율형 학습 AI",
+        "cadence_seconds": 4 * 3600,      # 4시간 주기 탐색·재학습
+        "universe_size": 30,
+        "buy_score_threshold": 60,
+        "force_eod_close": False,
+        "paper": True,
+        "autonomy": 5,
+        "use_news": True,            # 시장 뉴스 피드 활성화
+        "use_disclosures": True,     # KR+US 공시 분석
+        "use_ml_self_learn": True,   # 자체 ML 전략 생성·검증 루프
+        "venue": "US",
+    },
+    "kr_macro": {
+        # Lv5 KR 거시 전략 AI — 한국 정부 정책·거시 데이터 분석.
+        # Situation → Impact → Portfolio 3단계 방법론.
+        "label": "KR 거시 전략 AI",
+        "cadence_seconds": 24 * 3600,     # 1일 주기 거시 리뷰
+        "universe_size": 20,
+        "buy_score_threshold": 55,
+        "force_eod_close": False,
+        "paper": True,
+        "autonomy": 5,
+        "venue": "KR",
+        "use_news": True,
+        "use_disclosures": True,
+        "methodology": "situation_impact_portfolio",  # KR macro 3단계
+        "focus": ["AI_basic_act", "low_birth_rate", "semiconductor_infra", "geopolitics"],
+        "human_in_loop": True,       # 최종 투자는 사람 결정 명시
     },
 }
 
@@ -116,8 +151,8 @@ def create_agent(name: str, agent_type: str, account_alloc: float,
                  paper: bool = True, autonomy: int = 2, market: str = "US") -> dict:
     if agent_type not in AGENT_PROFILES:
         raise ValueError(f"unknown agent type: {agent_type!r}")
-    if autonomy not in (1, 2, 3):
-        raise ValueError(f"autonomy must be 1, 2, or 3, got {autonomy}")
+    if autonomy not in (1, 2, 3, 4, 5):
+        raise ValueError(f"autonomy must be 1–5, got {autonomy}")
     if market not in ("US", "KR", "MIXED"):
         raise ValueError(f"market must be US, KR, or MIXED, got {market!r}")
     agent = {

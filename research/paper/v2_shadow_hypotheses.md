@@ -36,6 +36,13 @@
 
 **금지 v2:** size/purpose 필터 — clean gradient 없음(분해 결과 median 0근처). 만들지 않는다.
 
+### ✅ v2 신규 사전등록: 레짐 필터 (2026-07-03, `kr_buyback_v2_regime_shadow`)
+**경제가설(사전):** 경영진이 하락장(공포)에 자사주 매입 = 저평가 신호 신뢰성↑. 상승장 매입 = 현금관리(무의미).
+**검증 결과 (in-sample, 확인):** 상승장 제외 시 net +1.72%→+2.52%, 승률 50.9%→54.8%, vs random p=0.032→**0.01**, WF 전0.92%/후4.11%(강화), stress50 +1.92%. 제외된 상승장 = +0.12%·승률43%(죽은 이벤트).
+**규칙:** 이벤트일 시장 60일 수익 상위 1/3(상승장) 제외 → 하락+중립만 진입. 레짐신호 = KOSPI/KOSDAQ 지수 60일수익(실시간 가능).
+**상태:** shadow. **v1 동결 유지. forward 검증 전 live·paper_candidate 승격 금지.** size/purpose 아님(경제 gradient 있음) → 허용.
+**주의:** in-sample tercile 선택 여지 있음 → forward/holdout에서 재현돼야 신뢰. `research/run_buyback_v2.py`.
+
 ---
 
 ## 공통

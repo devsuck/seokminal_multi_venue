@@ -31,7 +31,7 @@ SERIES_CATALOG: dict[str, dict] = {
                         "stat_code": "731Y004", "item_code": "0000002", "cycle": "M"},
     # ── 통화 ──────────────────────────────────────────────────────
     "M2":              {"label": "M2 (평잔, 원계열)",   "unit": "10억원","category": "macro",
-                        "stat_code": "101Y004", "item_code": "BBKA00",  "cycle": "M"},
+                        "stat_code": "161Y006", "item_code": "BBHA00",  "cycle": "M"},
     # ── 주가 ──────────────────────────────────────────────────────
     "KOSPI":           {"label": "KOSPI 종가",          "unit": "pts", "category": "market",
                         "stat_code": "901Y014", "item_code": "1070000", "cycle": "M"},
@@ -39,9 +39,9 @@ SERIES_CATALOG: dict[str, dict] = {
                         "stat_code": "901Y014", "item_code": "2070000", "cycle": "M"},
     # ── 무역 ──────────────────────────────────────────────────────
     "EXPORT_IDX":      {"label": "수출금액지수",        "unit": "idx", "category": "trade",
-                        "stat_code": "403Y001", "item_code": "I",       "cycle": "M"},
+                        "stat_code": "403Y001", "item_code": "*AA",     "cycle": "M"},
     "IMPORT_IDX":      {"label": "수입금액지수",        "unit": "idx", "category": "trade",
-                        "stat_code": "403Y003", "item_code": "I",       "cycle": "M"},
+                        "stat_code": "403Y003", "item_code": "*AA",     "cycle": "M"},
 }
 
 

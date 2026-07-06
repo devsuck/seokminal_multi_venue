@@ -2,7 +2,7 @@ import asyncio
 import time
 
 from ib_async import IB
-from ib_async.contract import Stock
+from ib_async.contract import Option, Stock
 from ib_async.order import UNSET_DOUBLE, LimitOrder, MarketOrder, Trade
 
 
@@ -33,6 +33,41 @@ class IBOrderClient:
         ``avg_fill_price`` — needed for accurate live P&L on market orders."""
         await self._ensure_connected()
         contract = Stock(symbol, "SMART", "USD")
+        await self._ib.qualifyContractsAsync(contract)
+
+        if order_type == "LIMIT":
+            order = LimitOrder(side, quantity, limit_price)
+        else:
+            order = MarketOrder(side, quantity)
+
+        trade = self._ib.placeOrder(contract, order)
+        if wait_fill:
+            await self._await_fill(trade)
+        return self._to_dict(trade)
+
+    async def place_option_order(
+        self,
+        symbol: str,
+        expiry: str,
+        strike: float,
+        right: str,
+        side: str,
+        quantity: int,
+        order_type: str,
+        limit_price: float | None = None,
+        wait_fill: bool = False,
+    ) -> dict:
+        """Place a single-leg option order. ``quantity`` is contract count
+        (1 contract = 100 shares of the underlying)."""
+        await self._ensure_connected()
+        contract = Option(
+            symbol=symbol,
+            lastTradeDateOrContractMonth=expiry,
+            strike=strike,
+            right=right,
+            exchange="SMART",
+            currency="USD",
+        )
         await self._ib.qualifyContractsAsync(contract)
 
         if order_type == "LIMIT":

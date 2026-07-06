@@ -540,8 +540,11 @@ class AgentCreate(BaseModel):
     type: str            # "swing" | "daytrade" | "hl_daytrade"
     account_alloc: float = 100000.0
     paper: bool = True   # False = live (real money / mainnet)
-    autonomy: int = 2    # 1=fixed rules, 2=AI strategist (backtest-validated), 3=full autonomy
+    autonomy: int = 2    # 1=조건식(Lv1, 백테스트 승격 전용) / 2=AI 전략가(구Lv2·3·4 통합) / 3=자가학습(구Lv5)
     market: str = "US"   # US | KR | MIXED (swing scope)
+    condition: dict | None = None       # Lv1 전용: 백테스트에서 검증한 rule 1개 (buildSpawnRules 포맷)
+    instrument_id: str | None = None    # Lv1 전용: condition과 함께 지정 (예: "005930.XKRX")
+    option: dict | None = None          # option_lv1 전용: {expiry, strike, right, contracts}
 
 
 class CyclePayload(BaseModel):
@@ -582,7 +585,8 @@ def list_agents() -> dict:
 @agents_router.post("")
 def create_agent(body: AgentCreate) -> dict:
     try:
-        return agent_store.create_agent(body.name, body.type, body.account_alloc, body.paper, body.autonomy, body.market)
+        return agent_store.create_agent(body.name, body.type, body.account_alloc, body.paper, body.autonomy,
+                                         body.market, body.condition, body.instrument_id, body.option)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -735,6 +739,40 @@ def agent_performance(agent_id: str) -> dict:
     }
 
 
+# ── God Mode 승급 (Lv3 자가학습 → live, 3조건 심사 + 사람 확인) ──────────────
+
+from api_server import god_mode as _god_mode
+
+
+@agents_router.get("/{agent_id}/god-mode/eligibility")
+def god_mode_eligibility(agent_id: str) -> dict:
+    """3조건 심사 결과 조회 — 버튼 활성화 여부 판단용. 승급은 아직 하지 않음."""
+    try:
+        return _god_mode.evaluate(agent_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@agents_router.post("/{agent_id}/god-mode/promote")
+def god_mode_promote(agent_id: str) -> dict:
+    """God Mode 승급 실행 — 서버가 3조건을 재검증한 뒤에만 paper→live 전환.
+
+    프론트에서 이미 eligibility로 확인했더라도 여기서 다시 검증한다(클라이언트를
+    신뢰하지 않음). 이 호출 자체가 "사람의 최종 확인 클릭"이다 — 자동 승급 없음.
+    """
+    try:
+        check = _god_mode.evaluate(agent_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not check["eligible"]:
+        raise HTTPException(status_code=403, detail={"message": "3조건 미충족 — 승급 불가", **check})
+    try:
+        agent = agent_store.promote_to_god_mode(agent_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return agent
+
+
 # ── Intraday (day-trading) scoring ────────────────────────────────────────────
 
 from api_server import intraday_score as _intraday
@@ -839,6 +877,23 @@ def _hl_funcs():
     return get_positions, place_order, close_position, set_leverage, get_candles
 
 
+# One tick per agent at a time. Without this, an overlapping trigger (external
+# scheduler retry, slow HL round-trip) reads the same stale position snapshot
+# twice and fires duplicate entry orders before either one's fill shows up in
+# get_positions().
+_tick_locks: dict[str, _threading.Lock] = {}
+_tick_locks_guard = _threading.Lock()
+
+
+def _lock_for_tick(agent_id: str) -> _threading.Lock:
+    with _tick_locks_guard:
+        lock = _tick_locks.get(agent_id)
+        if lock is None:
+            lock = _threading.Lock()
+            _tick_locks[agent_id] = lock
+        return lock
+
+
 @agents_router.post("/{agent_id}/daytrade-tick")
 def daytrade_tick(agent_id: str, cycle: int = 0) -> dict:
     """Run one deterministic day-trade cycle for an agent — no LLM.
@@ -848,6 +903,17 @@ def daytrade_tick(agent_id: str, cycle: int = 0) -> dict:
     records a structured cycle. The agent loop just calls this on a timer, so a
     quiet market costs zero tokens.
     """
+    lock = _lock_for_tick(agent_id)
+    if not lock.acquire(blocking=False):
+        return {"agent_id": agent_id, "venue": None, "decision": "SKIP",
+                "actions": ["이전 tick 진행 중 — 중복 실행 방지"], "scores_summary": {}}
+    try:
+        return _daytrade_tick_locked(agent_id, cycle)
+    finally:
+        lock.release()
+
+
+def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
     agent = agent_store.get_agent(agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail="agent not found")
@@ -876,11 +942,11 @@ def daytrade_tick(agent_id: str, cycle: int = 0) -> dict:
     _cycles = agent_store.read_cycles(agent_id, limit=1000)
     budget = max(alloc - agent_perf.compute_performance(_cycles).invested, 0.0)
 
-    # Lv5 자가학습: 이력 분석 → threshold/position_pct 자동 조정
+    # Lv3(구Lv5) 자가학습: 이력 분석 → threshold/position_pct 자동 조정
     lv5_state: dict = {}
     lv5_agent_note: str = ""
     _market_ctx: dict = {}
-    if autonomy_lv >= 5:
+    if autonomy_lv >= 3:
         lv5_state = compute_lv5_params(_cycles, threshold, position_pct)
         threshold = lv5_state["threshold"]
         position_pct = lv5_state["position_pct"]
@@ -945,7 +1011,7 @@ def daytrade_tick(agent_id: str, cycle: int = 0) -> dict:
         held_syms = {h["symbol"] for h in held}
         # entry
         entry = daytrade_logic.decide_entry(scores, threshold, allow_short=True)
-        if entry and autonomy_lv >= 5:
+        if entry and autonomy_lv >= 3:
             from api_server.lv5_dsl import apply_dsl, get_cached_dsl
             import datetime as _dt_dsl
             _thr_dsl, _pct_dsl, _skip_dsl, _reason_dsl = apply_dsl(
@@ -1005,7 +1071,7 @@ def daytrade_tick(agent_id: str, cycle: int = 0) -> dict:
                 actions.append(f"청산 {ex['symbol']} FAILED: {str(e)[:50]}")
         held_syms = {h["symbol"] for h in held}
         entry = daytrade_logic.decide_entry(scores, threshold, allow_short=False)  # KR 롱 온리
-        if entry and autonomy_lv >= 5:
+        if entry and autonomy_lv >= 3:
             from api_server.lv5_dsl import apply_dsl, get_cached_dsl
             import datetime as _dt_dsl
             _thr_dsl, _pct_dsl, _skip_dsl, _reason_dsl = apply_dsl(
@@ -1054,7 +1120,7 @@ def daytrade_tick(agent_id: str, cycle: int = 0) -> dict:
                     actions.append(f"close {ex['symbol']} FAILED: {e}")
             held_syms = {h["symbol"] for h in held}
             entry = daytrade_logic.decide_entry(scores, threshold, allow_short=False)
-            if entry and autonomy_lv >= 5:
+            if entry and autonomy_lv >= 3:
                 from api_server.lv5_dsl import apply_dsl, get_cached_dsl
                 import datetime as _dt_dsl
                 _thr_dsl, _pct_dsl, _skip_dsl, _reason_dsl = apply_dsl(
@@ -1141,7 +1207,7 @@ def daytrade_tick(agent_id: str, cycle: int = 0) -> dict:
         "next_trigger": f"conviction ≥ {threshold:.0f} 신호",
         "cash_pct": None, "note": " | ".join(note_bits)[:400],
         "fill": fill, "fill_symbol": fill_symbol, "markets": {"US": None, "KR": None},
-        "lv5_threshold": threshold if autonomy_lv >= 5 else None,
+        "lv5_threshold": threshold if autonomy_lv >= 3 else None,
         "lv5_note": lv5_state.get("lv5_note"),
         "lv5_agent_note": lv5_agent_note or None,
         "lv5_win_rate": lv5_state.get("win_rate"),
@@ -1150,6 +1216,160 @@ def daytrade_tick(agent_id: str, cycle: int = 0) -> dict:
     agent_store.record_cycle(agent_id, payload)
     return {"agent_id": agent_id, "venue": venue, "decision": decision,
             "actions": actions, "scores_summary": {k: v.get("signal") for k, v in scores.items()}}
+
+
+# ── Lv1 조건식 페이퍼 tick (백테스트 승격 전용, daily bar) ────────────────────
+
+from api_server import condition_tick as _condition_tick
+
+
+@agents_router.post("/{agent_id}/condition-tick")
+def condition_tick_endpoint(agent_id: str, cycle: int = 0) -> dict:
+    """Lv1 에이전트 1틱 — 백테스트에서 검증한 조건식을 daily bar로 그대로 평가.
+
+    daytrade_tick과 별도 경로: score-threshold가 아니라 condition_engine으로 게이트를
+    걸고, 게이트 통과 후엔 EMA fast/slow 크로스로 진입/청산한다(EMACrossFlat과 동일 의미론).
+    Lv1은 항상 paper — 실집행 없음.
+    """
+    agent = agent_store.get_agent(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="agent not found")
+    if int(agent.get("autonomy", 0)) != 1:
+        raise HTTPException(status_code=400, detail="condition-tick은 Lv1(autonomy=1) 전용")
+
+    result = _condition_tick.evaluate_agent(agent)
+    action = result["action"]
+    instrument_id = agent["instrument_id"]
+    profile = agent.get("profile", {})
+    position_pct = float(profile.get("position_pct", 0.10))
+
+    fill = None
+    note_bits = [result["note"]]
+
+    if action in ("BUY", "SELL"):
+        is_kr = instrument_id.endswith(".XKRX")
+        try:
+            if is_kr:
+                from backends.kis.order_client import KISOrderClient
+                kk = os.environ.get("KIS_MOCK_APP_KEY", "")
+                ks = os.environ.get("KIS_MOCK_APP_SECRET", "")
+                kc = os.environ.get("KIS_MOCK_CANO", "")
+                kis = KISOrderClient(kk, ks, kc, os.environ.get("KIS_ACNT_PRDT_CD", "01"), mock=True)
+                code = instrument_id.split(".")[0]
+                if action == "BUY":
+                    alloc = float(agent["account_alloc"])
+                    _cycles = agent_store.read_cycles(agent_id, limit=1000)
+                    budget = max(alloc - agent_perf.compute_performance(_cycles).invested, 0.0)
+                    qty = int(daytrade_logic.position_size(budget, position_pct, 1.0, result["price"]))
+                    if qty > 0:
+                        kis.place_order(code, "BUY", qty, "MARKET")
+                        fill = {"side": "buy", "qty": qty, "price": result["price"]}
+                        note_bits.append(f"매수 {code} {qty}주 @ {result['price']}")
+                else:
+                    qtyh = next((h["qty"] for h in kis.get_holdings() if h["code"] == code), 0)
+                    if qtyh > 0:
+                        kis.place_order(code, "SELL", int(qtyh), "MARKET")
+                        fill = {"side": "sell", "qty": qtyh, "price": result["price"]}
+                        note_bits.append(f"청산 {code} {qtyh}주 @ {result['price']}")
+            else:
+                from alpaca.trading.requests import MarketOrderRequest
+                from alpaca.trading.enums import OrderSide, TimeInForce
+                symbol = instrument_id.split(".")[0]
+                client = _trading_client(paper=True)
+                if action == "BUY":
+                    alloc = float(agent["account_alloc"])
+                    _cycles = agent_store.read_cycles(agent_id, limit=1000)
+                    budget = max(alloc - agent_perf.compute_performance(_cycles).invested, 0.0)
+                    qty = int(daytrade_logic.position_size(budget, position_pct, 1.0, result["price"]))
+                    if qty > 0:
+                        client.submit_order(MarketOrderRequest(symbol=symbol, qty=qty,
+                            side=OrderSide.BUY, time_in_force=TimeInForce.DAY))
+                        fill = {"side": "buy", "qty": qty, "price": result["price"]}
+                        note_bits.append(f"buy {symbol} {qty} @ {result['price']}")
+                else:
+                    client.close_position(symbol)
+                    fill = {"side": "sell", "qty": None, "price": result["price"]}
+                    note_bits.append(f"close {symbol}")
+        except Exception as e:
+            note_bits.append(f"{action} 실패: {str(e)[:80]}")
+            fill = None
+
+    agent_store.set_condition_state(agent_id, spawned=result["spawned"], position_state=result["position_state"])
+
+    # BUY/SELL은 실제 체결(fill)이 있어야 기록 — 주문 실패 시 SKIP으로 정직하게 남김.
+    decision = result["action"] if result["action"] not in ("BUY", "SELL") or fill else "SKIP"
+    payload = {
+        "cycle": cycle, "decision": decision, "symbol": instrument_id,
+        "score": None, "max_score": None, "best_score": None,
+        "action": "; ".join(note_bits), "next_trigger": "조건식 게이트 + EMA 크로스",
+        "cash_pct": None, "note": " | ".join(note_bits)[:400],
+        "fill": fill, "fill_symbol": instrument_id if fill else None,
+    }
+    agent_store.record_cycle(agent_id, payload)
+    return {"agent_id": agent_id, "decision": decision, "note": result["note"],
+            "spawned": result["spawned"], "position_state": result["position_state"]}
+
+
+@agents_router.post("/{agent_id}/option-condition-tick")
+async def option_condition_tick_endpoint(agent_id: str, cycle: int = 0) -> dict:
+    """option_lv1 에이전트 1틱 — condition_tick과 동일한 게이트+EMA 판단을 기초자산 daily
+    bar로 계산하되, 체결은 옵션 계약(콜/풋)으로 나간다. 항상 IB paper(7497) — 실집행 없음."""
+    agent = agent_store.get_agent(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="agent not found")
+    if agent.get("type") != "option_lv1":
+        raise HTTPException(status_code=400, detail="option-condition-tick은 option_lv1 전용")
+    if int(agent.get("autonomy", 0)) != 1:
+        raise HTTPException(status_code=400, detail="option-condition-tick은 Lv1(autonomy=1) 전용")
+
+    result = _condition_tick.evaluate_agent(agent)
+    action = result["action"]
+    instrument_id = agent["instrument_id"]
+    symbol = instrument_id.split(".")[0]
+    expiry = agent["option_expiry"]
+    strike = float(agent["option_strike"])
+    right = agent["option_right"]
+    contracts = int(agent["option_contracts"])
+
+    fill = None
+    note_bits = [result["note"]]
+
+    if action in ("BUY", "SELL"):
+        from api_server.main import _check_risk
+        from backends.ib.order_client import IBOrderClient
+
+        ib = IBOrderClient(host=os.environ.get("IB_HOST", "127.0.0.1"), port=7497,
+                            client_id=int(os.environ.get("IB_OPTION_ORDER_CLIENT_ID", "12")))
+        try:
+            _check_risk(side=action, quantity=contracts, price_estimate=None, option_expiry=expiry)
+            order_result = await ib.place_option_order(symbol, expiry, strike, right, action, contracts, "MARKET", None)
+            fill = {"side": action.lower(), "qty": contracts, "price": order_result.get("filled") or None}
+            note_bits.append(
+                f"{'매수' if action == 'BUY' else '청산'} {symbol} {expiry} {strike}{right} x{contracts}계약"
+            )
+        except HTTPException:
+            raise
+        except (ConnectionRefusedError, OSError) as exc:
+            note_bits.append(f"{action} 실패: IB TWS 연결 안됨 ({str(exc)[:60]})")
+        except Exception as e:
+            note_bits.append(f"{action} 실패: {str(e)[:80]}")
+        finally:
+            await ib.close()
+
+    agent_store.set_condition_state(agent_id, spawned=result["spawned"], position_state=result["position_state"])
+
+    decision = result["action"] if result["action"] not in ("BUY", "SELL") or fill else "SKIP"
+    option_label = f"{symbol} {expiry} {strike}{right}"
+    payload = {
+        "cycle": cycle, "decision": decision, "symbol": option_label,
+        "score": None, "max_score": None, "best_score": None,
+        "action": "; ".join(note_bits), "next_trigger": "조건식 게이트 + EMA 크로스 (옵션 체결)",
+        "cash_pct": None, "note": " | ".join(note_bits)[:400],
+        "fill": fill, "fill_symbol": option_label if fill else None,
+    }
+    agent_store.record_cycle(agent_id, payload)
+    return {"agent_id": agent_id, "decision": decision, "note": result["note"],
+            "spawned": result["spawned"], "position_state": result["position_state"]}
 
 
 # ── Strategy distillation (Lv3 자유탐색 → 검증된 규칙 전략) ────────────────────

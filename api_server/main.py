@@ -39,6 +39,7 @@ from live_engine.risk_guard import (
     DailyPnLTracker,
     RiskConfig,
     RiskViolation,
+    validate_option_expiry,
     validate_order,
 )
 from api_server.order_audit import read_recent as read_order_audit, record_order
@@ -1247,6 +1248,22 @@ def get_ecos_catalog() -> list[ECOSCatalogItem]:
     ]
 
 
+def _iso_to_ecos_period(iso_date: str, cycle: str) -> str:
+    """ISO 'YYYY-MM-DD' → ECOS StatisticSearch가 요구하는 주기별 포맷.
+
+    ECOS는 시리즈 주기(cycle: Y/Q/M/D)마다 다른 날짜 포맷을 요구한다(예: 월별은
+    'YYYYMM'). 프론트는 다른 시계열 API(FRED 등)와 동일하게 ISO 날짜만 알면 되도록
+    이 경계에서 변환한다."""
+    y, m, d = iso_date.split("-")
+    if cycle == "Y":
+        return y
+    if cycle == "Q":
+        return f"{y}Q{(int(m) - 1) // 3 + 1}"
+    if cycle == "D":
+        return f"{y}{m}{d}"
+    return f"{y}{m}"  # "M" (기본)
+
+
 @app.get("/ecos/series", response_model=ECOSSeriesResponse)
 def get_ecos_series(
     series_id: str = Query(...),
@@ -1258,7 +1275,10 @@ def get_ecos_series(
         raise HTTPException(status_code=404, detail=f"Unknown ECOS series: {series_id!r}")
     try:
         client = ECOSClient()
-        observations = client.get_series_by_id(series_id, start, end)
+        cycle = meta.get("cycle", "M")
+        observations = client.get_series_by_id(
+            series_id, _iso_to_ecos_period(start, cycle), _iso_to_ecos_period(end, cycle),
+        )
     except KeyError:
         raise HTTPException(status_code=500, detail="ECOS_API_KEY not set in .env")
     except Exception as exc:
@@ -2187,6 +2207,27 @@ def ai_strategy_recommend(
     )
 
 
+class NlConditionRequest(BaseModel):
+    text: str
+
+
+class NlConditionResponse(BaseModel):
+    combinator: str
+    comparisons: list[dict]
+    fast: int
+    slow: int
+
+
+@app.post("/ai/nl-to-condition", response_model=NlConditionResponse)
+def ai_nl_to_condition(body: NlConditionRequest) -> NlConditionResponse:
+    from ai_strategy.condition_advisor import nl_to_condition
+    try:
+        result = nl_to_condition(body.text)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"조건식 변환 실패: {exc}") from exc
+    return NlConditionResponse(**result)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Crypto Analytics (Hyperliquid)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2949,6 +2990,25 @@ class USOrderResponse(BaseModel):
     remaining: float
 
 
+class OptionOrderRequest(BaseModel):
+    symbol: str           # 기초자산 ticker, e.g. "AAPL"
+    expiry: str            # YYYYMMDD
+    strike: float
+    right: Literal["C", "P"]
+    side: str              # "BUY" | "SELL"
+    quantity: int = Field(gt=0)  # 계약 수 (1계약=기초자산 100주)
+    order_type: str        # "MARKET" | "LIMIT"
+    limit_price: float | None = None  # required for LIMIT
+    paper: bool = True     # True=IB paper(7497), False=IB live(7496) — 옵션은 항상 IB
+
+
+class OptionOrderResponse(BaseModel):
+    order_id: int
+    status: str
+    filled: float
+    remaining: float
+
+
 class BotLiveEntry(BaseModel):
     bot_id: str
     name: str
@@ -2974,13 +3034,15 @@ daily_pnl_tracker = DailyPnLTracker()
 
 def _check_risk(
     *, side: str, quantity: float, price_estimate: float | None,
-    current_position_qty: int = 0,
+    current_position_qty: int = 0, option_expiry: str | None = None,
 ) -> None:
     """Run the pre-trade risk guard; translate a violation into HTTP 422.
 
     Re-reads RiskConfig from env each call so limit changes (incl. the kill
-    switch) take effect without a restart.
+    switch) take effect without a restart. ``option_expiry`` (YYYYMMDD) is
+    only passed by the options order path and gates on MIN_OPTION_DTE.
     """
+    cfg = RiskConfig.from_env()
     try:
         validate_order(
             side=side,
@@ -2988,8 +3050,10 @@ def _check_risk(
             price_estimate=price_estimate,
             current_position_qty=current_position_qty,
             day_realized_pnl=daily_pnl_tracker.realized(),
-            config=RiskConfig.from_env(),
+            config=cfg,
         )
+        if option_expiry is not None:
+            validate_option_expiry(option_expiry, cfg)
     except RiskViolation as exc:
         raise HTTPException(status_code=422, detail=f"risk check failed: {exc}") from exc
 
@@ -3022,6 +3086,7 @@ def get_trading_mode() -> dict:
             "max_position_qty": cfg.max_position_qty,
             "daily_loss_limit": cfg.daily_loss_limit,
             "kill_switch": cfg.kill_switch,
+            "min_option_dte": cfg.min_option_dte,
         },
         "any_live": "live" in (ib_mode, kr_mode, alpaca_mode),
     }
@@ -3189,6 +3254,81 @@ async def get_us_order_status(order_id: int) -> USOrderResponse:
         if result is None:
             raise HTTPException(status_code=404, detail=f"IB order {order_id!r} not found")
         return USOrderResponse(**result)
+    except HTTPException:
+        raise
+    except (ConnectionRefusedError, OSError) as exc:
+        raise HTTPException(status_code=503, detail="IB TWS not reachable") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        await ib_client.close()
+
+
+@app.post("/orders/options", response_model=OptionOrderResponse)
+async def place_option_order(req: OptionOrderRequest) -> OptionOrderResponse:
+    if req.side not in ("BUY", "SELL"):
+        raise HTTPException(status_code=400, detail=f"invalid side: {req.side!r}")
+    if req.order_type not in ("MARKET", "LIMIT"):
+        raise HTTPException(status_code=400, detail=f"invalid order_type: {req.order_type!r}")
+    if req.order_type == "LIMIT" and req.limit_price is None:
+        raise HTTPException(status_code=400, detail="limit_price required for LIMIT order")
+    # 1계약=기초자산 100주 → 리스크 한도(달러 기준)는 계약당 프리미엄*100으로 환산.
+    price_estimate = req.limit_price * 100 if req.limit_price is not None else None
+    _check_risk(side=req.side, quantity=req.quantity, price_estimate=price_estimate,
+                option_expiry=req.expiry)
+
+    ib_client = IBOrderClient(
+        host=os.environ.get("IB_HOST", "127.0.0.1"),
+        port=7497 if req.paper else 7496,
+        client_id=int(os.environ.get("IB_OPTION_ORDER_CLIENT_ID", "12")),
+    )
+    try:
+        result = await ib_client.place_option_order(
+            req.symbol, req.expiry, req.strike, req.right,
+            req.side, req.quantity, req.order_type, req.limit_price,
+        )
+        record_order(venue="US_OPTIONS", request=req.model_dump(), result=result, status="submitted")
+        return OptionOrderResponse(**result)
+    except (ConnectionRefusedError, OSError) as exc:
+        record_order(venue="US_OPTIONS", request=req.model_dump(), result=None, status="error")
+        raise HTTPException(status_code=503, detail="IB TWS not reachable") from exc
+    except Exception as exc:
+        record_order(venue="US_OPTIONS", request=req.model_dump(), result=None, status="error")
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        await ib_client.close()
+
+
+@app.post("/orders/options/{order_id}/cancel", response_model=OptionOrderResponse)
+async def cancel_option_order(order_id: int) -> OptionOrderResponse:
+    ib_client = IBOrderClient(
+        host=os.environ.get("IB_HOST", "127.0.0.1"),
+        port=int(os.environ.get("IB_PORT", "7497")),
+        client_id=int(os.environ.get("IB_OPTION_ORDER_CLIENT_ID", "12")),
+    )
+    try:
+        result = await ib_client.cancel_order(order_id)
+        return OptionOrderResponse(**result)
+    except (ConnectionRefusedError, OSError) as exc:
+        raise HTTPException(status_code=503, detail="IB TWS not reachable") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        await ib_client.close()
+
+
+@app.get("/orders/options/{order_id}/status", response_model=OptionOrderResponse)
+async def get_option_order_status(order_id: int) -> OptionOrderResponse:
+    ib_client = IBOrderClient(
+        host=os.environ.get("IB_HOST", "127.0.0.1"),
+        port=int(os.environ.get("IB_PORT", "7497")),
+        client_id=int(os.environ.get("IB_OPTION_ORDER_CLIENT_ID", "12")),
+    )
+    try:
+        result = await ib_client.get_order_status(order_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail=f"IB order {order_id!r} not found")
+        return OptionOrderResponse(**result)
     except HTTPException:
         raise
     except (ConnectionRefusedError, OSError) as exc:
@@ -4858,16 +4998,24 @@ async def _start_dart_bot() -> None:
     except Exception:  # noqa: BLE001
         pass
     # Living Knowledge Graph 6h 자동 업데이트 스케줄러.
+    # 토요일·일요일 낮은 미국/한국 증시 휴장이라 스킵. 단 일요일 저녁(KST)은
+    # 월요일 개장 전 주말 사이 이벤트를 한 번 훑어야 하므로 실행.
     import asyncio
     async def _lkg_scheduler() -> None:
         import os as _os
+        from datetime import datetime, timedelta, timezone
         from api_server.graph_api import run_ai_update
+        KST = timezone(timedelta(hours=9))
         await asyncio.sleep(60)  # 서버 완전 기동 후 1분 대기
         while True:
             try:
-                key = _os.environ.get("FINNHUB_API_KEY", "")
-                if key:
-                    run_ai_update(key)
+                now = datetime.now(KST)
+                wd = now.weekday()  # 0=월 ... 5=토 6=일
+                skip_weekend = wd == 5 or (wd == 6 and now.hour < 18)
+                if not skip_weekend:
+                    key = _os.environ.get("FINNHUB_API_KEY", "")
+                    if key:
+                        run_ai_update(key)
             except Exception:  # noqa: BLE001
                 pass
             await asyncio.sleep(6 * 3600)  # 6시간 주기

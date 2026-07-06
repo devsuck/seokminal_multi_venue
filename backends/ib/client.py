@@ -208,7 +208,10 @@ class IBClient:
             strikes = sorted(chain.strikes)
 
             # 현재 주가 근처 ±20% 행사가만 (체인 축소)
-            tickers = self._ib.reqTickers(stock)
+            try:
+                tickers = await asyncio.wait_for(self._ib.reqTickersAsync(stock), timeout=10.0)
+            except asyncio.TimeoutError:
+                tickers = []
             await asyncio.sleep(0.5)
             mid = None
             if tickers and tickers[0].marketPrice() > 0:
@@ -226,7 +229,17 @@ class IBClient:
                 ]
                 # 지연 스냅샷 요청 (15분 지연, OPRA 불필요)
                 self._ib.reqMarketDataType(3)  # 3 = delayed
-                tks = self._ib.reqTickers(*contracts)
+                try:
+                    contracts = await asyncio.wait_for(
+                        self._ib.qualifyContractsAsync(*contracts), timeout=10.0
+                    )
+                    contracts = [c for c in contracts if c is not None and c.conId]
+                except asyncio.TimeoutError:
+                    contracts = []
+                try:
+                    tks = await asyncio.wait_for(self._ib.reqTickersAsync(*contracts), timeout=15.0) if contracts else []
+                except asyncio.TimeoutError:
+                    tks = []
                 await asyncio.sleep(2.0)  # 데이터 수신 대기
 
                 rows = []
@@ -239,7 +252,7 @@ class IBClient:
                         "ask": tk.ask if tk.ask and tk.ask > 0 else None,
                         "last": tk.last if tk.last and tk.last > 0 else None,
                         "volume": int(tk.volume) if tk.volume and tk.volume > 0 else 0,
-                        "open_interest": int(tk.callOpenInterest if c.right == "C" else tk.putOpenInterest) if hasattr(tk, "callOpenInterest") else 0,
+                        "open_interest": int(oi) if hasattr(tk, "callOpenInterest") and (oi := (tk.callOpenInterest if c.right == "C" else tk.putOpenInterest)) and oi == oi else 0,
                         "iv": round(tk.modelGreeks.impliedVol, 4) if tk.modelGreeks and tk.modelGreeks.impliedVol else None,
                         "delta": round(tk.modelGreeks.delta, 4) if tk.modelGreeks and tk.modelGreeks.delta else None,
                     })

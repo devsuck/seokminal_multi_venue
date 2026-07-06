@@ -83,6 +83,8 @@ def _build_strategist_prompt(
     context_str: str,
     memory: str,
 ) -> str:
+    from api_server.lv5_learner import COST_PCT, _expectancy_stats
+
     n = len(outcomes)
     wins = sum(1 for o in outcomes if o["win"])
     win_rate = wins / n if n else 0
@@ -93,19 +95,33 @@ def _build_strategist_prompt(
         else:
             break
 
+    stats = _expectancy_stats(outcomes)
+    exp_line = (
+        f"기대값 {stats['expectancy']*100:+.2f}%/건 (raw {stats['expectancy_raw']*100:+.2f}%, "
+        f"비용 {COST_PCT*100:.1f}% 차감·shrinkage 적용, 라벨 {stats['n_ret']}건) · "
+        f"경로 MDD {stats['mdd']*100:.1f}%"
+        if stats["expectancy"] is not None else "기대값 계산 불가 (수익률 라벨 없음)"
+    )
+
     sym_stats: dict[str, dict] = {}
     for o in outcomes:
         s = o["symbol"]
         if s not in sym_stats:
-            sym_stats[s] = {"trades": 0, "wins": 0}
+            sym_stats[s] = {"trades": 0, "wins": 0, "rets": []}
         sym_stats[s]["trades"] += 1
         if o["win"]:
             sym_stats[s]["wins"] += 1
+        if o.get("net_ret") is not None:
+            sym_stats[s]["rets"].append(o["net_ret"] - COST_PCT)
 
     sym_lines = []
     for sym, st in sorted(sym_stats.items(), key=lambda x: -x[1]["trades"]):
         wr = st["wins"] / st["trades"]
-        sym_lines.append(f"  {sym}: {st['trades']}건 승률 {wr:.0%}")
+        if st["rets"]:
+            sym_exp = sum(st["rets"]) / len(st["rets"])
+            sym_lines.append(f"  {sym}: {st['trades']}건 기대값 {sym_exp*100:+.2f}%/건 (승률 {wr:.0%})")
+        else:
+            sym_lines.append(f"  {sym}: {st['trades']}건 (수익률 라벨 없음, 승률 {wr:.0%})")
     sym_block = "\n".join(sym_lines) if sym_lines else "  (데이터 없음)"
 
     cached = _get_cache(agent_id)
@@ -116,6 +132,9 @@ def _build_strategist_prompt(
     return f"""너는 자율 단타 트레이딩 전략가(Lv5 에이전틱 AI)다.
 아래 데이터를 바탕으로 전략 개선 제안을 작성해라.
 
+목표함수는 비용 차감 기대값(expectancy)과 드로다운이다. 승률이 아니다.
+승률 높아도 기대값 음수면 실패, 승률 낮아도 기대값 플러스면 성공이다.
+
 === 에이전트 상태 ===
 ID: {agent_id} | 거래소: {venue}
 현재 threshold: {active_thr} | position_pct: {active_pct}
@@ -125,17 +144,19 @@ ID: {agent_id} | 거래소: {venue}
 === 누적 메모리 (이전 리뷰들) ===
 {memory}
 
-=== 최근 {n}건 실적 (승률 {win_rate:.0%}) ===
-종목별:
+=== 최근 {n}건 실적 ===
+{exp_line}
+승률 {win_rate:.0%} (참고용) · 연속 손절 {consecutive_sl}회
+종목별 (기대값 순 판단, 표본 수 주의):
 {sym_block}
-연속 손절: {consecutive_sl}회
 
 === 시장 컨텍스트 ===
 {context_str}
 
 === 지시 ===
-1. 종목별 성과를 분석하라. 왜 잘되고 왜 안 되는지.
-2. threshold와 position_pct를 어떻게 바꿔야 하는지 이유와 함께 제안하라.
+1. 종목별 기대값을 분석하라. 표본 5건 미만인 종목은 결론 내리지 말 것 — 노이즈다.
+2. threshold와 position_pct를 어떻게 바꿔야 하는지 기대값·MDD 근거로 제안하라.
+   (threshold 제안은 이후 과거 거래 replay 게이트로 검증된다 — 근거 없는 변경은 기각됨.)
 3. 유니버스에서 뺄 종목, 추가할 종목을 제안하라 ({venue} 거래소 한정, 추가 최대 3개).
 4. 시간대별/VIX별/어닝별 진입 조건 변화가 필요한지 분석하라.
 5. 한 줄 핵심 인사이트 (다음 리뷰 때 기억할 것).
@@ -144,22 +165,32 @@ ID: {agent_id} | 거래소: {venue}
 
 
 def _build_critic_prompt(proposal: str, outcomes: list[dict], context_str: str) -> str:
+    from api_server.lv5_learner import _expectancy_stats
+
     n = len(outcomes)
     wins = sum(1 for o in outcomes if o["win"])
+    stats = _expectancy_stats(outcomes)
+    exp_line = (
+        f"기대값 {stats['expectancy']*100:+.2f}%/건 (비용 차감·shrinkage, 라벨 {stats['n_ret']}건) · "
+        f"경로 MDD {stats['mdd']*100:.1f}%"
+        if stats["expectancy"] is not None else "기대값 계산 불가"
+    )
     return f"""너는 까다로운 퀀트 리스크 매니저다. 아래 전략 제안을 비판하라.
+판단 기준은 비용 차감 기대값과 드로다운이다. 승률 논거는 그 자체로는 인정하지 마라.
 
 === 제안 내용 ===
 {proposal[:2000]}
 
 === 실적 요약 ===
-최근 {n}건, 승률 {wins/n:.0%}
+최근 {n}건 · {exp_line} · 승률 {wins/n:.0%} (참고용)
 {context_str[:500]}
 
 === 지시 ===
 1. 제안의 약점과 위험을 지적하라.
-2. 데이터가 부족하거나 근거가 약한 부분을 꼬집어라.
-3. 특히 유니버스 변경이나 threshold 조정이 과도하면 반박하라.
-4. 동의하는 부분이 있다면 짧게 인정해도 된다.
+2. 표본 수 대비 과신을 꼬집어라 — {n}건으로 확신할 수 있는 것과 없는 것을 구분하라.
+3. 승률만 근거로 든 주장, 기대값·비용을 무시한 주장은 반박하라.
+4. 유니버스 변경이나 threshold 조정이 과도하면 반박하라.
+5. 동의하는 부분이 있다면 짧게 인정해도 된다.
 
 [출력] 산문 비판. JSON 금지. 한국어."""
 
@@ -170,6 +201,7 @@ def _build_merger_prompt(
     universe: list[str],
 ) -> str:
     return f"""너는 최종 의사결정자다. 전략가와 비평가의 의견을 통합해 최종 결정을 내려라.
+판단 기준은 비용 차감 기대값과 드로다운이다. 승률이 아니다.
 
 === 전략가 제안 ===
 {proposal[:1500]}
@@ -183,6 +215,7 @@ threshold: {base_threshold}, position_pct: {base_position_pct}
 
 === 지시 ===
 두 의견을 균형있게 통합해서 아래 JSON을 생성해라.
+threshold 변경은 과거 거래 replay 게이트로 재검증된다 — 기대값 근거가 없으면 현재값을 유지하는 게 낫다.
 - threshold: 숫자 (20~90, 변경 근거 없으면 현재값 유지)
 - position_pct: 숫자 (0.03~0.25)
 - pause_next: bool (연속 손절 심각할 때만 true)
@@ -296,6 +329,22 @@ def _run_review(
         data = _parse_strategy_json(final_raw, base_threshold, base_position_pct)
         if not data:
             return
+
+        # ── 검증 게이트: 제안 threshold를 기록된 거래로 replay 검증 ──────────
+        # 통과 못 하면 임계값·사이즈는 기존 유지 (유니버스/DSL/메모리는 정성 레이어라 통과).
+        from api_server.lv5_learner import validate_proposal
+        gate = validate_proposal(outcomes, active_thr, data["threshold"])
+        if gate["passed"]:
+            data["strategy_note"] = f"{data.get('strategy_note', '')} [게이트 통과: {gate['reason']}]"
+        else:
+            _log.info("[Lv5:%s] 검증 게이트 기각: %s", agent_id, gate["reason"])
+            data["threshold"] = active_thr
+            data["position_pct"] = active_pct
+            data["strategy_note"] = f"{data.get('strategy_note', '')} [게이트 기각—파라미터 유지: {gate['reason']}]"
+
+        # 사이즈 변경 폭 제한 — 리뷰 1회당 ±30% (게이트 통과해도 급변 금지)
+        lo, hi = active_pct * 0.70, active_pct * 1.30
+        data["position_pct"] = max(min(float(data["position_pct"]), hi, 0.25), lo, 0.02)
 
         # DSL 저장
         dsl = data.pop("dsl", {})

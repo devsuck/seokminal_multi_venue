@@ -4,10 +4,17 @@ import json
 import os
 import random
 import statistics as _stats
+import sys
 import threading
 import uuid
 from pathlib import Path
 from typing import Literal
+
+# 레포 루트를 절대경로로 고정 — cwd 변경이나 sys.path 변조가 있어도
+# 로컬 패키지(hyperliquid/ 등) 임포트가 깨지지 않게 방어.
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 import requests
 
@@ -118,6 +125,10 @@ def get_bars(
     start_ns = date_to_ns(start.isoformat())
     end_ns = date_to_ns(end.isoformat())
 
+    # 카탈로그에 없는 종목이면 yfinance에서 자동 적재 (US/KR/크립토)
+    from api_server.auto_ingest import ensure_bars as _ensure_bars
+    _ingest = _ensure_bars(CATALOG_PATH, instrument_id)
+
     catalog = ParquetDataCatalog(CATALOG_PATH)
     bar_type_str = str(bar_type_for(InstrumentId.from_str(instrument_id)))
 
@@ -125,9 +136,10 @@ def get_bars(
 
     bars = [b for b in all_bars if start_ns <= b.ts_event <= end_ns]
     if not bars:
+        hint = f" (자동 수집 실패: {_ingest['error']})" if _ingest.get("error") else ""
         raise HTTPException(
             status_code=400,
-            detail=f"no bars found for {instrument_id!r} in range [{start}, {end}]",
+            detail=f"no bars found for {instrument_id!r} in range [{start}, {end}]{hint}",
         )
 
     return BarsResponse(
@@ -532,6 +544,10 @@ def get_backtest(
             status_code=400,
             detail=f"unsupported strategy {strategy!r}, expected one of {SUPPORTED_STRATEGIES}",
         )
+
+    # 카탈로그에 없는 종목이면 yfinance에서 자동 적재 (US/KR/크립토)
+    from api_server.auto_ingest import ensure_bars as _ensure_bars
+    _ensure_bars(CATALOG_PATH, instrument_id)
 
     start_ns = date_to_ns(start.isoformat())
     end_ns = date_to_ns(end.isoformat())

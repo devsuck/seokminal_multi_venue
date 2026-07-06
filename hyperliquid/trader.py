@@ -27,25 +27,74 @@ def _perp_dexs(name: str):
     return [dex] if dex else None
 
 
+_SDK_LOCK = __import__("threading").Lock()
+_SDK_CACHE: tuple | None = None
+
+
 def _sdk_imports():
-    """Import SDK classes with local package shadow temporarily removed."""
-    local_pkg_parent = str(Path(__file__).parent.parent.resolve())
-    filtered = [p for p in sys.path if Path(p).resolve() != Path(local_pkg_parent).resolve()]
+    """SDK의 Exchange/Info 로드 — sys.path를 건드리지 않고 site-packages에서
+    직접 importlib로 로드해 1회 캐시.
 
-    stale = [k for k in sys.modules if k == "hyperliquid" or k.startswith("hyperliquid.")]
-    for k in stale:
-        del sys.modules[k]
+    이전 구현은 전역 sys.path를 스왑→복원하는 방식이라 스레드 경합 시 서로의
+    스냅샷을 되살려 레포 루트가 sys.path에서 영구 소실됐음 (hyperliquid.trader
+    임포트 전멸 사고의 원인). 전역 상태 무변경 + 캐시로 재발 차단.
+    """
+    global _SDK_CACHE
+    with _SDK_LOCK:
+        if _SDK_CACHE is not None:
+            return _SDK_CACHE
 
-    orig_path = sys.path[:]
-    sys.path = filtered
-    try:
-        from hyperliquid.exchange import Exchange  # type: ignore
-        from hyperliquid.info import Info          # type: ignore
-        return Exchange, Info
-    finally:
-        sys.path = orig_path
-        for k in [k for k in sys.modules if k == "hyperliquid" or k.startswith("hyperliquid.")]:
-            del sys.modules[k]
+        import importlib.util
+        import sysconfig
+
+        local_pkg_dir = Path(__file__).parent.resolve()
+        sdk_pkg_dir = None
+        candidates = [sysconfig.get_paths()["purelib"], sysconfig.get_paths().get("platlib", "")]
+        for site_dir in candidates:
+            if not site_dir:
+                continue
+            cand = Path(site_dir) / "hyperliquid"
+            if cand.resolve() != local_pkg_dir and (cand / "exchange.py").exists():
+                sdk_pkg_dir = cand
+                break
+        if sdk_pkg_dir is None:
+            raise ImportError("hyperliquid-python-sdk 미설치 (site-packages에 exchange.py 없음)")
+
+        def _load(mod_name: str, file_name: str):
+            spec = importlib.util.spec_from_file_location(
+                f"_hl_sdk_{mod_name}", sdk_pkg_dir / file_name,
+                submodule_search_locations=[str(sdk_pkg_dir)],
+            )
+            mod = importlib.util.module_from_spec(spec)
+            # SDK 내부의 "from hyperliquid.X import ..." 상대 참조를 위해
+            # 별칭 없이 spec 로더로 직접 실행 — SDK 모듈은 hyperliquid.utils 등을
+            # 절대 임포트하므로 sys.modules에 SDK 패키지를 임시 등록해야 한다.
+            spec.loader.exec_module(mod)
+            return mod
+
+        # SDK 모듈은 `from hyperliquid.utils...` 절대 임포트를 쓰므로, 로드 동안
+        # sys.modules["hyperliquid"]를 SDK 패키지로 잠시 가리키고 끝나면 복구.
+        saved = {k: v for k, v in sys.modules.items()
+                 if k == "hyperliquid" or k.startswith("hyperliquid.")}
+        try:
+            for k in list(saved):
+                del sys.modules[k]
+            spec = importlib.util.spec_from_file_location(
+                "hyperliquid", sdk_pkg_dir / "__init__.py",
+                submodule_search_locations=[str(sdk_pkg_dir)],
+            )
+            pkg = importlib.util.module_from_spec(spec)
+            sys.modules["hyperliquid"] = pkg
+            spec.loader.exec_module(pkg)
+            from hyperliquid.exchange import Exchange  # type: ignore
+            from hyperliquid.info import Info          # type: ignore
+            _SDK_CACHE = (Exchange, Info)
+            return _SDK_CACHE
+        finally:
+            for k in [k for k in sys.modules
+                      if k == "hyperliquid" or k.startswith("hyperliquid.")]:
+                del sys.modules[k]
+            sys.modules.update(saved)
 
 
 def _private_key(paper: bool = False) -> str:

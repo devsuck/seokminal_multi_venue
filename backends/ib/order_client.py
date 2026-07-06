@@ -1,4 +1,5 @@
 import asyncio
+import os
 import time
 
 from ib_async import IB
@@ -9,12 +10,13 @@ from ib_async.order import UNSET_DOUBLE, LimitOrder, MarketOrder, Trade
 class IBOrderClient:
     def __init__(
         self,
-        host: str = "127.0.0.1",
+        host: str | None = None,
         port: int = 7497,
         client_id: int = 2,
         ib: IB | None = None,
     ) -> None:
-        self._host = host
+        # WSL 등에서 TWS가 다른 호스트에 있을 때 IB_HOST로 지정 (기본 로컬)
+        self._host = host or os.environ.get("IB_HOST", "127.0.0.1")
         self._port = port
         self._client_id = client_id
         self._ib = ib if ib is not None else IB()

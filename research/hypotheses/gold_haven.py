@@ -18,6 +18,8 @@ DEFAULTS = {
     "cap": 3.0,
 }
 
+import datetime as _dt
+
 
 def _bisect_at(dates: list, date: str) -> int | None:
     j = bisect.bisect_right(dates, date) - 1
@@ -117,3 +119,58 @@ def random_weights(panels: dict, date: str, params: dict, rng=None) -> dict:
         on = (rng.random() < 0.5) if rng else True
         out[a] = (min(p["target_vol"] / vol, p["cap"]) if vol > 1e-9 else 0.0) if on else 0.0
     return out
+
+
+def _shift_back(date_str: str, days: int) -> str:
+    d = _dt.date.fromisoformat(date_str)
+    return (d - _dt.timedelta(days=days)).isoformat()
+
+
+def _ffill_align(series: list[dict], dates: list[str]) -> dict:
+    """series=[{date,value}] (오름차순, FRED 응답 형식) → dates 축에 forward-fill 정렬."""
+    svals = [(s["date"], s["value"]) for s in series if s["value"] is not None]
+    out = {}
+    idx = 0
+    last = None
+    for d in dates:
+        while idx < len(svals) and svals[idx][0] <= d:
+            last = svals[idx][1]
+            idx += 1
+        out[d] = last
+    return out
+
+
+def _cpi_yoy(series: list[dict]) -> list[dict]:
+    """월간 CPI 레벨 → YoY %% 변화율 (12개월 전 대비), 앞 12개월은 계산 불가라 제외."""
+    out = []
+    for i in range(12, len(series)):
+        v0 = series[i]["value"]
+        v12 = series[i - 12]["value"]
+        if v0 is None or v12 is None or v12 == 0:
+            continue
+        out.append({"date": series[i]["date"], "value": (v0 / v12 - 1.0) * 100.0})
+    return out
+
+
+def build_macro_panel(dates: list[str]) -> dict:
+    """FRED 4개 시리즈를 GC 가격 패널의 날짜축(dates)에 정렬.
+
+    real_rate = DGS10(명목 10년물) - CPI YoY(trailing 12개월, 근사 실질금리).
+    """
+    from fred.client import FREDClient
+
+    client = FREDClient()
+    start, end = dates[0], dates[-1]
+
+    dgs10 = _ffill_align(client.get_series("DGS10", start, end), dates)
+    cpi_raw = client.get_series("CPIAUCSL", start=_shift_back(start, 400), end=end)
+    cpi = _ffill_align(_cpi_yoy(cpi_raw), dates)
+    vix = _ffill_align(client.get_series("VIXCLS", start, end), dates)
+    credit = _ffill_align(client.get_series("BAMLH0A0HYM2", start, end), dates)
+
+    real_rate = {
+        d: (dgs10[d] - cpi[d])
+        for d in dates
+        if dgs10.get(d) is not None and cpi.get(d) is not None
+    }
+    return {"dates": dates, "real_rate": real_rate, "vix": vix, "credit_spread": credit}

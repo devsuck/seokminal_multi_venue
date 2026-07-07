@@ -116,3 +116,57 @@ def test_random_weights_seeded_reproducible():
     w1 = random_weights({"GC": gc}, dates[-1], {**DEFAULTS}, r1)
     w2 = random_weights({"GC": gc}, dates[-1], {**DEFAULTS}, r2)
     assert w1 == w2
+
+
+import pytest
+
+from research.hypotheses.gold_haven import build_macro_panel
+
+
+class _FakeFRED:
+    """DGS10=일정, CPIAUCSL=월간 완만 상승, VIXCLS/BAMLH0A0HYM2=일정. 실제 API 미호출."""
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def get_series(self, series_id, start=None, end=None):
+        if series_id == "DGS10":
+            return [{"date": f"2024-{m:02d}-01", "value": 4.0} for m in range(1, 13)] + \
+                   [{"date": f"2024-{m:02d}-15", "value": 4.0} for m in range(1, 13)]
+        if series_id == "CPIAUCSL":
+            # 2023-01부터 2024-12까지, 매달 0.3씩 증가하는 지수 (YoY 계산용 앞선 1년 포함)
+            out = []
+            base = 300.0
+            months = [(y, m) for y in (2022, 2023, 2024) for m in range(1, 13)]
+            for i, (y, m) in enumerate(months):
+                out.append({"date": f"{y}-{m:02d}-01", "value": base + 0.3 * i})
+            return out
+        if series_id == "VIXCLS":
+            return [{"date": f"2024-{m:02d}-01", "value": 15.0} for m in range(1, 13)]
+        if series_id == "BAMLH0A0HYM2":
+            return [{"date": f"2024-{m:02d}-01", "value": 4.0} for m in range(1, 13)]
+        raise AssertionError(f"unexpected series_id {series_id}")
+
+
+def test_build_macro_panel_aligns_to_dates(monkeypatch):
+    monkeypatch.setattr("fred.client.FREDClient", _FakeFRED)
+    dates = [f"2024-{m:02d}-10" for m in range(1, 13)]
+
+    macro = build_macro_panel(dates)
+
+    assert macro["dates"] == dates
+    assert set(macro["real_rate"]) <= set(dates)
+    # 매 시점 real_rate 값 존재 (DGS10/CPI YoY 둘 다 forward-fill로 채워짐)
+    assert all(d in macro["real_rate"] for d in dates)
+    assert all(d in macro["vix"] for d in dates)
+    assert all(d in macro["credit_spread"] for d in dates)
+    # DGS10=4.0 고정, CPI YoY 대략 12*0.3/base*100 ~ 1.2%대 → real_rate는 4.0보다 약간 작은 양수
+    assert 2.0 < macro["real_rate"]["2024-06-10"] < 4.0
+
+
+def test_build_macro_panel_requires_no_network_beyond_fake(monkeypatch):
+    # FREDClient가 몽키패치 안 됐으면 FRED_API_KEY 없어서 KeyError 나야 정상(네트워크 호출 시도 안 함 확인용)
+    monkeypatch.delenv("FRED_API_KEY", raising=False)
+    dates = ["2024-01-10"]
+    with pytest.raises(KeyError):
+        build_macro_panel(dates)

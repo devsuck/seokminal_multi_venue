@@ -1,8 +1,8 @@
 {
-  "started": "2026-07-04T14:27:06",
-  "finished": "2026-07-04T14:29:03",
-  "n_tested": 12,
-  "n_underpowered": 2,
+  "started": "2026-07-07T20:55:33",
+  "finished": "2026-07-07T20:58:09",
+  "n_tested": 13,
+  "n_underpowered": 1,
   "n_candidates": 3,
   "bh_alpha": 0.1,
   "bh_threshold": 0.0299,
@@ -246,6 +246,30 @@
       "verdict": "REJECT_BH"
     },
     {
+      "cid": "ev_control_change",
+      "category": "event_family",
+      "thesis": "최대주주 변경=인수/경영권 프리미엄 기대",
+      "direction": "bullish",
+      "n": 22251,
+      "net": -0.012642,
+      "median": -0.025251,
+      "percentile": 0.0,
+      "p": 1.0,
+      "wf_first": -0.013766,
+      "wf_second": -0.011518,
+      "top_tail": -1.8935,
+      "bh_survivor": false,
+      "bh_threshold": 0.0299,
+      "redteam": "REJECTED",
+      "redteam_failed": [
+        "random_baseline",
+        "walk_forward",
+        "cost_stress"
+      ],
+      "redteam_missing": [],
+      "verdict": "REJECT_BH"
+    },
+    {
       "cid": "ev_treasury_disposal",
       "category": "event_family",
       "thesis": "자사주 처분=공급↑(buyback 거울, 공급/수요 방향축 확증)",
@@ -271,13 +295,6 @@
       "cid": "ev_buyback_cancel",
       "category": "event_family",
       "thesis": "자사주 소각=공급 영구감소(buyback보다 강할수도)",
-      "n": 0,
-      "verdict": "UNDERPOWERED"
-    },
-    {
-      "cid": "ev_control_change",
-      "category": "event_family",
-      "thesis": "최대주주 변경=인수/경영권 프리미엄 기대",
       "n": 0,
       "verdict": "UNDERPOWERED"
     }

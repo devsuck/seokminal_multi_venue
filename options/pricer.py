@@ -136,6 +136,44 @@ def bs_chain(
     return rows
 
 
+def realized_vol(closes: list[float], window: int = 20) -> float | None:
+    """Close-to-close annualised realized volatility over the trailing window.
+
+    Args:
+        closes: daily close prices, oldest first
+        window: number of trailing log-returns to use
+
+    Returns None if insufficient data (< window+1 closes).
+    """
+    if len(closes) < window + 1:
+        return None
+    tail = closes[-(window + 1):]
+    log_rets = [math.log(tail[i] / tail[i - 1]) for i in range(1, len(tail)) if tail[i - 1] > 0]
+    if len(log_rets) < 2:
+        return None
+    mean = sum(log_rets) / len(log_rets)
+    var = sum((x - mean) ** 2 for x in log_rets) / (len(log_rets) - 1)
+    return math.sqrt(var) * math.sqrt(252)
+
+
+def vrp_spread(atm_iv: float, closes: list[float], window: int = 20) -> dict | None:
+    """Variance risk premium: how much richer implied vol is vs realized vol.
+
+    Returns {"atm_iv", "realized_vol", "spread", "spread_pct"} or None if RV
+    unavailable. spread_pct is spread / realized_vol (relative richness).
+    """
+    rv = realized_vol(closes, window)
+    if rv is None or rv <= 0:
+        return None
+    spread = atm_iv - rv
+    return {
+        "atm_iv": atm_iv,
+        "realized_vol": rv,
+        "spread": spread,
+        "spread_pct": spread / rv,
+    }
+
+
 def bs_iv_surface(
     S: float,
     r: float,

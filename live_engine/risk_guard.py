@@ -24,6 +24,7 @@ class RiskConfig:
     max_position_qty: int
     daily_loss_limit: float          # absolute value of the worst allowed realized loss
     kill_switch: bool
+    min_option_dte: int = 0          # block option orders expiring sooner than this (0 = off)
 
     @classmethod
     def from_env(cls) -> "RiskConfig":
@@ -33,6 +34,7 @@ class RiskConfig:
             max_position_qty=int(os.environ.get("MAX_POSITION_QTY", "50000")),
             daily_loss_limit=float(os.environ.get("DAILY_LOSS_LIMIT", "100000")),
             kill_switch=os.environ.get("TRADING_KILL_SWITCH", "false").lower() == "true",
+            min_option_dte=int(os.environ.get("MIN_OPTION_DTE", "0")),
         )
 
 
@@ -87,6 +89,41 @@ def validate_order(
         raise RiskViolation(
             f"resulting position {projected} exceeds max position qty "
             f"{config.max_position_qty}"
+        )
+
+
+def validate_option_expiry(expiry: str, config: RiskConfig, *, today: _dt.date | None = None) -> None:
+    """Block option orders expiring within ``config.min_option_dte`` days.
+
+    Near-expiry (esp. 0DTE) contracts carry outsized pin/assignment/gamma
+    risk relative to premium — worth a dedicated gate distinct from the
+    generic notional/qty checks above. ``min_option_dte=0`` (default) disables
+    this check so it never blocks anyone who hasn't opted in via env.
+    """
+    if config.min_option_dte <= 0:
+        return
+    exp_date = _dt.datetime.strptime(expiry, "%Y%m%d").date()
+    dte = (exp_date - (today or _dt.date.today())).days
+    if dte < config.min_option_dte:
+        raise RiskViolation(
+            f"option expiry {expiry} is {dte}d out, below min DTE {config.min_option_dte}"
+        )
+
+
+def validate_defined_risk_spread(*, max_loss: float, config: RiskConfig) -> None:
+    """Gate for defined-risk multi-leg option positions (e.g. iron condors).
+
+    A short option's premium-at-entry notional badly understates its real risk
+    (unbounded for a naked short). For a defined-risk spread the *actual* worst
+    case is the wing width minus credit received — gate on that instead of the
+    generic notional check in ``validate_order``.
+    """
+    if config.kill_switch:
+        raise RiskViolation("trading kill switch is engaged — all orders blocked")
+    if max_loss > config.max_order_notional:
+        raise RiskViolation(
+            f"defined-risk max loss {max_loss:.2f} exceeds max order notional "
+            f"{config.max_order_notional:.2f}"
         )
 
 

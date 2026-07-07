@@ -13,3 +13,6 @@ research/reports/alpha/
 research/paper/tsmom_forward_report.md
 
 research/paper/buyback_forward_report.md
+
+# 폴리마켓 차익거래 오더북 원자재 수집(용량 크고 재생성 불가) — 데스크탑/맥에 로컬로만 쌓임
+research/data/polymarket_arb/*.jsonl

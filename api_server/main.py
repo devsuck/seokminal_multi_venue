@@ -2609,7 +2609,8 @@ async def search_us(q: str = Query(..., min_length=1)):
     q = q.strip()
     ib = IB()
     try:
-        await ib.connectAsync("127.0.0.1", 7497, clientId=random.randint(450, 899))
+        await ib.connectAsync(os.environ.get("IB_HOST", "127.0.0.1"), 7497,
+                              clientId=random.randint(450, 899), timeout=15)
         descs = await ib.reqMatchingSymbolsAsync(q)
         results = [
             USSearchResult(
@@ -3728,10 +3729,22 @@ def insider_us(
     ticker: str = Query(..., min_length=1, max_length=10),
     days: int = Query(90, ge=1, le=365),
 ) -> list[InsiderTrade]:
+    # Finnhub 우선 (SEC가 해외 IP를 차단해 EDGAR 직접 조회 불가한 환경 대응),
+    # 실패 시 EDGAR 폴백.
+    rows: list[dict] = []
+    errors: list[str] = []
     try:
-        rows = _edgar_trades(ticker.upper(), days)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"SEC EDGAR error: {exc}") from exc
+        from insider.finnhub_client import get_insider_transactions as _fh_trades
+        rows = _fh_trades(ticker.upper(), days)
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"Finnhub: {exc}")
+    if not rows:
+        try:
+            rows = _edgar_trades(ticker.upper(), days)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"SEC EDGAR: {exc}")
+    if not rows and errors:
+        raise HTTPException(status_code=502, detail=" / ".join(errors))
     if not rows and days <= 365:
         # ticker might not exist
         raise HTTPException(status_code=404, detail=f"No Form 4 filings found for {ticker!r}")
@@ -3756,10 +3769,21 @@ def insider_us_recent(
     days: int = Query(7, ge=1, le=30),
     max_filings: int = Query(40, ge=5, le=100),
 ) -> list[InsiderTrade]:
+    # Finnhub 유니버스 피드 우선, 실패 시 EDGAR 전시장 피드 폴백.
+    rows = []
+    errors = []
     try:
-        rows = _edgar_recent(days=days, max_filings=max_filings)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"SEC EDGAR error: {exc}") from exc
+        from insider.finnhub_client import get_recent_feed as _fh_recent
+        rows = _fh_recent(days=days, max_filings=max_filings)
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"Finnhub: {exc}")
+    if not rows:
+        try:
+            rows = _edgar_recent(days=days, max_filings=max_filings)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"SEC EDGAR: {exc}")
+            if errors:
+                raise HTTPException(status_code=502, detail=" / ".join(errors)) from exc
     return [
         InsiderTrade(
             trade_date=r["transaction_date"],
@@ -4020,6 +4044,63 @@ def copytrade_positions() -> list[dict]:
         return out
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"포지션 조회 실패: {exc}") from exc
+
+
+@app.post("/copytrade/close/{ticker}")
+def copytrade_close(ticker: str) -> dict:
+    """페이퍼 포지션 전량 시장가 청산."""
+    key = os.environ.get("ALPACA_API_KEY", "")
+    sec = os.environ.get("ALPACA_SECRET_KEY", "")
+    if not key or not sec:
+        raise HTTPException(status_code=503, detail="ALPACA 키 없음")
+    from alpaca.trading.client import TradingClient
+    client = TradingClient(api_key=key, secret_key=sec, paper=True)
+    try:
+        order = client.close_position(ticker.strip().upper())
+        return {"ticker": ticker.upper(), "status": str(getattr(order, "status", "submitted"))}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"청산 실패: {exc}") from exc
+
+
+class CopyAutoExitRequest(BaseModel):
+    tp_pct: float = 15.0   # 익절 임계 (+%)
+    sl_pct: float = 7.0    # 손절 임계 (%)
+
+
+@app.post("/copytrade/auto-exit")
+def copytrade_auto_exit(body: CopyAutoExitRequest) -> dict:
+    """TP/SL 규칙 일괄 적용 — 임계 초과 포지션 전부 청산.
+
+    Alpaca 포지션엔 진입일이 없어 보유기간 규칙은 미지원(수익률 기반만).
+    프론트 오토파일럿이 주기적으로 호출해 예산을 회수한다.
+    """
+    key = os.environ.get("ALPACA_API_KEY", "")
+    sec = os.environ.get("ALPACA_SECRET_KEY", "")
+    if not key or not sec:
+        raise HTTPException(status_code=503, detail="ALPACA 키 없음")
+    tp = max(float(body.tp_pct), 0.1)
+    sl = max(float(body.sl_pct), 0.1)
+    from alpaca.trading.client import TradingClient
+    client = TradingClient(api_key=key, secret_key=sec, paper=True)
+    closed: list[dict] = []
+    try:
+        for p in client.get_all_positions():
+            plpc = float(p.unrealized_plpc) * 100
+            reason = None
+            if plpc >= tp:
+                reason = f"익절 +{plpc:.1f}%"
+            elif plpc <= -sl:
+                reason = f"손절 {plpc:.1f}%"
+            if reason is None:
+                continue
+            try:
+                client.close_position(p.symbol)
+                closed.append({"ticker": p.symbol, "pl_pct": round(plpc, 2), "reason": reason})
+            except Exception:  # noqa: BLE001 — 개별 실패는 다음 호출에서 재시도
+                continue
+        return {"closed": closed, "count": len(closed)}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"자동청산 실패: {exc}") from exc
 
 
 # ── 페어 트레이딩 (시장중립 stat-arb) ────────────────────────────────────────────

@@ -60,25 +60,29 @@ def test_insider_kr_search_api_error():
     assert r.status_code == 503
 
 
-# ── SEC EDGAR / US ─────────────────────────────────────────────────────────────
+# ── US 내부자 (Finnhub 우선 + SEC EDGAR 폴백) ─────────────────────────────────
 
-def test_insider_us_ok():
-    mock_rows = [
-        {
-            "filing_date": "2024-03-10",
-            "transaction_date": "2024-03-08",
-            "reporter": "Tim Cook",
-            "ticker": "AAPL",
-            "issuer": "Apple Inc",
-            "transaction_code": "S",
-            "trade_type": "SELL",
-            "shares": 250000.0,
-            "price_per_share": 172.50,
-            "value_usd": 43125000.0,
-            "shares_owned_after": 3200000.0,
-        }
-    ]
-    with patch("api_server.main._edgar_trades", return_value=mock_rows):
+_US_MOCK_ROWS = [
+    {
+        "filing_date": "2024-03-10",
+        "transaction_date": "2024-03-08",
+        "reporter": "Tim Cook",
+        "ticker": "AAPL",
+        "issuer": "Apple Inc",
+        "transaction_code": "S",
+        "trade_type": "SELL",
+        "shares": 250000.0,
+        "price_per_share": 172.50,
+        "value_usd": 43125000.0,
+        "shares_owned_after": 3200000.0,
+    }
+]
+
+
+def test_insider_us_finnhub_primary():
+    """Finnhub이 데이터 주면 EDGAR 안 감."""
+    with patch("insider.finnhub_client.get_insider_transactions", return_value=_US_MOCK_ROWS), \
+         patch("api_server.main._edgar_trades", side_effect=AssertionError("EDGAR 호출되면 안 됨")):
         r = client.get("/insider/us", params={"ticker": "AAPL", "days": 90})
     assert r.status_code == 200
     data = r.json()
@@ -88,13 +92,24 @@ def test_insider_us_ok():
     assert data[0]["value_usd"] == pytest.approx(43125000.0)
 
 
+def test_insider_us_edgar_fallback():
+    """Finnhub 실패 시 EDGAR 폴백."""
+    with patch("insider.finnhub_client.get_insider_transactions", side_effect=RuntimeError("finnhub down")), \
+         patch("api_server.main._edgar_trades", return_value=_US_MOCK_ROWS):
+        r = client.get("/insider/us", params={"ticker": "AAPL", "days": 90})
+    assert r.status_code == 200
+    assert r.json()[0]["reporter"] == "Tim Cook"
+
+
 def test_insider_us_not_found():
-    with patch("api_server.main._edgar_trades", return_value=[]):
+    with patch("insider.finnhub_client.get_insider_transactions", return_value=[]), \
+         patch("api_server.main._edgar_trades", return_value=[]):
         r = client.get("/insider/us", params={"ticker": "XXXXXX", "days": 90})
     assert r.status_code == 404
 
 
-def test_insider_us_edgar_error():
-    with patch("api_server.main._edgar_trades", side_effect=RuntimeError("network error")):
+def test_insider_us_both_sources_error():
+    with patch("insider.finnhub_client.get_insider_transactions", side_effect=RuntimeError("finnhub down")), \
+         patch("api_server.main._edgar_trades", side_effect=RuntimeError("network error")):
         r = client.get("/insider/us", params={"ticker": "AAPL", "days": 30})
     assert r.status_code == 502

@@ -78,3 +78,23 @@ def test_evaluate_runs_candidate_when_persistent_runs_exist():
     assert report["persistent_runs"] == 2
     assert report["best_min_sum_ask"] == 0.90
     assert report["runs_per_week"] > 0
+
+
+def test_find_opportunity_runs_splits_on_gap_exceeding_max_gap_sec():
+    rows = [
+        _row("a", "2026-07-01T00:00:00+00:00", True, sum_ask=0.95),
+        _row("a", "2026-07-01T00:05:00+00:00", True, sum_ask=0.93),  # 300s gap, no False row between
+    ]
+    runs = find_opportunity_runs(rows, max_gap_sec=30.0)
+    assert len(runs) == 2
+    assert runs[0]["ticks"] == 1
+    assert runs[1]["ticks"] == 1
+
+
+def test_evaluate_runs_rejects_when_margin_not_positive():
+    runs = [{"condition_id": "a", "start_ts": "2026-07-01T00:00:00+00:00",
+             "end_ts": "2026-07-01T00:00:10+00:00", "duration_sec": 10.0,
+             "min_sum_ask": 0.999, "ticks": 2, "max_capturable_margin_usd": 0.0}]
+    report = evaluate_runs(runs, min_duration_sec=3.0, min_margin_usd=0.0)
+    assert report["verdict"] == "REJECT_NO_POSITIVE_MARGIN"
+    assert report["persistent_runs"] == 1

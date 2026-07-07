@@ -51,6 +51,8 @@ def _map_market(m: dict) -> dict | None:
     except (TypeError, ValueError):
         return None
     event = (m.get("events") or [{}])[0]
+    clob_ids = _parse_json_list(m.get("clobTokenIds") or [])
+    clob_token_ids = (clob_ids[0], clob_ids[1]) if len(clob_ids) == 2 else (None, None)
     return {
         "condition_id": m.get("conditionId"),
         "question": m.get("question", ""),
@@ -64,6 +66,7 @@ def _map_market(m: dict) -> dict | None:
         "active": bool(m.get("active")),
         "closed": bool(m.get("closed")),
         "accepting_orders": bool(m.get("acceptingOrders")),
+        "clob_token_ids": clob_token_ids,
     }
 
 

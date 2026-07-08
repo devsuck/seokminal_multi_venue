@@ -67,6 +67,8 @@ def _map_market(m: dict) -> dict | None:
         "closed": bool(m.get("closed")),
         "accepting_orders": bool(m.get("acceptingOrders")),
         "clob_token_ids": clob_token_ids,
+        "sports_market_type": m.get("sportsMarketType"),
+        "game_start_time": m.get("gameStartTime"),
     }
 
 

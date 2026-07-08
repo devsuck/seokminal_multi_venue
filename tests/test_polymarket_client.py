@@ -30,3 +30,18 @@ def test_map_market_malformed_clob_token_ids_defaults_to_none_pair():
 def test_map_market_still_returns_none_for_non_binary_outcomes():
     mapped = _map_market(_raw_market(outcomes=["A", "B", "C"], outcomePrices=["0.3", "0.3", "0.4"]))
     assert mapped is None
+
+
+def test_map_market_extracts_sports_market_type_and_game_start_time():
+    mapped = _map_market(_raw_market(
+        sportsMarketType="soccer_halftime_result",
+        gameStartTime="2026-07-08 17:00:00+00",
+    ))
+    assert mapped["sports_market_type"] == "soccer_halftime_result"
+    assert mapped["game_start_time"] == "2026-07-08 17:00:00+00"
+
+
+def test_map_market_defaults_sports_fields_to_none():
+    mapped = _map_market(_raw_market())
+    assert mapped["sports_market_type"] is None
+    assert mapped["game_start_time"] is None

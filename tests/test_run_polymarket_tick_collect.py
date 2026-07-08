@@ -32,7 +32,7 @@ class FakeClient:
 def test_append_ticks_writes_jsonl_to_dated_file(tmp_path):
     with patch.object(runner, "_DATA_DIR", tmp_path):
         runner.append_ticks([{"token_id": "y1"}, {"token_id": "n1"}])
-        path = tmp_path / f"{dt.date.today().isoformat()}.jsonl"
+        path = tmp_path / f"{dt.datetime.now(dt.timezone.utc).date().isoformat()}.jsonl"
         lines = path.read_text().strip().splitlines()
     assert len(lines) == 2
     assert json.loads(lines[0])["token_id"] == "y1"

@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import json
+import logging
 from pathlib import Path
 
 from polymarket.client import get_markets
@@ -25,7 +26,7 @@ def append_ticks(ticks: list[dict]) -> None:
     if not ticks:
         return
     _DATA_DIR.mkdir(parents=True, exist_ok=True)
-    path = _DATA_DIR / f"{dt.date.today().isoformat()}.jsonl"
+    path = _DATA_DIR / f"{dt.datetime.now(dt.timezone.utc).date().isoformat()}.jsonl"
     with path.open("a") as f:
         for t in ticks:
             f.write(json.dumps(t, ensure_ascii=False) + "\n")
@@ -55,6 +56,7 @@ async def run_forever(
             meta_by_token = build_meta_by_token(markets)
             last_meta_by_token = meta_by_token
         except Exception:
+            logging.exception("Gamma re-selection failed, reusing last known markets")
             # Gamma REST 재선정 실패 → 기존 구독(직전 사이클의 meta) 유지, 다음 주기에 재시도
             meta_by_token = last_meta_by_token or {}
         if not meta_by_token:
@@ -70,6 +72,7 @@ async def run_forever(
         except TimeoutError:
             delay = RECONNECT_BASE_DELAY
         except Exception:
+            logging.exception("WSS stream failed, reconnecting")
             await asyncio.sleep(delay)
             delay = min(delay * 2, RECONNECT_MAX_DELAY)
         cycle += 1

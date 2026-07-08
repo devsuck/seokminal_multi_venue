@@ -45,6 +45,29 @@ def test_sports_market_missing_game_start_time_excluded():
     assert select_target_markets([m], now=NOW) == []
 
 
+def test_sports_market_naive_game_start_time_treated_as_utc():
+    # 오프셋/Z 접미사 없는 타임스탬프 — naive datetime으로 파싱되지만 UTC로 간주해 비교 가능해야 함
+    m = _market(sports_market_type="soccer_halftime_result", game_start_time="2026-07-08T11:50:00")
+    picked = select_target_markets([m], now=NOW)
+    assert len(picked) == 1
+    assert picked[0]["family"] == "sports"
+
+
+def test_malformed_game_start_time_excludes_only_that_market():
+    # 하나의 마켓 game_start_time이 파싱/비교 불가능해도(TypeError) 전체 재선정이 죽지 않고
+    # 해당 마켓만 제외한 채 나머지 마켓은 정상 선정되어야 한다.
+    good = _market(condition_id="c1", end_date="2026-07-10", clob_token_ids=("y1", "n1"))
+    bad = _market(
+        condition_id="c2",
+        sports_market_type="soccer_halftime_result",
+        game_start_time=b"2026-07-08 12:00:00+00",
+        clob_token_ids=("y2", "n2"),
+    )
+    picked = select_target_markets([good, bad], now=NOW)
+    assert len(picked) == 1
+    assert picked[0]["condition_id"] == "c1"
+
+
 def test_news_market_short_resolution_included():
     m = _market(end_date="2026-07-10")
     picked = select_target_markets([m], now=NOW)

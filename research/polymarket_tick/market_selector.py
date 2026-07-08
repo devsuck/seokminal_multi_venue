@@ -13,9 +13,13 @@ def _parse_game_start(raw: str | None) -> dt.datetime | None:
     if not raw:
         return None
     try:
-        return dt.datetime.fromisoformat(raw.replace(" ", "T"))
-    except ValueError:
+        parsed = dt.datetime.fromisoformat(raw.replace(" ", "T"))
+    except (ValueError, TypeError):
         return None
+    if parsed.tzinfo is None:
+        # Gamma API가 UTC 오프셋 없는 타임스탬프를 줄 수 있음 — 다른 곳과 동일하게 UTC로 간주
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed
 
 
 def _classify(market: dict, now: dt.datetime) -> str | None:

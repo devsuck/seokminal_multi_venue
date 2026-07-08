@@ -64,12 +64,22 @@ async def run_forever(
             cycle += 1
             continue
         asset_ids = list(meta_by_token.keys())
+        received_tick = False
         try:
             async with asyncio.timeout(reselect_interval_sec):
                 async for raw in client.stream_ticks(asset_ids):
+                    received_tick = True
                     append_fn(parse_tick_message(raw, meta_by_token))
-            delay = RECONNECT_BASE_DELAY
+            if received_tick:
+                # 정상적으로 틱을 수신하다 스트림이 종료된 경우(정상 흐름) — 백오프 불필요
+                delay = RECONNECT_BASE_DELAY
+            else:
+                # 구독 직후 틱 하나 없이 스트림이 끊긴 경우 — 서버가 즉시 닫는 상황이 반복되면
+                # 백오프 없이 즉시 재연결하면 핫루프가 되므로 예외 케이스와 동일하게 처리
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, RECONNECT_MAX_DELAY)
         except TimeoutError:
+            # 5분 재선정 주기 도달 — 정상 종료이므로 백오프 리셋
             delay = RECONNECT_BASE_DELAY
         except Exception:
             logging.exception("WSS stream failed, reconnecting")

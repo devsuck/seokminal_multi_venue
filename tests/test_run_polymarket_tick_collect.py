@@ -84,7 +84,8 @@ async def test_run_forever_backs_off_and_doubles_delay_on_repeated_failure():
 
 
 async def test_run_forever_resets_delay_after_success():
-    client = FakeClient([ConnectionError("boom"), []])
+    raw_book = json.dumps({"event_type": "book", "asset_id": "y1", "bids": [{"price": "0.4", "size": "10"}], "asks": []})
+    client = FakeClient([ConnectionError("boom"), [raw_book]])
     with patch("asyncio.sleep") as mock_sleep:
         await runner.run_forever(
             get_markets_fn=lambda: [_market()],
@@ -94,6 +95,21 @@ async def test_run_forever_resets_delay_after_success():
         )
     delays = [call.args[0] for call in mock_sleep.call_args_list]
     assert delays == [runner.RECONNECT_BASE_DELAY]
+
+
+async def test_run_forever_backs_off_on_clean_close_without_ticks():
+    # stream_ticks()가 예외 없이 즉시 끝나며 틱을 하나도 내보내지 않은 경우(서버의 클린 클로즈 등) —
+    # 백오프 없이 즉시 재연결하면 핫루프가 되므로 예외 케이스와 동일하게 지연을 적용해야 한다.
+    client = FakeClient([[], []])
+    with patch("asyncio.sleep") as mock_sleep:
+        await runner.run_forever(
+            get_markets_fn=lambda: [_market()],
+            client=client,
+            append_fn=lambda ticks: None,
+            max_cycles=2,
+        )
+    delays = [call.args[0] for call in mock_sleep.call_args_list]
+    assert delays == [runner.RECONNECT_BASE_DELAY, runner.RECONNECT_BASE_DELAY * 2]
 
 
 async def test_run_forever_reuses_last_markets_when_reselect_fails():
@@ -106,10 +122,11 @@ async def test_run_forever_reuses_last_markets_when_reselect_fails():
 
     client = FakeClient([[], []])
     appended = []
-    await runner.run_forever(
-        get_markets_fn=flaky_get_markets,
-        client=client,
-        append_fn=appended.append,
-        max_cycles=2,
-    )
+    with patch("asyncio.sleep"):
+        await runner.run_forever(
+            get_markets_fn=flaky_get_markets,
+            client=client,
+            append_fn=appended.append,
+            max_cycles=2,
+        )
     assert client.calls == [["y1", "n1"], ["y1", "n1"]]

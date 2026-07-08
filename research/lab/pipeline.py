@@ -38,16 +38,19 @@ class LabEngine:
         self.autopilot = False
         self.live_guard = "disarmed"  # 항상 disarmed — 자동 live 매매 없음
         self.stats = {"processed": 0, "edges": 0, "rejects": 0, "blocked": 0, "pending": 0}
+        self._done_ids: set[str] = set()
         self._seed()
 
     # ── 큐 관리 ──────────────────────────────────────────────
     def _seed(self) -> None:
         # 합성 데모 제거 → 실 이벤트 family(Auto-Research 실엔진) + 데이터게이트 예시 1개.
+        # 이번 세션에서 이미 판정난 id는 재시드하지 않음(그렇지 않으면 큐 비움=오토파일럿
+        # 완주 후 재시작 시 처리했던 가설이 그대로 재등장 — 삭제가 안 되는 것처럼 보임).
         from research.lab.hypotheses import real_event_queue
         seeds = real_event_queue() + [h for h in SEED_QUEUE if h.data_mode == "blocked"]
         for h in seeds:
             self._by_id[h.id] = h
-        self._queue = [h.id for h in seeds]
+        self._queue = [h.id for h in seeds if h.id not in self._done_ids]
 
     def _log_line(self, stage: str, msg: str, level: str = "info") -> None:
         self._log.append({"ts": _now(), "stage": stage, "level": level, "msg": msg})
@@ -203,6 +206,7 @@ class LabEngine:
                 "status": status, "verdict": res["verdict"], "data_mode": res["data_mode"],
                 "ts": _now(),
             })
+            self._done_ids.add(h.id)
         self._log_line("learn", f"학습: {h.family} family — '{h.name}' → {status}", "accent")
         time.sleep(0.5)
         self._set("learning", "learn", 100)

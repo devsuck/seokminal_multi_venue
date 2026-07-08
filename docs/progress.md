@@ -98,11 +98,11 @@
 - 테스트 4개 신규 파일, 커밋 히스토리: `ec7d30d..eeb1cd8` (main 직접 커밋)
 
 ### 다음 할 일
-- `research/run_polymarket_tick_collect.py`를 tmux로 상시 실행 시작 (아직 실행 안 함 — 이번 스코프 밖)
-- 몇 주 데이터 쌓인 뒤 모멘텀/오버리액션 가설 검증 spec→plan 별도 사이클
+- 몇 주 데이터 쌓인 뒤 모멘텀/오버리액션 가설 검증 spec→plan 별도 사이클 (그 전까진 그냥 방치, 건드릴 필요 없음)
 
 ### 막힌 부분/결정사항
 - 없음 — 전 과정 클린 (task reviewer 1회 fix cycle, 최종 브랜치 reviewer 1회 fix cycle, 이후 승인)
+- tmux 세션 `polymarket-tick`으로 2026-07-08 04:39 KST부터 상시 실행 시작 (`polymarket-arb`와 같은 머신, 별도 세션). 첫 SSL 인증서 에러(`CERTIFICATE_VERIFY_FAILED`, python.org 빌드가 시스템 CA 미설치) → `/Applications/Python 3.14/Install Certificates.command` 실행으로 해결 — 코드 버그 아니고 이 macOS의 환경설정 문제. 재시작 후 정상 동작 확인 (뉴스 마켓 틱 20초에 404개 적재 확인).
 
 ---
 

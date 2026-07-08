@@ -84,8 +84,9 @@ _PENDING_ENGINES = [
 def collect_candidates() -> tuple[list[Candidate], dict]:
     series = load_series()
     cands = _event_family_candidates(series)
-    from research.autoresearch.engines_factor import factor_candidates
-    cands += factor_candidates(series)   # KR 횡단면 팩터(사전등록 3: size·amihud·turnover)
+    from research.autoresearch.engines_factor import factor_candidates, load_fundamentals
+    fund = load_fundamentals(list(series.keys()))
+    cands += factor_candidates(series, fund=fund)  # KR 횡단면 팩터(사전등록 7: size·amihud·turnover·PER·PBR·ROIC·F-Score)
     return cands, series
 
 

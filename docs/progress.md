@@ -80,6 +80,32 @@
 
 ---
 
+## 2026-07-08: Polymarket 실시간 틱 수집기 (Phase 1 — 데이터 수집만)
+
+### 완료된 작업
+- Polymarket CLOB WSS 구독 기반 틱 수집기 신규 트랙 (`polymarket_arb` REST 폴링과 별개)
+- 브레인스토밍 → 스펙(`docs/superpowers/specs/2026-07-08-polymarket-tick-collector-design.md`) → 계획(`docs/superpowers/plans/2026-07-08-polymarket-tick-collector.md`) → subagent-driven 구현, 4개 태스크 전부 태스크리뷰+최종 브랜치리뷰 통과
+- 스코프: 라이브 스포츠/속보 마켓 확률 틱을 WSS로 받아 jsonl 적재만 함. 전략/판정 로직 없음. `api_server/polymarket_bot.py`(프로덕션 페이퍼봇) 손대지 않음.
+- 스펙 대비 2개 의도적 이탈: (1) news 거래량 급증 기준 드롭 — 지원 필드 없음, (2) 명시적 WSS unsubscribe 대신 5분 주기 전체 재연결로 대체 — 공개 문서에 unsubscribe 포맷 없음
+- 최종 브랜치리뷰에서 unattended 운영 리스크 2건 발견 후 수정: WSS clean-close 시 백오프 없이 즉시 재연결하던 핫루프 버그, `game_start_time` naive timestamp 하나가 전체 재선정 사이클을 죽이던 버그
+
+### 변경된 파일
+- `polymarket/client.py` — `_map_market()`에 `sports_market_type`, `game_start_time` 필드 추가
+- `research/polymarket_tick/market_selector.py` (신규) — sports/news 분류 순수함수
+- `research/polymarket_tick/ws_collector.py` (신규) — CLOB WSS 클라이언트 + 틱 파싱 (`backends/kis/ws_client.py` 패턴 재사용)
+- `research/run_polymarket_tick_collect.py` (신규) — 무한루프 진입점, 5분 재선정 + WSS 스트리밍 + 지수백오프
+- `pyproject.toml` — `websockets>=15.0` 의존성 추가
+- 테스트 4개 신규 파일, 커밋 히스토리: `ec7d30d..eeb1cd8` (main 직접 커밋)
+
+### 다음 할 일
+- `research/run_polymarket_tick_collect.py`를 tmux로 상시 실행 시작 (아직 실행 안 함 — 이번 스코프 밖)
+- 몇 주 데이터 쌓인 뒤 모멘텀/오버리액션 가설 검증 spec→plan 별도 사이클
+
+### 막힌 부분/결정사항
+- 없음 — 전 과정 클린 (task reviewer 1회 fix cycle, 최종 브랜치 reviewer 1회 fix cycle, 이후 승인)
+
+---
+
 ## 작업 히스토리
 
 ### 2026-06-21

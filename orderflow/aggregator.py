@@ -20,7 +20,7 @@ class OrderflowAggregator:
         self._heatmap: dict[tuple[float, float], HeatmapCell] = {}
 
     def _round_price(self, price: float) -> float:
-        return math.floor(price / self._tick_size) * self._tick_size
+        return round(math.floor(price / self._tick_size + 1e-9) * self._tick_size, 8)
 
     def _bucket(self, ts: float, bucket_sec: float) -> float:
         return math.floor(ts / bucket_sec) * bucket_sec

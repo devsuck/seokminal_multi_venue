@@ -5094,6 +5094,9 @@ app.include_router(graph_router)
 from api_server.router_ict import router as ict_router
 app.include_router(ict_router)
 
+from api_server.router_orderflow import router as orderflow_router
+app.include_router(orderflow_router)
+
 
 @app.on_event("startup")
 async def _start_dart_bot() -> None:

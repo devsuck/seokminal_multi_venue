@@ -15,6 +15,8 @@ RECONNECT_MAX_DELAY = 60.0
 TICK_SIZE_BY_SYMBOL = {"BTC.HL": 1.0, "NQ": 0.25}
 DEFAULT_TICK_SIZE = 1.0
 
+SUBSCRIBER_QUEUE_MAXSIZE = 1000
+
 
 def _default_adapter_factory(symbol: str):
     if symbol.endswith(".HL"):
@@ -46,7 +48,7 @@ class OrderflowManager:
             task = asyncio.ensure_future(self._run(symbol, aggregator))
             worker = _SymbolWorker(task=task, aggregator=aggregator)
             self._workers[symbol] = worker
-        queue: asyncio.Queue = asyncio.Queue()
+        queue: asyncio.Queue = asyncio.Queue(maxsize=SUBSCRIBER_QUEUE_MAXSIZE)
         worker.subscribers.add(queue)
         return queue, worker.aggregator.snapshot()
 
@@ -59,20 +61,30 @@ class OrderflowManager:
             worker.task.cancel()
             del self._workers[symbol]
 
+    def _put(self, queue: asyncio.Queue, msg: dict) -> None:
+        try:
+            queue.put_nowait(msg)
+        except asyncio.QueueFull:
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            queue.put_nowait(msg)
+
     def _broadcast(self, symbol: str, messages: list[dict]) -> None:
         worker = self._workers.get(symbol)
         if worker is None:
             return
         for queue in worker.subscribers:
             for msg in messages:
-                queue.put_nowait(msg)
+                self._put(queue, msg)
 
     def _broadcast_status(self, symbol: str, state: str) -> None:
         worker = self._workers.get(symbol)
         if worker is None:
             return
         for queue in worker.subscribers:
-            queue.put_nowait({"type": "status", "state": state})
+            self._put(queue, {"type": "status", "state": state})
 
     async def _run(self, symbol: str, aggregator: OrderflowAggregator) -> None:
         delay = RECONNECT_BASE_DELAY

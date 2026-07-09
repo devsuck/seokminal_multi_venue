@@ -82,6 +82,30 @@ def test_parse_hl_message_ignores_malformed_json():
     assert parse_hl_message("not json", coin="BTC") == []
 
 
+def test_parse_hl_message_ignores_l2book_missing_field():
+    raw = json.dumps({
+        "channel": "l2Book",
+        "data": {
+            "coin": "BTC", "time": 1720000000000,
+            "levels": [
+                [{"sz": "1.5", "n": 2}],  # px 없음
+                [{"px": "65010.0", "sz": "2.0", "n": 1}],
+            ],
+        },
+    })
+    assert parse_hl_message(raw, coin="BTC") == []
+
+
+def test_parse_hl_message_ignores_trades_missing_field():
+    raw = json.dumps({
+        "channel": "trades",
+        "data": [
+            {"coin": "BTC", "side": "B", "sz": "0.1", "time": 1720000001000},  # px 없음
+        ],
+    })
+    assert parse_hl_message(raw, coin="BTC") == []
+
+
 async def test_stream_subscribes_l2book_and_trades_then_yields_parsed_events():
     raw_book = json.dumps({
         "channel": "l2Book",

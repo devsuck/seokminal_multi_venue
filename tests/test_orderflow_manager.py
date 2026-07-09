@@ -67,3 +67,18 @@ async def test_reconnects_with_backoff_then_broadcasts_live_before_delta():
     assert live_msg == {"type": "status", "state": "live"}
     assert delta_msg["type"] == "footprint_delta"
     mock_sleep_obj.assert_any_call(RECONNECT_BASE_DELAY)
+
+
+async def test_put_drops_oldest_message_when_queue_full():
+    manager = OrderflowManager(adapter_factory=lambda symbol: _one_shot_stream([]))
+    queue: asyncio.Queue = asyncio.Queue(maxsize=2)
+
+    manager._put(queue, {"seq": 1})
+    manager._put(queue, {"seq": 2})
+    assert queue.full()
+
+    manager._put(queue, {"seq": 3})
+
+    assert queue.qsize() == 2
+    remaining = [queue.get_nowait(), queue.get_nowait()]
+    assert remaining == [{"seq": 2}, {"seq": 3}]

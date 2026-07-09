@@ -1,0 +1,108 @@
+"""IBKR 심볼별 지속 연결 어댑터 — reqMktDepth + reqTickByTickData(Last, BidAsk) 동시 구독.
+기존 backends/ib/client.py의 IBClient(호출 단위 연결)는 건드리지 않는다 — 이건 별도 클래스."""
+import asyncio
+import datetime as dt
+import os
+from collections.abc import AsyncIterator
+
+from ib_async import IB
+from ib_async.contract import Contract, Future, Stock
+
+from orderflow.models import OrderBookLevel, OrderBookSnapshot, TradeEvent
+from orderflow.tick_rule import classify
+
+DEPTH_ROWS = 10
+_FUTURES_SYMBOLS = {"NQ": "CME"}
+
+
+class IBOrderflowClient:
+    def __init__(
+        self,
+        host: str | None = None,
+        port: int = 7497,
+        client_id: int = 1,
+        ib: IB | None = None,
+    ) -> None:
+        self._host = host or os.environ.get("IB_HOST", "127.0.0.1")
+        self._port = port
+        self._client_id = client_id
+        self._ib = ib if ib is not None else IB()
+
+    def _contract(self, symbol: str) -> Contract:
+        exchange = _FUTURES_SYMBOLS.get(symbol)
+        if exchange:
+            return Future(symbol=symbol, exchange=exchange, currency="USD")
+        return Stock(symbol, "SMART", "USD")
+
+    async def stream(
+        self, symbol: str, connect_timeout: float = 15.0
+    ) -> AsyncIterator[OrderBookSnapshot | TradeEvent]:
+        await self._ib.connectAsync(self._host, self._port, self._client_id, timeout=connect_timeout)
+        contract = self._contract(symbol)
+        await self._ib.qualifyContractsAsync(contract)
+
+        last_ticker = self._ib.reqTickByTickData(contract, "Last")
+        bidask_ticker = self._ib.reqTickByTickData(contract, "BidAsk")
+        depth_ticker = self._ib.reqMktDepth(contract, numRows=DEPTH_ROWS)
+
+        last_iter = last_ticker.updateEvent.__aiter__()
+        bidask_iter = bidask_ticker.updateEvent.__aiter__()
+        depth_iter = depth_ticker.updateEvent.__aiter__()
+
+        last_task = asyncio.ensure_future(last_iter.__anext__())
+        bidask_task = asyncio.ensure_future(bidask_iter.__anext__())
+        depth_task = asyncio.ensure_future(depth_iter.__anext__())
+
+        best_bid: float | None = None
+        best_ask: float | None = None
+
+        try:
+            while True:
+                done, _ = await asyncio.wait(
+                    {last_task, bidask_task, depth_task}, return_when=asyncio.FIRST_COMPLETED
+                )
+
+                if bidask_task in done:
+                    try:
+                        bidask_task.result()
+                    except StopAsyncIteration:
+                        return
+                    for tick in bidask_ticker.tickByTicks:
+                        best_bid, best_ask = tick.bidPrice, tick.askPrice
+                    bidask_ticker.tickByTicks.clear()
+                    bidask_task = asyncio.ensure_future(bidask_iter.__anext__())
+
+                if last_task in done:
+                    try:
+                        last_task.result()
+                    except StopAsyncIteration:
+                        return
+                    for tick in last_ticker.tickByTicks:
+                        if best_bid is not None and best_ask is not None:
+                            side = classify(tick.price, best_bid, best_ask)
+                            yield TradeEvent(
+                                symbol=symbol,
+                                ts=tick.time.timestamp(),
+                                price=tick.price,
+                                size=tick.size,
+                                side=side,
+                            )
+                    last_ticker.tickByTicks.clear()
+                    last_task = asyncio.ensure_future(last_iter.__anext__())
+
+                if depth_task in done:
+                    try:
+                        depth_task.result()
+                    except StopAsyncIteration:
+                        return
+                    yield OrderBookSnapshot(
+                        symbol=symbol,
+                        ts=dt.datetime.now(dt.timezone.utc).timestamp(),
+                        bids=[OrderBookLevel(price=lv.price, size=lv.size) for lv in depth_ticker.domBids],
+                        asks=[OrderBookLevel(price=lv.price, size=lv.size) for lv in depth_ticker.domAsks],
+                    )
+                    depth_task = asyncio.ensure_future(depth_iter.__anext__())
+        finally:
+            for task in (last_task, bidask_task, depth_task):
+                if not task.done():
+                    task.cancel()

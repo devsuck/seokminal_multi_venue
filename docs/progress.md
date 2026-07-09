@@ -3,7 +3,7 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
-## 현재 상태 (마지막 업데이트: 2026-07-08 세션3)
+## 현재 상태 (마지막 업데이트: 2026-07-08 세션6)
 
 ### 완료된 작업
 
@@ -146,6 +146,133 @@
 ### 막힌 부분/결정사항
 - composite REJECT_REDTEAM(cost_stress) 사유는 재검토 대상 아님 — "왜 이거 안 씀" 질문 다시 나오면 이 항목 참고
 - size_value_tilt/turnover_value_tilt는 시도했다가 방향 잘못 짚어서 폐기한 거라 재시도 안 함(코드에 흔적 없음, 이 로그가 유일한 기록)
+
+---
+
+## 2026-07-08 (세션4): ICT 조합 백테스트 페이지 + 프리셋/검색/타임프레임 확장
+> ⚠️ 이 세션의 "프리셋(기각확정 재현)" 별도 탭 구조는 세션5에서 폐기됨 — 아래 내용은 히스토리 기록용, 현재 UI와 다름. 최신 상태는 세션5 참고.
+
+### 완료된 작업
+- ICT 프리미티브(킬존·sweep·FVG·OB·BOS-CHoCH) 자유조합 AND백테스트 신규 페이지 `/ict` — 매칭random 대비 net/percentile/p-value/WF1·WF2 참고통계, 전부 REJECT 확정된 표준조합(experiment_registry) 경고 배너 상시 노출
+- "reject된 것도 실험" 요청 반영 — `research/ict/models_2024.MODELS` 6개 고정모델(전부 REJECT 확정)을 "프리셋(기각확정 재현)" 탭으로 노출, 모델 로직/파라미터는 원본 그대로 다른 심볼·기간에 재현만 가능(재검증 아님 명시)
+- 심볼 선택 plain `<select>` → 검색형 콤보박스(타이핑 필터, 라이브 크립토 태그 표시)
+- 타임프레임 1m/5m/15m/1h/4h/1d로 확장. 디스크 미보유분은 3단 폴백: ①직접저장 ②크립토(LIQUID_PERPS 25종)는 HL API 라이브조회+캐시(모든 tf) ③주식/ETF는 15m 원본→1h/4h만 pandas 리샘플 합성(1m/5m은 소스 없음, IB TWS 필요해서 미지원 — 에러 메시지로 명확히 안내)
+- Nautilus 카탈로그(`/bars` 등)가 1-DAY 고정이라 킬존(시간대) 프리미티브에 못 쓴다는 걸 이전 세션에 확인 → `research/data/intraday_store.py`(별도 평범 parquet)로 라우팅, 재확인 완료
+
+### 변경된 파일
+- `research/ict/combinator.py` — `evaluate_preset()` 신규(+공통 통계 꼬리부 `_stats_vs_random()`로 `evaluate_combo()`와 중복 제거), `PRESET_IDS` 추가
+- `api_server/router_ict.py` — `/ict/presets` GET 신규, `/ict/backtest`에 `preset` 필드(지정 시 `primitives` 무시), `_load_or_synthesize()`(라이브조회/리샘플 폴백), `/ict/symbols`에 `live_symbols` 추가
+- `tests/test_ict_combinator.py` — preset 관련 테스트 2개 추가(알수없는 프리셋 에러, 정상 실행)
+- `seokminal-dashboard/lib/api.ts` — `IctPresetsResponse`/`getIctPresets`, `IctSymbolsResponse.live_symbols`, `IctBacktestRequest.preset` 추가
+- `seokminal-dashboard/app/ict/page.tsx` — 조합빌더/프리셋 탭 전환, 검색형 심볼 콤보박스, 고정 6종 타임프레임 셀렉트, 라이브 심볼 뱃지
+- 브라우저로 3가지 다 라이브 검증: BTC 검색선택→4h AND콤보 실행(HL 라이브조회 성공, UNDERPOWERED 정상 렌더) / 프리셋탭 2024 Model→BTC 1m 재현 실행(라이브조회+진입 3건 UNDERPOWERED 정상 렌더) / AAPL 1h 프리셋(15m 리샘플 정상)
+- `pytest tests/` 773 passed, 기존 무관 pre-existing 4실패(test_auth 3개 + test_backtest_happy_path)만 유지. `tsc --noEmit` 클린
+
+### 다음 할 일
+- 없음(이 트랙 정리 완료)
+- DART 소형주 캐시 확장(세션3에서 남긴 할 일)은 백그라운드에서 계속 진행 중(PID 39906, 2026-07-08 세션4 종료 시점 기준 2022년도 처리 중, 4개 연도 중 1번째) — 다음 세션에서 완료 여부·최종 커버리지 숫자 확인 필요
+
+### 막힌 부분/결정사항
+- 없음. 프리셋 탭은 재검증 아니라는 점 페이지 문구에 상시 고정 — "왜 프리셋 켜놨는데 REJECT라고 하냐" 질문 나오면 이 항목 참고
+
+---
+
+## 2026-07-08 (세션5): ICT 프리셋 탭 폐기 → 전부 조합빌더로 병합 + Turtle Soup 신규
+
+### 완료된 작업
+- 사용자 피드백: "ICT는 여러 전략을 동시에 섞어서 쓰는 거지 CISD 하나로 매매하는 게 아니다. 프리셋 탭(단일모델 고정)이 구조적으로 틀렸다. 터틀 수프도 추가해서 전부 조합빌더에 섞어라." → 세션4에서 만든 별도 "프리셋(기각확정 재현)" 탭을 완전히 제거하고, 프리셋 6종의 핵심 로직(OTE/Unicorn/iFVG/CISD)을 양방향(bullish/bearish) 객관적 프리미티브로 일반화해 조합빌더에 흡수. 새 패턴 Turtle Soup(확정 swing 가짜돌파 후 반전, 기존 sweep과 달리 raw N봉 lookback이 아니라 확정 구조적 swing 포인트 사용) 신규 추가
+- 결과: 프리미티브 5종 → 10종(killzone/sweep/fvg/order_block/market_structure/**ote/unicorn/ifvg/cisd/turtle_soup**), 전부 단일 빌더에서 AND 자유조합. 프리셋 모드/탭 개념 자체가 코드에서 사라짐(`evaluate_preset`, `PRESET_IDS`, `/ict/presets` 엔드포인트, `getIctPresets`, `IctBacktestRequest.preset` 전부 삭제)
+
+### 변경된 파일
+- `research/ict/primitives.py` — `ote_touches`, `unicorn_zones`, `ifvg_events`, `cisd_events`, `turtle_soup_events` 5개 함수 신규(전부 idx+type(bullish/bearish) 태그된 이벤트 리스트 반환, 기존 컨벤션 그대로)
+- `research/ict/combinator.py` — 전면 재작성. `PRESET_IDS`/`evaluate_preset`/`models_2024.MODELS` 의존 제거, `PRIMITIVE_IDS` 10개로 확장, `evaluate_combo()`가 신규 5개까지 전부 dispatch
+- `api_server/router_ict.py` — `/ict/presets` 삭제, `IctBacktestRequest`에서 `preset` 필드 제거하고 `window`/`near`/`min_run`/`confirm` 파라미터 추가(각각 ote·ifvg / unicorn / cisd / turtle_soup용)
+- `seokminal-dashboard/lib/api.ts` — `IctPresetsResponse`/`getIctPresets`/`preset?` 제거, `IctBacktestRequest`에 `window`/`near`/`min_run`/`confirm` 추가
+- `seokminal-dashboard/app/ict/page.tsx` — `mode`/`preset` state·탭 UI 전부 제거, `PRIMITIVES` 배열 10개로 확장, 선택된 프리미티브에 따라 조건부 파라미터 필드(swing_k/window/near/min_run/confirm) 노출
+- `tests/test_ict_combinator.py` — 프리셋 관련 테스트 제거, `_zigzag_bars()` 픽스처(스윙·BOS·갭·연속캔들열 골고루 발생) 신규 + 신규 프리미티브 3개 테스트(크래시 없음, AND결합 부분집합 성질, 전체 10종 dispatch 가능)
+- `pytest tests/test_ict_combinator.py tests/test_ict_primitives.py -q` 16 passed, `tsc --noEmit` 클린, 브라우저로 killzone+CISD+Turtle Soup 혼합조합(구/신 프리미티브 섞은 조합) 실행 확인 — SPY/15m, 진입 20건, percentile 65.6%/p=0.35(정상 렌더, 참고치 문구 유지)
+
+### 다음 할 일
+- 없음(이 트랙 정리 완료). 신규 5개 프리미티브도 표준조합 REJECT 결론과 마찬가지로 정식 CANDIDATE 파이프라인 대상 아님 — 사용자가 조합빌더에서 유의미해 보이는 조합을 찾으면 그때 BH-FDR 정식 배치로 넘기는 별도 작업 필요(지금 계획 없음)
+
+### 막힌 부분/결정사항
+- 없음. 프리셋 탭은 사용자 피드백으로 아키텍처 자체가 틀렸다고 판단해 완전 제거 — 재추가 요청 오면 이 항목 참고("ICT는 단일모델이 아니라 조합으로 쓴다"가 이유)
+
+---
+
+## 2026-07-08 (세션6): ICT 조합빌더 캔들차트 오버레이 신규
+
+### 완료된 작업
+- 사용자 피드백: "심볼 입력하면 차트나오고 해당 조건들 입력하면 차트에서 지표처럼 나오는 그런거 안되나? fvg,ifvg,cisd 이런것도 다 나오고 실버불렛이나 터틀수프가는 것도 다 시각적으로보이는?" → 기존엔 통계 테이블만 있었음(차트 자체가 없었음), 선택한 프리미티브를 캔들차트 위에 zone(FVG/OB/Unicorn=사각형)·point(sweep/BOS/OTE/iFVG/CISD/Turtle Soup=화살표 마커)·band(killzone=전체높이 반투명 세로띠)로 오버레이 표시하는 신규 기능
+- 핵심 설계: `evaluate_combo()`의 AND결합 `entries_idx`(통계용, 전 프리미티브 교집합)와 완전히 분리된 `detect_events()`(차트용, 프리미티브별 원본 이벤트 개별 노출, AND결합 안 함) — "조합으로 뭐가 같이 터졌는지"와 "각 개념이 개별로 어디서 발생했는지"를 다른 레이어로 유지
+- `lightweight-charts`에 사각형/존 렌더링 내장기능이 없어서 `ISeriesPrimitive` 플러그인 API로 직접 구현(zone renderer, fancy-canvas 비트맵 좌표 사용) — 사전 예시 없이 `node_modules` 타입정의 직접 읽고 작성, 첫 컴파일에 클린 통과
+- 브라우저 검증: SPY/15m 전체 히스토리로 killzone+sweep+FVG+BOS+CISD+Turtle Soup 6종 혼합 렌더 확인(화살표 마커 정상, entries=0/UNDERPOWERED는 6종 AND교집합이 좁아서 나온 정상 결과) + FVG 단독선택으로 확대해서 파란 사각형 zone이 캔들 위 가격갭 위치에 정확히 겹치는 것 zoom 스크린샷으로 확인
+
+### 변경된 파일
+- `research/ict/combinator.py` — `detect_events()` 신규(파일 끝에 추가, 기존 `evaluate_combo()` 무변경). `POINT_PRIMITIVES`/`ZONE_PRIMITIVES`/`BAND_PRIMITIVES` 상수 + `_runs()`(연속인덱스→구간 리스트, killzone 밴드용). unicorn은 zone bounds가 없어서(`unicorn_zones()`가 `{idx,type}`만 반환) `(idx,type)` 키로 `fair_value_gaps()` 매칭 zone을 재사용
+- `api_server/router_ict.py` — `_load_filtered()` 헬퍼로 로드/날짜필터/최소봉수체크 추출(backtest·events 양쪽 공유), `IctBar`/`IctEventsResponse` 모델 신규, `POST /ict/events` 엔드포인트 신규
+- `seokminal-dashboard/lib/api.ts` — `IctBar`/`IctEvent`/`IctEventsResponse` 타입 + `getIctEvents()` 신규(요청 바디는 기존 `IctBacktestRequest` 재사용)
+- `seokminal-dashboard/components/ict/IctChart.tsx` — 신규 파일. 캔들차트 + zone 사각형(`ZoneOverlay`/`ZonePaneView`/`ZoneRenderer`, `ISeriesPrimitive` 커스텀 플러그인) + point 화살표 마커(`createSeriesMarkers`) 렌더링. `ICT_LEGEND` export(페이지 범례용)
+- `seokminal-dashboard/app/ict/page.tsx` — `/ict/events` 병렬 fetch(별도 `chartAbortRef`, 실패해도 통계 결과엔 영향 안 줌) + 통계 패널 위에 범례+`<IctChart>` 렌더 블록 추가
+- `tsc --noEmit` 클린, `pytest tests/test_ict_combinator.py tests/test_ict_primitives.py -q` 16 passed(기존 그대로, `detect_events()` 자체 단위테스트는 아직 없음)
+
+### 다음 할 일
+- `detect_events()` 전용 pytest 없음(zone/point/band 3종 shape 검증하는 가벼운 테스트 1개 정도가 적당해 보임, 아직 사용자 요청은 아님 — 필요시 제안)
+- 범례 스와치 색상이 `style={{ backgroundColor: ... }}` inline style 사용 중 — CLAUDE.md의 `style={{}}` 금지 규정(예외: 차트 컨테이너 height)에 엄밀히는 안 걸리는 케이스지만 프리미티브별 동적 색상이라 디자인 토큰으로 못 뺌, 필요시 재검토
+
+### 막힌 부분/결정사항
+- 없음
+
+---
+
+## 2026-07-08 (세션7): GC/ES/NQ/EURUSD/USDJPY 인트라데이 데이터 수집
+
+### 완료된 작업
+- 배경: ICT는 알고리즘/기관 오더플로우 개념이라 개인주식보다 유동성 큰 선물/FX가 더 맞는다는 논의 → GC(금)/ES/NQ(지수선물)/EURUSD/USDJPY/XAU 데이터 확보·매매가능성 조사부터 시작
+- `research/data/futures_intraday_loader.py` 신규: IB `ContFuture`(GC/ES/NQ) 인트라데이 로더. **`ContFuture`는 `endDateTime`을 과거로 지정하는 요청 자체를 거부**(Error 10339, "continuous future" 제약) — 그래서 만기별계약처럼 커서로 과거를 걸어갈 수 없고, `endDateTime=""`(현재) 단발요청에서 `durationStr`만 실측으로 키워 상한을 찾음: 15m="6 M", 5m="1 M", 1m="1 M"(그 이상은 사이즈초과로 조용히 0봉). GC 6M 풀은 클라이언트 기본 60s 타임아웃 초과로 간헐 실패 → `timeout=120` 추가로 해결
+- `research/data/fx_intraday_loader.py` 신규: IB `Forex`(EURUSD/USDJPY) 로더. Forex는 ContFuture와 달리 과거 `endDateTime` 커서가 허용돼서 15m은 주단위 청크 백필(156주≈3년), 1m/5m은 마찬가지로 사이즈상한 있어 단발요청만(실측: 1m="1 M", 5m="3 M")
+- **IB 계정 이슈 2건 직접 해결**: (1) FX market data가 페이퍼계좌에 자동 상속 안 됨 → Client Portal에서 라이브↔페이퍼 계좌 마켓데이터 공유 설정+TWS 재시작 필요 (2) 그 후에도 Error 162 "Trading TWS session is connected from a different IP address" → 원인은 IBKR 웹포탈에 동시 로그인된 세션이었음, 포탈 로그아웃 후 해결
+- **XAUUSD는 미해결**: `Forex('XAUUSD')` 자체가 IB에서 `qualify` 안 됨(Error 200, no security definition) — 계정에 보이는 "Physical Metals and Commodities(L1)" 구독은 다른 contract 타입(Commodity/CFD 등) 필요로 추정, 이번 세션에서 미시도
+- 최종 수집 결과(모두 `data/intraday/{SYMBOL}_{TF}.parquet`, `/ict/symbols`에 자동 노출 확인):
+
+| 심볼 | 1m | 5m | 15m |
+|---|---|---|---|
+| GC | 29,880봉 (06-08~07-08) | 5,976봉 (06-08~07-08) | 12,076봉 (01-04~07-08) |
+| ES | 31,260봉 (06-07~07-08) | 6,252봉 (06-07~07-08) | 12,119봉 (01-04~07-08) |
+| NQ | 31,260봉 (06-07~07-08) | 6,252봉 (06-07~07-08) | 12,119봉 (01-04~07-08) |
+| EURUSD | 29,954봉 (06-09~07-08) | 17,961봉 (04-12~07-08) | 12,578봉 (01-02~07-08) |
+| USDJPY | 29,955봉 (06-09~07-08) | 17,961봉 (04-12~07-08) | 12,578봉 (01-02~07-08) |
+
+- 1h/4h는 별도수집 불필요 — 기존 `router_ict.py`의 `_resample_from_15m()`이 15m 원본에서 자동 합성(GC/EURUSD 1h로 브라우저·API 양쪽 확인)
+- 브라우저 검증: `/ict` 페이지에서 GC 15m + FVG로 실제 백테스트 실행 확인(진입수 2140, eligible 12067≈전체봉수, percentile 93%, FVG zone 사각형 캔들차트 위 정상 렌더링), 가격 스케일도 API 원본(4097~4508)과 일치 확인
+
+**XAUUSD 대안 — HL GOLD 트랙 추가**
+- IB XAUUSD가 안 풀려서(`Forex('XAUUSD')` qualify 자체 실패) 대안으로 Hyperliquid에서 금 트래킹 상품 조사
+- 1차로 HL 기본 퍼프 유니버스에서 `PAXG`(Pax Gold, 현물 1oz 담보 토큰) 발견 → `LIQUID_PERPS`(`research/data/hl_funding_loader.py`)에 추가. 근데 거래량 $440만/day로 얇음(HL 내 CRV~AAVE급, BTC의 1/500)
+- 사용자가 "GOLD-USDC 퍼프 있잖아"로 재확인 요청 → HL의 빌더배포 dex(HIP-3) `"xyz"`에서 `xyz:GOLD` 발견(`{"type":"perpDexs"}` API로 조회, 기본 `{"type":"meta"}` 호출엔 안 잡힘 — dex 파라미터 필요). 가격 4079.9(GC 4097과 거의 일치), 거래량 **$4,390만/day**(PAXG의 10배) — 이쪽이 진짜 쓸만한 트랙. `xyz:SILVER`($2억/day), `xyz:CL`(원유, $4.5억/day), `xyz:EUR/JPY/GBP`(FX, 유동성은 얇음)도 같은 dex에 존재 확인만 함(미추가)
+- `xyz:GOLD`도 `LIQUID_PERPS`에 추가 — `candleSnapshot` API가 `coin` 필드에 `"xyz:GOLD"` 프리픽스 그대로 받아줘서 `hl_candle_loader.py`/`router_ict.py` 코드 변경 전혀 없이 그대로 작동(콜론 포함 심볼도 `intraday_store.path_for()`가 파일명으로 문제없이 저장)
+- XAUT0/USDC, XAUM 등 HL 스팟 금 페어도 확인했으나 XAUT0는 markPx가 실제 금값과 안 맞고(0.34, 페깅 깨짐) 거래량도 $6,951/day로 사실상 죽은 마켓 — 미채택
+- 최종: PAXG, xyz:GOLD 둘 다 1m/5m/15m 라이브조회+parquet 캐시 확인 완료(크립토 계열은 `LIQUID_PERPS`에만 넣으면 `_load_or_synthesize`가 모든 tf 자동 라이브조회+캐시하는 기존 구조라 추가 코드 불필요)
+
+| 심볼 | 1m | 5m | 15m | 비고 |
+|---|---|---|---|---|
+| PAXG | 5,056봉 (07-05~07-08) | 5,011봉 (06-21~07-08) | 5,004봉 (05-17~07-08) | 거래량 얇음($440만/day) |
+| xyz:GOLD | 5,042봉 (07-05~07-08) | 5,008봉 (06-21~07-08) | 5,003봉 (05-17~07-08) | GC 대체 주력($4,390만/day) |
+
+### 변경된 파일
+- `research/data/futures_intraday_loader.py` — `--tf {1m,5m,15m}` 파라미터 추가(기존 15m 전용 → 3개 tf 지원), `BAR_SIZE`/`MAX_DURATION`을 tf별 dict로 변경
+- `research/data/fx_intraday_loader.py` — 전면 재작성. `--tf` 추가, 15m은 기존 커서 백필 유지, 1m/5m은 단발요청 경로(`backfill_single_shot`) 신규. XAUUSD는 docstring에 미지원 사유 명시, 기본 `--symbols`에서 제거(EURUSD,USDJPY만)
+- `research/data/hl_funding_loader.py` — `LIQUID_PERPS`에 `PAXG`, `xyz:GOLD` 추가
+- `docs/progress.md` — 이 항목
+
+### 다음 할 일
+- XAUUSD(IB 정식 금현물) 데이터는 여전히 미해결 — 필요하면 `Commodity`/`CFD` contract 타입 재조사. 다만 `xyz:GOLD`로 사실상 대체 가능해서 우선순위 낮음
+- `backends/ib/order_client.py`는 아직 `Stock` 주문만 지원, HL 쪽도 PAXG/xyz:GOLD 주문 실행 코드 없음 — GC/ES/NQ/EURUSD/USDJPY/GOLD로 실제 매매하려면 선물/FX/HL-빌더퍼프 주문 실행 코드 신규 필요(이번 세션은 데이터만, 집행은 범위 밖)
+- 사용자가 ICT 조합빌더에서 이 심볼들로 유의미한 조합을 찾으면 BH-FDR 정식 파이프라인행 검토
+- `xyz:SILVER`/`xyz:CL`(원유)도 거래량 괜찮아 보임 — 필요시 같은 방식으로 `LIQUID_PERPS` 추가만 하면 됨(코드 변경 불필요, 확인됨)
+
+### 막힌 부분/결정사항
+- XAUUSD(IB) 보류(계정 contract 매핑 미해결) — 대신 `xyz:GOLD`(HL 빌더퍼프)로 사실상 대체, GC/ES/NQ/EURUSD/USDJPY/xyz:GOLD 6개로 진행
 
 ---
 

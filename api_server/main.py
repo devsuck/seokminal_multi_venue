@@ -5090,6 +5090,10 @@ app.include_router(lab_router)
 from api_server.graph_api import router as graph_router
 app.include_router(graph_router)
 
+# ── ICT 프리미티브 자유조합 백테스트(탐색용) ──────────────────────────────────────
+from api_server.router_ict import router as ict_router
+app.include_router(ict_router)
+
 
 @app.on_event("startup")
 async def _start_dart_bot() -> None:

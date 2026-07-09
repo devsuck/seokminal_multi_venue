@@ -24,7 +24,7 @@ HOUR_MS = 3_600_000
 LIQUID_PERPS = [
     "BTC", "ETH", "SOL", "AVAX", "BNB", "ARB", "OP", "LINK", "LTC", "DOGE",
     "SUI", "INJ", "ATOM", "DYDX", "APT", "MATIC", "NEAR", "TIA", "SEI", "ORDI",
-    "WLD", "PEPE", "kPEPE", "CRV", "AAVE",
+    "WLD", "PEPE", "kPEPE", "CRV", "AAVE", "PAXG", "xyz:GOLD",
 ]
 
 

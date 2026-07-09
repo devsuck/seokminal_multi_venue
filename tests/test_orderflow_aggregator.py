@@ -56,12 +56,12 @@ def test_prunes_footprint_buckets_older_than_max_window():
 def test_round_price_guards_against_float_division_noise():
     """Regression test for float precision bug in _round_price with fractional tick sizes.
 
-    Without epsilon guard, 1.3 / 0.1 = 12.999999999999998 in Python, causing floor() to
-    incorrectly bucket price 1.3 at 1.2 instead of 1.3.
+    Without epsilon guard, 0.3 / 0.1 = 2.9999999999999996 in Python, causing floor() to
+    incorrectly bucket price 0.3 at 0.2 instead of 0.3.
     """
     agg = OrderflowAggregator(tick_size=0.1, footprint_bucket_sec=60.0)
-    d = agg.on_trade(_trade(price=1.3, size=1.0, side="buy", ts=1000.0))
-    assert d["price"] == 1.3, f"Expected price 1.3 but got {d['price']}"
+    d = agg.on_trade(_trade(price=0.3, size=1.0, side="buy", ts=1000.0))
+    assert d["price"] == 0.3, f"Expected price 0.3 but got {d['price']}"
     snap = agg.snapshot()
     prices = {c["price"] for c in snap["footprint"]}
-    assert 1.3 in prices, f"Price 1.3 not found in footprint. Got prices: {prices}"
+    assert 0.3 in prices, f"Price 0.3 not found in footprint. Got prices: {prices}"

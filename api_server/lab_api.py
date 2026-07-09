@@ -175,6 +175,27 @@ def lab_portfolio() -> dict:
     return data
 
 
+def _tmux_process_status(session: str, data_dir: str) -> dict:
+    """tmux 세션 생존 + 최신 데이터 파일 mtime으로 백그라운드 수집기 상태 판정."""
+    import datetime as _dt
+    import subprocess
+    from pathlib import Path
+
+    tmux_alive = subprocess.run(
+        ["tmux", "has-session", "-t", session], capture_output=True, timeout=5
+    ).returncode == 0
+
+    last_write = None
+    age_sec = None
+    files = sorted(Path(data_dir).glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if files:
+        mtime = files[0].stat().st_mtime
+        last_write = _dt.datetime.fromtimestamp(mtime, tz=_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        age_sec = int(_dt.datetime.now(_dt.timezone.utc).timestamp() - mtime)
+
+    return {"running": tmux_alive, "last_write": last_write, "age_sec": age_sec}
+
+
 @router.get("/status")
 def lab_status() -> dict:
     """모바일 상태 보드 — 서버·DART봇·AI루프·congress 한눈에."""
@@ -214,6 +235,16 @@ def lab_status() -> dict:
 
     # congress = 온디맨드 피드(상시봇 아님)
     out["congress"] = {"type": "on_demand_feed", "note": "페이지 열 때 가져옴(상시봇 아님)"}
+
+    # 백그라운드 tmux 프로세스 (폴리마켓 틱 수집기 / arb 스캐너)
+    try:
+        out["processes"] = {
+            "polymarket_tick": _tmux_process_status("polymarket-tick", "research/data/polymarket_tick"),
+            "polymarket_arb": _tmux_process_status("polymarket-arb", "research/data/polymarket_arb"),
+        }
+    except Exception as exc:  # noqa: BLE001
+        out["processes"] = {"error": str(exc)[:60]}
+
     return out
 
 

@@ -48,9 +48,7 @@ async def test_reconnects_with_backoff_then_broadcasts_live_before_delta():
         call_count += 1
         if call_count == 1:
             raise ConnectionError("boom")
-        # Yield on second call, then stop to prevent infinite loop
-        if call_count == 2:
-            yield _trade()
+        yield _trade()
 
     manager = OrderflowManager(adapter_factory=flaky)
 

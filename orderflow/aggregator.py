@@ -75,6 +75,15 @@ class OrderflowAggregator:
         self._prune(self._heatmap, bucket_ts, self._heatmap_max_window_sec)
         return deltas
 
+    def latest_book(self, book: OrderBookSnapshot, levels: int = 20) -> dict:
+        bids = sorted(book.bids, key=lambda lvl: lvl.price, reverse=True)[:levels]
+        asks = sorted(book.asks, key=lambda lvl: lvl.price)[:levels]
+        return {
+            "type": "book_snapshot",
+            "bids": [{"price": lvl.price, "size": lvl.size} for lvl in bids],
+            "asks": [{"price": lvl.price, "size": lvl.size} for lvl in asks],
+        }
+
     def snapshot(self) -> dict:
         return {
             "footprint": [c.model_dump() for c in self._footprint.values()],

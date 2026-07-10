@@ -6,6 +6,10 @@ def _trade(price, size, side, ts):
     return TradeEvent(symbol="BTC.HL", ts=ts, price=price, size=size, side=side)
 
 
+def _level(price, size):
+    return OrderBookLevel(price=price, size=size)
+
+
 def test_on_trade_accumulates_buy_and_sell_volume_in_same_bucket():
     agg = OrderflowAggregator(tick_size=1.0, footprint_bucket_sec=60.0)
     d1 = agg.on_trade(_trade(65000.4, 1.0, "buy", ts=1000.0))
@@ -65,3 +69,45 @@ def test_round_price_guards_against_float_division_noise():
     snap = agg.snapshot()
     prices = {c["price"] for c in snap["footprint"]}
     assert 0.3 in prices, f"Price 0.3 not found in footprint. Got prices: {prices}"
+
+
+def test_latest_book_sorts_best_first_and_caps_each_side():
+    agg = OrderflowAggregator()
+    book = OrderBookSnapshot(
+        symbol="BTC.HL",
+        ts=1000.0,
+        bids=[_level(99, 1), _level(101, 2), _level(100, 3)],
+        asks=[_level(105, 1), _level(103, 2), _level(104, 3)],
+    )
+    result = agg.latest_book(book, levels=2)
+    assert result == {
+        "type": "book_snapshot",
+        "bids": [{"price": 101, "size": 2}, {"price": 100, "size": 3}],
+        "asks": [{"price": 103, "size": 2}, {"price": 104, "size": 3}],
+    }
+
+
+def test_latest_book_uses_raw_unrounded_prices():
+    agg = OrderflowAggregator(tick_size=5.0)
+    book = OrderBookSnapshot(
+        symbol="BTC.HL",
+        ts=1000.0,
+        bids=[_level(100.37, 1)],
+        asks=[_level(100.81, 1)],
+    )
+    result = agg.latest_book(book)
+    assert result["bids"][0]["price"] == 100.37
+    assert result["asks"][0]["price"] == 100.81
+
+
+def test_latest_book_defaults_to_20_levels_per_side():
+    agg = OrderflowAggregator()
+    book = OrderBookSnapshot(
+        symbol="BTC.HL",
+        ts=1000.0,
+        bids=[_level(100 - i, 1) for i in range(30)],
+        asks=[_level(101 + i, 1) for i in range(30)],
+    )
+    result = agg.latest_book(book)
+    assert len(result["bids"]) == 20
+    assert len(result["asks"]) == 20

@@ -5097,6 +5097,9 @@ app.include_router(ict_router)
 from api_server.router_orderflow import router as orderflow_router
 app.include_router(orderflow_router)
 
+from api_server.router_options_flow import router as options_flow_router
+app.include_router(options_flow_router)
+
 
 @app.on_event("startup")
 async def _start_dart_bot() -> None:
@@ -5134,6 +5137,8 @@ async def _start_dart_bot() -> None:
                 pass
             await asyncio.sleep(6 * 3600)  # 6시간 주기
     asyncio.create_task(_lkg_scheduler())
+    from orderflow.gex import gex_poll_loop
+    asyncio.create_task(gex_poll_loop())
 
 
 # ── Market Overview ───────────────────────────────────────────────────────────

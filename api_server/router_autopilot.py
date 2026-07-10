@@ -1639,3 +1639,35 @@ def account_balances() -> dict:
          "allocated": round(hl_live, 2), "error": ven.get("hl_mainnet", {}).get("error")},
     ]
     return out
+
+
+@agents_router.get("/accounts/kis-holdings")
+def kis_holdings(mock: bool = True) -> dict:
+    """한투(KIS) 모의/실계좌 보유 종목. mock=false면 실계좌."""
+    from backends.kis.order_client import KISOrderClient
+    from api_server.kr_names import name_for
+
+    if mock:
+        kk, ks, kc = (os.environ.get("KIS_MOCK_APP_KEY", ""), os.environ.get("KIS_MOCK_APP_SECRET", ""),
+                      os.environ.get("KIS_MOCK_CANO", ""))
+    else:
+        kk, ks, kc = (os.environ.get("KIS_APP_KEY", ""), os.environ.get("KIS_APP_SECRET", ""),
+                      os.environ.get("KIS_CANO", ""))
+    if not (kk and ks and kc):
+        return {"holdings": [], "error": "KIS 키 없음"}
+
+    try:
+        c = KISOrderClient(kk, ks, kc, os.environ.get("KIS_ACNT_PRDT_CD", "01"), mock=mock)
+        out = []
+        for h in c.get_holdings():
+            entry = float(h.get("avg_price", 0) or 0)
+            cur = float(h.get("current", 0) or 0)
+            code = h.get("code")
+            out.append({
+                "code": code, "name": name_for(code) or code,
+                "qty": h.get("qty"), "avg_price": entry, "current": cur,
+                "return_pct": round((cur - entry) / entry * 100, 2) if entry else None,
+            })
+        return {"holdings": out, "error": None}
+    except Exception as exc:  # noqa: BLE001
+        return {"holdings": [], "error": str(exc)[:120]}

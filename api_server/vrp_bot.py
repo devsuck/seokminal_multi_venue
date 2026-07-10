@@ -81,14 +81,19 @@ def _ib_host() -> str:
     return os.environ.get("IB_HOST", "127.0.0.1")
 
 
+def _ib_port() -> int:
+    # 이 계정의 TWS 페이퍼 API 포트는 7498 (기본 7497 아님 — Global Configuration에서 커스텀).
+    return int(os.environ.get("IB_PORT", "7498"))
+
+
 def _data_client():
     from backends.ib.client import IBClient
-    return IBClient(host=_ib_host(), client_id=random.randint(700, 799))
+    return IBClient(host=_ib_host(), port=_ib_port(), client_id=random.randint(700, 799))
 
 
 def _order_client():
     from backends.ib.order_client import IBOrderClient
-    return IBOrderClient(host=_ib_host(), port=7497,
+    return IBOrderClient(host=_ib_host(), port=_ib_port(),
                           client_id=int(os.environ.get("IB_VRP_ORDER_CLIENT_ID", "77")))
 
 

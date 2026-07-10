@@ -3,11 +3,20 @@ from asyncio import sleep as _real_sleep
 from unittest.mock import AsyncMock, patch
 
 from orderflow.manager import RECONNECT_BASE_DELAY, OrderflowManager
-from orderflow.models import TradeEvent
+from orderflow.models import OrderBookLevel, OrderBookSnapshot, TradeEvent
 
 
 def _trade(price=100.0, size=1.0, side="buy", ts=1000.0, symbol="BTC.HL"):
     return TradeEvent(symbol=symbol, ts=ts, price=price, size=size, side=side)
+
+
+def _book(ts=1000.0, symbol="BTC.HL"):
+    return OrderBookSnapshot(
+        symbol=symbol,
+        ts=ts,
+        bids=[OrderBookLevel(price=100.0, size=1.0)],
+        asks=[OrderBookLevel(price=101.0, size=1.0)],
+    )
 
 
 async def _one_shot_stream(events):
@@ -82,3 +91,76 @@ async def test_put_drops_oldest_message_when_queue_full():
     assert queue.qsize() == 2
     remaining = [queue.get_nowait(), queue.get_nowait()]
     assert remaining == [{"seq": 2}, {"seq": 3}]
+
+
+async def test_book_snapshot_broadcast_on_first_book_event():
+    manager = OrderflowManager(adapter_factory=lambda symbol: _one_shot_stream([_book(ts=1000.0)]))
+    queue, _ = manager.subscribe("BTC.HL")
+
+    msgs = []
+    for _ in range(2):
+        msgs.append(await asyncio.wait_for(queue.get(), timeout=1.0))
+    types = {m["type"] for m in msgs}
+    assert "book_snapshot" in types
+    book_msg = next(m for m in msgs if m["type"] == "book_snapshot")
+    assert book_msg["bids"] == [{"price": 100.0, "size": 1.0}]
+    assert book_msg["asks"] == [{"price": 101.0, "size": 1.0}]
+
+    manager.unsubscribe("BTC.HL", queue)
+
+
+async def test_book_snapshot_throttled_within_150ms_window():
+    clock = {"t": 1000.0}
+
+    def now_fn():
+        return clock["t"]
+
+    manager = OrderflowManager(
+        adapter_factory=lambda symbol: _one_shot_stream([_book(ts=1000.0), _book(ts=1000.05)]),
+        now_fn=now_fn,
+    )
+    queue, _ = manager.subscribe("BTC.HL")
+
+    msgs = []
+    try:
+        while True:
+            msgs.append(await asyncio.wait_for(queue.get(), timeout=0.2))
+    except asyncio.TimeoutError:
+        pass
+
+    book_msgs = [m for m in msgs if m["type"] == "book_snapshot"]
+    assert len(book_msgs) == 1  # 두 번째 이벤트는 150ms 이내라 스로틀됨(now_fn이 고정이므로)
+
+    manager.unsubscribe("BTC.HL", queue)
+
+
+async def test_book_snapshot_broadcast_again_after_throttle_window_elapses():
+    clock = {"t": 1000.0}
+
+    def now_fn():
+        return clock["t"]
+
+    events = [_book(ts=1000.0), _book(ts=1000.2)]
+    call_count = {"n": 0}
+
+    async def stream(symbol):
+        for e in events:
+            call_count["n"] += 1
+            if call_count["n"] == 2:
+                clock["t"] = 1000.2  # 150ms 스로틀 윈도우 경과 시뮬레이션
+            yield e
+
+    manager = OrderflowManager(adapter_factory=stream, now_fn=now_fn)
+    queue, _ = manager.subscribe("BTC.HL")
+
+    msgs = []
+    try:
+        while True:
+            msgs.append(await asyncio.wait_for(queue.get(), timeout=0.2))
+    except asyncio.TimeoutError:
+        pass
+
+    book_msgs = [m for m in msgs if m["type"] == "book_snapshot"]
+    assert len(book_msgs) == 2
+
+    manager.unsubscribe("BTC.HL", queue)

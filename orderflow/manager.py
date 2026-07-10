@@ -2,7 +2,9 @@
 매매 실행 로직(live_engine 등)과 임포트/상태 공유 없음."""
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
+from typing import Callable
 
 from orderflow.aggregator import OrderflowAggregator
 from orderflow.hl_adapter import HyperliquidOrderflowClient
@@ -16,6 +18,7 @@ TICK_SIZE_BY_SYMBOL = {"BTC.HL": 1.0, "NQ": 0.25}
 DEFAULT_TICK_SIZE = 1.0
 
 SUBSCRIBER_QUEUE_MAXSIZE = 1000
+BOOK_SNAPSHOT_THROTTLE_SEC = 0.15
 
 
 def _default_adapter_factory(symbol: str):
@@ -30,11 +33,13 @@ class _SymbolWorker:
     task: "asyncio.Task"
     aggregator: OrderflowAggregator
     subscribers: set = field(default_factory=set)
+    last_book_broadcast_ts: float = 0.0
 
 
 class OrderflowManager:
-    def __init__(self, adapter_factory=None) -> None:
+    def __init__(self, adapter_factory=None, now_fn: Callable[[], float] = time.time) -> None:
         self._adapter_factory = adapter_factory or _default_adapter_factory
+        self._now_fn = now_fn
         self._workers: dict[str, _SymbolWorker] = {}
 
     def active_symbols(self) -> list[str]:
@@ -100,6 +105,11 @@ class OrderflowManager:
                         deltas = [aggregator.on_trade(event)]
                     else:
                         deltas = aggregator.on_book_snapshot(event)
+                        worker = self._workers.get(symbol)
+                        now = self._now_fn()
+                        if worker is not None and now - worker.last_book_broadcast_ts >= BOOK_SNAPSHOT_THROTTLE_SEC:
+                            worker.last_book_broadcast_ts = now
+                            deltas = [aggregator.latest_book(event), *deltas]
                     self._broadcast(symbol, deltas)
                 self._broadcast_status(symbol, "reconnecting")
                 was_reconnecting = True

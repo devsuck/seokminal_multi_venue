@@ -3,7 +3,7 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
-## 현재 상태 (마지막 업데이트: 2026-07-08 세션6)
+## 현재 상태 (마지막 업데이트: 2026-07-11 오더플로우 멀티벤뉴 검증)
 
 ### 완료된 작업
 
@@ -273,6 +273,61 @@
 
 ### 막힌 부분/결정사항
 - XAUUSD(IB) 보류(계정 contract 매핑 미해결) — 대신 `xyz:GOLD`(HL 빌더퍼프)로 사실상 대체, GC/ES/NQ/EURUSD/USDJPY/xyz:GOLD 6개로 진행
+
+---
+
+**오더플로우 멀티벤뉴(바이낸스/OKX) 통합 + 라이브 검증 (2026-07-11)**
+
+### 완료된 작업
+- 대량체결/흡수 신호 백테스트로 통계적 무의미 확정 → HL 단일소스 한계로 보고 바이낸스+OKX 체결 테이프 합류 결정, `MultiVenueOrderflowClient`(HL+Binance+OKX 병합, 죽은 소스가 다른 소스 안 막음, 실패 소스 재연결) + `binance_adapter.py`/`okx_adapter.py` 구현, unit test(페이크 커넥션 기준) 통과 후 커밋 완료
+- 이번 세션에서 **실서버 라이브 연결 검증** 진행(그동안 페이크 커넥션 테스트만 있었음):
+  - 바이낸스 `wss://stream.binance.com:9443/ws/btcusdt@aggTrade` — 정상 연결, 파서 포맷(`e`/`p`/`q`/`m`/`T`) 그대로 일치
+  - OKX `wss://ws.okx.com:8443/public` — **404, URL 버그 발견**. 정확한 엔드포인트는 `wss://ws.okx.com:8443/ws/v5/public`. `orderflow/okx_adapter.py` + `tests/test_orderflow_okx_adapter.py` 수정, 18개 orderflow venue 테스트 재통과 확인, 커밋(`baf7e33`)
+- `/orderflow` 브라우저 스팟체크 중 **별개 문제 추가 발견**: uvicorn 백엔드(포트 8000)가 26시간째 PPID 1 고아 프로세스로 떠 있었고 완전 무응답 상태(curl까지 타임아웃, `/docs`도 안 뜸) — reload 워처가 죽고 워커만 남은 것으로 추정. kill 후 재기동
+- 재기동 후 라이브 확인: BTC.HL 캔들 정상 렌더링(64217대, 바이낸스 실가 64218과 일치 = 멀티벤뉴 합류 작동 확인), 대량체결 버블 마커 실시간 표출, CVD 서브패널 값 정상, 콘솔 에러 없음
+
+### 변경된 파일
+- `orderflow/okx_adapter.py` — `OKX_WS_URL`을 `/ws/v5/public`로 수정
+- `tests/test_orderflow_okx_adapter.py` — URL assertion 값 동일하게 수정
+- `docs/progress.md` — 이 항목
+
+### 다음 할 일
+- uvicorn 고아 프로세스 재발 원인 미조사 — `--reload` 워처가 왜 죽었는지(리소스 문제/장시간 방치/다른 원인) 확인 안 함. 재발하면 원인 추적 필요
+- 흡수/대량체결 신호가 백테스트로 통계적 무의미 확정났는데도 라이브 대시보드엔 여전히 마커만 뜨고 "매매판단용 아님" 경고가 UI에 없음 — 요청 범위 밖이라 안 건드렸음, 필요하면 별도 요청으로
+
+### 막힌 부분/결정사항
+- 없음(이번 라운드는 검증+버그수정만, 설계 이슈 없었음)
+
+---
+
+**오더플로우 ES/GC 선물 추가 + 크로스벤뉴 liquidity pool (2026-07-11)**
+
+### 완료된 작업
+- "nq,es,xau,forex 오더플로우 붙이기 어렵나" 질의에 ES/GC는 쉬움(IB `Future` contract, 기존 NQ 패턴 그대로), Forex는 어려움(IB FX는 quote-driven이라 TradeEvent 기반 로직과 안 맞음) 판단 → ES/GC만 진행, Forex는 미착수
+- `orderflow/ib_adapter.py`: `_FUTURES_SYMBOLS`에 `ES: CME`, `GC: COMEX` 추가(기존 `NQ: CME` 옆에)
+- `orderflow/manager.py`: `TICK_SIZE_BY_SYMBOL`에 `ES: 0.25`, `GC: 0.10` 추가, `tick_size`를 `MultiVenueOrderflowClient`에 전달하도록 변경
+- **liquidity pool**(작업하면서 같이 요청받음): 오더북 뎁스도 트레이드 테이프처럼 바이낸스+OKX+HL 합류. `binance_adapter.py`에 `stream_depth`(`@depth20@100ms`) 추가, `okx_adapter.py`에 `stream_depth`(`books5` 채널) 추가, `multi_venue_adapter.py`에 `_round_to_tick`/`_pool_levels`/`_pool_books` 신규 — 벤뉴별 최신 스냅샷을 tick 단위로 반올림 후 사이즈 합산해서 하나의 풀북으로 병합해 내보냄. `aggregator.on_book_snapshot()`이 스냅샷을 통짜 교체로 처리하는 구조라 벤뉴별 스냅샷을 그대로 흘리면 깜빡였을 것 — 그래서 병합 후 emit으로 설계
+- `stream()` pump 3개→5개(hl, binance-trades, binance-depth, okx-trades, okx-depth), 모두 공통 sink로 유입
+- 신규 유닛테스트 15개(binance/okx depth 파서+스트림, pool 함수 3종, 통합 스트림 테스트) 작성, orderflow 전체 + 풀 스위트(869 passed, pre-existing 4 fail만 잔존) 통과 확인
+- 브라우저 라이브 재검증: 백엔드 reload 두 번 걸림(아래 참고) 후 재기동, BTC.HL 정상 렌더링·콘솔 에러 없음 확인. 단 UI엔 벤뉴별 분리 표시가 없어 풀링 효과가 화면상으로는 구분 안 됨(내부 수치만 바뀜)
+- 로컬 TWS 켠 뒤 ES/GC/NQ contract qualify 라이브 시도 → **API 핸드셰이크 타임아웃**(TCP는 붙음, `connectAsync` 15s 타임아웃). TWS의 "Enable ActiveX and Socket Clients" 설정 또는 incoming-connection 수락 팝업 미해결로 추정 — **미검증 상태로 남음**
+
+### 변경된 파일
+- `orderflow/ib_adapter.py` — `_FUTURES_SYMBOLS`에 ES/GC 추가
+- `orderflow/manager.py` — `TICK_SIZE_BY_SYMBOL`에 ES/GC 추가, tick_size 전달
+- `orderflow/binance_adapter.py` — `stream_depth`/`parse_binance_depth_message` 추가
+- `orderflow/okx_adapter.py` — `stream_depth`/`parse_okx_depth_message` 추가
+- `orderflow/multi_venue_adapter.py` — 5-pump 구조 + 풀링 로직(`_round_to_tick`, `_pool_levels`, `_pool_books`, `_make_pooling_sink`) 추가
+- `tests/test_orderflow_binance_adapter.py`, `tests/test_orderflow_okx_adapter.py`, `tests/test_orderflow_multi_venue_adapter.py` — 신규 테스트 15개
+- `docs/progress.md` — 이 항목
+
+### 다음 할 일
+- ES/GC contract qualification 라이브 미검증 — TWS API 설정(Enable ActiveX and Socket Clients, trusted IP 127.0.0.1) 확인 후 재시도 필요. IB 포트 관례상 7496/7497이 아니라 **7498**(paper) 사용 중이었음 — 다음 시도 때 포트 확인할 것
+- uvicorn `--reload` 행(hang) 재발 — 이번 라운드에서도 두 번째 발생. 로그에 `api_server/lv5_agent.py:185` `ZeroDivisionError`(`wins/n:.0%`, n=0일 때) 있었으나 shutdown hang과의 인과관계 미확인, 별개 버그로 방치 중. 재발 계속되면 lv5_agent 쪽부터 볼 것
+- Forex(EURUSD/USDJPY) 오더플로우는 IB FX가 quote-driven이라 별도 설계 필요 — 미착수, 요청 시 진행
+
+### 막힌 부분/결정사항
+- IB TWS API 핸드셰이크 타임아웃으로 ES/GC 실제 contract qualify 못함 — TWS 설정 점검 필요(사용자 확인 요)
 
 ---
 

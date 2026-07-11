@@ -12,7 +12,7 @@ from orderflow.models import OrderBookLevel, OrderBookSnapshot, TradeEvent
 from orderflow.tick_rule import classify
 
 DEPTH_ROWS = 10
-_FUTURES_SYMBOLS = {"NQ": "CME"}
+_FUTURES_SYMBOLS = {"NQ": "CME", "ES": "CME", "GC": "COMEX"}
 
 
 class IBOrderflowClient:

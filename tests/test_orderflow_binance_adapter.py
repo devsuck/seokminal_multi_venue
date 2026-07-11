@@ -1,7 +1,11 @@
 import json
 
-from orderflow.binance_adapter import BinanceOrderflowClient, parse_binance_message
-from orderflow.models import TradeEvent
+from orderflow.binance_adapter import (
+    BinanceOrderflowClient,
+    parse_binance_depth_message,
+    parse_binance_message,
+)
+from orderflow.models import OrderBookSnapshot, TradeEvent
 
 
 class FakeConnection:
@@ -77,5 +81,46 @@ async def test_stream_yields_nothing_for_unmapped_coin():
     fake_connect = FakeConnect([])
     client = BinanceOrderflowClient(connect_fn=fake_connect)
     events = [e async for e in client.stream("DOGE")]
+    assert events == []
+    assert fake_connect.called_with is None
+
+
+def test_parse_binance_depth_message_maps_levels():
+    raw = json.dumps({
+        "lastUpdateId": 1,
+        "bids": [["65000.0", "0.5"], ["64999.0", "1.2"]],
+        "asks": [["65001.0", "0.3"]],
+    })
+    event = parse_binance_depth_message(raw, coin="BTC", now_fn=lambda: 1720000001.0)
+    assert isinstance(event, OrderBookSnapshot)
+    assert event.symbol == "BTC.HL"
+    assert event.ts == 1720000001.0
+    assert [lvl.price for lvl in event.bids] == [65000.0, 64999.0]
+    assert event.asks[0].size == 0.3
+
+
+def test_parse_binance_depth_message_ignores_malformed_json():
+    assert parse_binance_depth_message("not json", coin="BTC") is None
+
+
+def test_parse_binance_depth_message_ignores_missing_field():
+    raw = json.dumps({"lastUpdateId": 1, "bids": [["65000.0", "0.5"]]})  # asks 없음
+    assert parse_binance_depth_message(raw, coin="BTC") is None
+
+
+async def test_stream_depth_connects_to_depth_url_and_yields_parsed_snapshot():
+    raw = json.dumps({"lastUpdateId": 1, "bids": [["65000.0", "0.5"]], "asks": [["65001.0", "0.3"]]})
+    fake_connect = FakeConnect([raw])
+    client = BinanceOrderflowClient(connect_fn=fake_connect)
+    events = [e async for e in client.stream_depth("BTC")]
+    assert len(events) == 1
+    assert isinstance(events[0], OrderBookSnapshot)
+    assert fake_connect.called_with == "wss://stream.binance.com:9443/ws/btcusdt@depth20@100ms"
+
+
+async def test_stream_depth_yields_nothing_for_unmapped_coin():
+    fake_connect = FakeConnect([])
+    client = BinanceOrderflowClient(connect_fn=fake_connect)
+    events = [e async for e in client.stream_depth("DOGE")]
     assert events == []
     assert fake_connect.called_with is None

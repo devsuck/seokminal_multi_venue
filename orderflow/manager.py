@@ -14,7 +14,7 @@ from orderflow.multi_venue_adapter import MultiVenueOrderflowClient
 RECONNECT_BASE_DELAY = 2.0
 RECONNECT_MAX_DELAY = 60.0
 
-TICK_SIZE_BY_SYMBOL = {"BTC.HL": 1.0, "NQ": 0.25}
+TICK_SIZE_BY_SYMBOL = {"BTC.HL": 1.0, "NQ": 0.25, "ES": 0.25, "GC": 0.10}
 DEFAULT_TICK_SIZE = 1.0
 
 SUBSCRIBER_QUEUE_MAXSIZE = 1000
@@ -24,7 +24,8 @@ BOOK_SNAPSHOT_THROTTLE_SEC = 0.15
 def _default_adapter_factory(symbol: str):
     if symbol.endswith(".HL"):
         coin = symbol[: -len(".HL")]
-        return MultiVenueOrderflowClient().stream(coin)
+        tick_size = TICK_SIZE_BY_SYMBOL.get(symbol, DEFAULT_TICK_SIZE)
+        return MultiVenueOrderflowClient(tick_size=tick_size).stream(coin)
     return IBOrderflowClient().stream(symbol)
 
 

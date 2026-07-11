@@ -1,7 +1,11 @@
 import json
 
-from orderflow.models import TradeEvent
-from orderflow.okx_adapter import OkxOrderflowClient, parse_okx_message
+from orderflow.models import OrderBookSnapshot, TradeEvent
+from orderflow.okx_adapter import (
+    OkxOrderflowClient,
+    parse_okx_depth_message,
+    parse_okx_message,
+)
 
 
 class FakeConnection:
@@ -96,5 +100,60 @@ async def test_stream_yields_nothing_for_unmapped_coin():
     fake_connect = FakeConnect([])
     client = OkxOrderflowClient(connect_fn=fake_connect)
     events = [e async for e in client.stream("DOGE")]
+    assert events == []
+    assert fake_connect.called_with is None
+
+
+def test_parse_okx_depth_message_maps_books5_levels():
+    raw = json.dumps({
+        "arg": {"channel": "books5", "instId": "BTC-USDT"},
+        "data": [{
+            "instId": "BTC-USDT",
+            "ts": "1720000001000",
+            "bids": [["65000.0", "0.5", "0", "3"], ["64999.0", "1.2", "0", "1"]],
+            "asks": [["65001.0", "0.3", "0", "2"]],
+        }],
+    })
+    event = parse_okx_depth_message(raw, coin="BTC")
+    assert isinstance(event, OrderBookSnapshot)
+    assert event.symbol == "BTC.HL"
+    assert event.ts == 1720000001.0
+    assert [lvl.price for lvl in event.bids] == [65000.0, 64999.0]
+    assert event.asks[0].size == 0.3
+
+
+def test_parse_okx_depth_message_ignores_missing_data():
+    raw = json.dumps({"event": "subscribe", "arg": {"channel": "books5", "instId": "BTC-USDT"}})
+    assert parse_okx_depth_message(raw, coin="BTC") is None
+
+
+def test_parse_okx_depth_message_ignores_malformed_json():
+    assert parse_okx_depth_message("not json", coin="BTC") is None
+
+
+async def test_stream_depth_subscribes_books5_channel_and_yields_parsed_snapshot():
+    raw = json.dumps({
+        "data": [{"ts": "1720000001000", "bids": [["65000.0", "0.5", "0", "3"]], "asks": [["65001.0", "0.3", "0", "2"]]}],
+    })
+    fake_connect = FakeConnect([raw])
+    client = OkxOrderflowClient(connect_fn=fake_connect)
+    events = [e async for e in client.stream_depth("BTC")]
+    assert len(events) == 1
+    assert isinstance(events[0], OrderBookSnapshot)
+    assert fake_connect.called_with == "wss://ws.okx.com:8443/ws/v5/public"
+
+
+async def test_stream_depth_sends_subscribe_message_with_books5_channel():
+    fake_connect = FakeConnect([])
+    client = OkxOrderflowClient(connect_fn=fake_connect)
+    _ = [e async for e in client.stream_depth("BTC")]
+    sent = json.loads(fake_connect.connection.sent[0])
+    assert sent == {"op": "subscribe", "args": [{"channel": "books5", "instId": "BTC-USDT"}]}
+
+
+async def test_stream_depth_yields_nothing_for_unmapped_coin():
+    fake_connect = FakeConnect([])
+    client = OkxOrderflowClient(connect_fn=fake_connect)
+    events = [e async for e in client.stream_depth("DOGE")]
     assert events == []
     assert fake_connect.called_with is None

@@ -322,12 +322,14 @@
 - `docs/progress.md` — 이 항목
 
 ### 다음 할 일
-- ES/GC contract qualification 라이브 미검증 — TWS API 설정(Enable ActiveX and Socket Clients, trusted IP 127.0.0.1) 확인 후 재시도 필요. IB 포트 관례상 7496/7497이 아니라 **7498**(paper) 사용 중이었음 — 다음 시도 때 포트 확인할 것
 - uvicorn `--reload` 행(hang) 재발 — 이번 라운드에서도 두 번째 발생. 로그에 `api_server/lv5_agent.py:185` `ZeroDivisionError`(`wins/n:.0%`, n=0일 때) 있었으나 shutdown hang과의 인과관계 미확인, 별개 버그로 방치 중. 재발 계속되면 lv5_agent 쪽부터 볼 것
 - Forex(EURUSD/USDJPY) 오더플로우는 IB FX가 quote-driven이라 별도 설계 필요 — 미착수, 요청 시 진행
+- CME/COMEX 선물 마켓데이터 구독 없음(paper 계정) — TWS Market Data Subscription Manager에서 구독 추가해야 ES/GC/NQ 실제 tick 수신 가능. 구독 전까진 contract resolve까지만 되고 데이터는 안 옴
 
 ### 막힌 부분/결정사항
-- IB TWS API 핸드셰이크 타임아웃으로 ES/GC 실제 contract qualify 못함 — TWS 설정 점검 필요(사용자 확인 요)
+- (해결됨) IB TWS API 핸드셰이크 타임아웃은 clientId 충돌/팝업 미승인이었음 — 사용자가 TWS 확인 후 재시도해서 정상 연결됨
+- **실제 버그 발견 및 수정**: `orderflow/ib_adapter.py`의 `_contract()`가 만기월 없는 `Future(symbol, exchange, currency)`를 그대로 넘겨서 IB가 ambiguous contract로 처리, `qualifyContractsAsync`가 조용히 실패(conId=0 방치)하고 이후 `reqTickByTickData`/`reqMktDepth`가 무효 contract로 요청됨 — **NQ도 원래부터 이 버그로 라이브 미작동 상태였음**(ES/GC 붙이다 우연히 발견). `_resolve_contract()` 추가: qualify 실패 시 `reqContractDetailsAsync`로 후보 전체 받아서 만기 안 지난 것 중 최근월물(front month) 자동 선택. 라이브 검증: ES→ESU6(20260918), GC→GCN6(20260729), NQ→NQU6(20260918) 정확히 resolve됨. 이후 단계(`reqTickByTickData`)에서 "No market data permissions"로 막힘 — 이건 계정 구독 문제라 코드 밖 이슈
+- 신규 유닛테스트 1개(`test_stream_resolves_front_month_when_future_is_ambiguous`) 추가, `tests/test_orderflow_ib_adapter.py` 4개 전체 통과
 
 ---
 

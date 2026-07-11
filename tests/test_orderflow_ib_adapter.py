@@ -1,5 +1,7 @@
 import datetime as dt
 
+from ib_async.contract import Future
+
 from orderflow.ib_adapter import IBOrderflowClient
 from orderflow.models import OrderBookSnapshot, TradeEvent
 
@@ -67,20 +69,28 @@ class FakeDepthTicker:
 
 
 class FakeMultiIB:
-    def __init__(self, last_batches, bidask_batches, depth_batches):
+    def __init__(self, last_batches, bidask_batches, depth_batches, contract_details=None):
         self.connect_calls: list[tuple] = []
         self.qualify_calls: list[str] = []
+        self.contract_details_calls: list[str] = []
         self.tick_calls: list[str] = []
         self.depth_calls = 0
         self._last_ticker = FakeTicker(last_batches)
         self._bidask_ticker = FakeTicker(bidask_batches)
         self._depth_ticker = FakeDepthTicker(depth_batches)
+        self._contract_details = contract_details or {}
 
     async def connectAsync(self, host, port, client_id, timeout=15):
         self.connect_calls.append((host, port, client_id))
 
     async def qualifyContractsAsync(self, contract):
         self.qualify_calls.append(contract.symbol)
+        if contract.symbol not in self._contract_details:
+            contract.conId = 1  # 정상 qualify 시뮬레이션(단일 매치)
+
+    async def reqContractDetailsAsync(self, contract):
+        self.contract_details_calls.append(contract.symbol)
+        return self._contract_details.get(contract.symbol, [])
 
     def reqTickByTickData(self, contract, tickType):
         self.tick_calls.append(tickType)
@@ -89,6 +99,11 @@ class FakeMultiIB:
     def reqMktDepth(self, contract, numRows=10):
         self.depth_calls += 1
         return self._depth_ticker
+
+
+class FakeContractDetails:
+    def __init__(self, contract):
+        self.contract = contract
 
 
 async def test_stream_yields_trade_classified_by_bidask_then_book_snapshot():
@@ -135,3 +150,42 @@ async def test_stream_skips_trade_before_any_bidask_seen():
     finally:
         await agen.aclose()
     assert isinstance(first, OrderBookSnapshot)
+
+
+async def test_stream_resolves_front_month_when_future_is_ambiguous():
+    """만기월 미지정 Future는 qualify가 ambiguous로 실패(conId=0) —
+    reqContractDetailsAsync로 받은 후보 중 만기 지나지 않은 최근월물을 골라야 한다."""
+    t = dt.datetime(2026, 7, 9, 12, 0, 0, tzinfo=dt.timezone.utc)
+    far_expiry = Future(symbol="ES", exchange="CME", currency="USD")
+    far_expiry.conId = 999
+    far_expiry.lastTradeDateOrContractMonth = "20271217"
+
+    near_expiry = Future(symbol="ES", exchange="CME", currency="USD")
+    near_expiry.conId = 111
+    near_expiry.lastTradeDateOrContractMonth = "20260918"
+
+    expired = Future(symbol="ES", exchange="CME", currency="USD")
+    expired.conId = 222
+    expired.lastTradeDateOrContractMonth = "20260315"  # 이미 만기 지남 -> 제외돼야 함
+
+    ib = FakeMultiIB(
+        last_batches=[[FakeTickByTickLast(time=t, price=101.0, size=2.0)]],
+        bidask_batches=[[FakeTickByTickBidAsk(time=t, bidPrice=100.0, askPrice=101.0)]],
+        depth_batches=[([FakeDomLevel(99.0, 5.0)], [FakeDomLevel(102.0, 3.0)])],
+        contract_details={
+            "ES": [
+                FakeContractDetails(far_expiry),
+                FakeContractDetails(near_expiry),
+                FakeContractDetails(expired),
+            ]
+        },
+    )
+    client = IBOrderflowClient(ib=ib, client_id=3)
+    agen = client.stream("ES")
+    try:
+        trade = await agen.__anext__()
+    finally:
+        await agen.aclose()
+
+    assert isinstance(trade, TradeEvent)
+    assert ib.contract_details_calls == ["ES"]

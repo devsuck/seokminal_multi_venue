@@ -34,12 +34,29 @@ class IBOrderflowClient:
             return Future(symbol=symbol, exchange=exchange, currency="USD")
         return Stock(symbol, "SMART", "USD")
 
+    async def _resolve_contract(self, contract: Contract) -> Contract:
+        """만기월 미지정 선물은 qualify가 ambiguous로 실패(conId=0으로 남음) —
+        그 경우 최근월물(front month)을 reqContractDetailsAsync로 직접 골라온다."""
+        await self._ib.qualifyContractsAsync(contract)
+        if contract.conId:
+            return contract
+
+        details = await self._ib.reqContractDetailsAsync(contract)
+        if not details:
+            raise ValueError(f"IB: no contract details resolved for {contract.symbol}")
+
+        today = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d")
+        candidates = sorted(details, key=lambda d: d.contract.lastTradeDateOrContractMonth)
+        for d in candidates:
+            if d.contract.lastTradeDateOrContractMonth >= today:
+                return d.contract
+        return candidates[-1].contract
+
     async def stream(
         self, symbol: str, connect_timeout: float = 15.0
     ) -> AsyncIterator[OrderBookSnapshot | TradeEvent]:
         await self._ib.connectAsync(self._host, self._port, self._client_id, timeout=connect_timeout)
-        contract = self._contract(symbol)
-        await self._ib.qualifyContractsAsync(contract)
+        contract = await self._resolve_contract(self._contract(symbol))
 
         last_ticker = self._ib.reqTickByTickData(contract, "Last")
         bidask_ticker = self._ib.reqTickByTickData(contract, "BidAsk")

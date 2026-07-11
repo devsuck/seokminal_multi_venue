@@ -7,9 +7,9 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from orderflow.aggregator import OrderflowAggregator
-from orderflow.hl_adapter import HyperliquidOrderflowClient
 from orderflow.ib_adapter import IBOrderflowClient
 from orderflow.models import TradeEvent
+from orderflow.multi_venue_adapter import MultiVenueOrderflowClient
 
 RECONNECT_BASE_DELAY = 2.0
 RECONNECT_MAX_DELAY = 60.0
@@ -24,7 +24,7 @@ BOOK_SNAPSHOT_THROTTLE_SEC = 0.15
 def _default_adapter_factory(symbol: str):
     if symbol.endswith(".HL"):
         coin = symbol[: -len(".HL")]
-        return HyperliquidOrderflowClient().stream(coin)
+        return MultiVenueOrderflowClient().stream(coin)
     return IBOrderflowClient().stream(symbol)
 
 

@@ -8,7 +8,7 @@ import websockets
 
 from orderflow.models import TradeEvent
 
-OKX_WS_URL = "wss://ws.okx.com:8443/public"
+OKX_WS_URL = "wss://ws.okx.com:8443/ws/v5/public"
 
 # HL 코인 심볼(예: "BTC") → OKX instId
 OKX_SYMBOL_MAP = {"BTC": "BTC-USDT", "ETH": "ETH-USDT", "SOL": "SOL-USDT"}

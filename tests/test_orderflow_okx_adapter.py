@@ -81,7 +81,7 @@ async def test_stream_subscribes_trades_channel_and_yields_parsed_events():
     events = [e async for e in client.stream("BTC")]
     assert len(events) == 1
     assert events[0].side == "buy"
-    assert fake_connect.called_with == "wss://ws.okx.com:8443/public"
+    assert fake_connect.called_with == "wss://ws.okx.com:8443/ws/v5/public"
 
 
 async def test_stream_sends_subscribe_message_with_inst_id():

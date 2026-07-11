@@ -162,6 +162,7 @@ def test_pool_books_merges_latest_snapshot_per_venue():
     assert pooled.ts == 12.0  # 참여 소스 중 가장 최신 ts
     assert pooled.bids[0].size == pytest.approx(3.0)  # 1.0(hl) + 2.0(binance)
     assert pooled.asks[0].size == pytest.approx(1.5)  # 1.0(hl) + 0.5(binance)
+    assert pooled.venues == ["binance-depth", "hyperliquid"]  # 어느 벤뉴가 풀에 기여했는지
 
 
 async def test_stream_emits_pooled_book_as_venue_depth_arrives():
@@ -201,3 +202,4 @@ async def test_stream_emits_pooled_book_as_venue_depth_arrives():
     assert bid_by_price[99.0] == pytest.approx(2.0)
     assert ask_by_price[101.0] == pytest.approx(2.2)  # 101.2(0.5)+101.4(0.7)+101.9(1.0)
     assert fully_pooled.bids[0].price == 100.0  # 매수 호가는 내림차순(최우선 호가가 앞)
+    assert fully_pooled.venues == ["binance-depth", "hyperliquid", "okx-depth"]

@@ -3,7 +3,7 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
-## 현재 상태 (마지막 업데이트: 2026-07-11 오더플로우 멀티벤뉴 검증)
+## 현재 상태 (마지막 업데이트: 2026-07-11 liquidity pool 벤뉴 뱃지 UI)
 
 ### 완료된 작업
 
@@ -322,14 +322,45 @@
 - `docs/progress.md` — 이 항목
 
 ### 다음 할 일
-- uvicorn `--reload` 행(hang) 재발 — 이번 라운드에서도 두 번째 발생. 로그에 `api_server/lv5_agent.py:185` `ZeroDivisionError`(`wins/n:.0%`, n=0일 때) 있었으나 shutdown hang과의 인과관계 미확인, 별개 버그로 방치 중. 재발 계속되면 lv5_agent 쪽부터 볼 것
 - Forex(EURUSD/USDJPY) 오더플로우는 IB FX가 quote-driven이라 별도 설계 필요 — 미착수, 요청 시 진행
 - CME/COMEX 선물 마켓데이터 구독 없음(paper 계정) — TWS Market Data Subscription Manager에서 구독 추가해야 ES/GC/NQ 실제 tick 수신 가능. 구독 전까진 contract resolve까지만 되고 데이터는 안 옴
+
+### 막힌 부분/결정사항
+- (해결됨) uvicorn `--reload` 행(hang) 재발 원인 특정: `timeout_graceful_shutdown` 기본값이 `None`이라 `asyncio.wait_for(..., timeout=None)`이 절대 `TimeoutError`를 안 던져서, 살아있는 요청 task를 강제 `cancel()`하는 분기가 아예 안 걸림. `/ws/orderflow/{symbol}` 핸들러가 `await queue.get()`으로 블록하고 클라이언트 disconnect를 능동적으로 감지 안 하는 구조라(`websocket.receive()` 안 씀), 새 orderflow 메시지가 안 들어오는 순간 shutdown이 무한 대기함. `lv5_agent.py`의 `ZeroDivisionError`는 daemon thread 안에서 발생 + 이미 outer `except Exception`에 잡혀 로깅만 되고 죽어서 hang과 무관(리뷰 파이프라인이 조용히 스킵되는 별개 버그로 남음, 미수정)
+- **조치**: `seokminal-multi-venue/../CLAUDE.md`(부모 디렉토리, 두 프로젝트 공용, git 미관리)의 백엔드 실행 커맨드에 `--timeout-graceful-shutdown 10` 추가. 코드 버그 아니라 CLI 옵션 미설정 문제였음 — orderflow 코드는 안 건드림. 새 플래그로 재기동해서 정상 기동·응답 확인(`/orderflow/symbols` 200 OK)
 
 ### 막힌 부분/결정사항
 - (해결됨) IB TWS API 핸드셰이크 타임아웃은 clientId 충돌/팝업 미승인이었음 — 사용자가 TWS 확인 후 재시도해서 정상 연결됨
 - **실제 버그 발견 및 수정**: `orderflow/ib_adapter.py`의 `_contract()`가 만기월 없는 `Future(symbol, exchange, currency)`를 그대로 넘겨서 IB가 ambiguous contract로 처리, `qualifyContractsAsync`가 조용히 실패(conId=0 방치)하고 이후 `reqTickByTickData`/`reqMktDepth`가 무효 contract로 요청됨 — **NQ도 원래부터 이 버그로 라이브 미작동 상태였음**(ES/GC 붙이다 우연히 발견). `_resolve_contract()` 추가: qualify 실패 시 `reqContractDetailsAsync`로 후보 전체 받아서 만기 안 지난 것 중 최근월물(front month) 자동 선택. 라이브 검증: ES→ESU6(20260918), GC→GCN6(20260729), NQ→NQU6(20260918) 정확히 resolve됨. 이후 단계(`reqTickByTickData`)에서 "No market data permissions"로 막힘 — 이건 계정 구독 문제라 코드 밖 이슈
 - 신규 유닛테스트 1개(`test_stream_resolves_front_month_when_future_is_ambiguous`) 추가, `tests/test_orderflow_ib_adapter.py` 4개 전체 통과
+
+---
+
+**liquidity pool 벤뉴 뱃지 UI 노출 (2026-07-11)**
+
+### 완료된 작업
+- 풀북에 어느 벤뉴가 기여 중인지 표시 안 되던 걸(위 세션에서 "풀링 효과가 화면상으로는 구분 안 됨"으로 남긴 이슈) 백엔드→프론트 전체 파이프라인으로 노출
+- 백엔드: `orderflow/models.py`의 `OrderBookSnapshot`에 `venues: list[str] = []` 필드 추가, `multi_venue_adapter._pool_books()`가 `venues=sorted(latest_books)` 채워서 반환, `aggregator.latest_book()`이 WS 메시지(`book_snapshot`)에 `venues` 그대로 실어보냄
+- 프론트: `lib/orderflow-data.ts`의 `OrderBookState`/`BookSnapshotMsg`에 `venues: string[]` 추가, `emptyOrderflowState()`/`applySnapshot()`/`applyBookSnapshot()` 전부 반영
+- `components/orderflow/OrderBookPrimitive.ts`: COB 인셋 우측 상단에 `HL`/`BIN`/`OKX` 텍스트 뱃지로 현재 풀에 기여 중인 벤뉴 렌더링(캔버스 `fillText`, `ctx.save/restore`로 다른 primitive 영향 안 주게 격리)
+- 백엔드 테스트 3개(`test_orderflow_multi_venue_adapter.py`, `test_orderflow_aggregator.py`) 갱신, 프론트 테스트(`orderflow-data.test.ts`) 갱신 — 백엔드 870 passed(pre-existing 4 fail만), 프론트 215 passed, `npx tsc --noEmit` 클린
+- 브라우저 라이브 확인: `/orderflow` BTC.HL 차트 우측 COB 인셋에 "BIN HL OKX" 뱃지 정상 렌더링, 콘솔 에러 없음
+
+### 변경된 파일
+- `orderflow/models.py` — `OrderBookSnapshot.venues` 필드 추가
+- `orderflow/multi_venue_adapter.py` — `_pool_books()`가 `venues` 채움
+- `orderflow/aggregator.py` — `latest_book()`이 `venues`를 WS 메시지에 포함
+- `tests/test_orderflow_multi_venue_adapter.py`, `tests/test_orderflow_aggregator.py` — `venues` 검증 추가
+- `seokminal-dashboard/lib/orderflow-data.ts` — `OrderBookState`/`BookSnapshotMsg`에 `venues` 추가, 관련 함수 3개 갱신
+- `seokminal-dashboard/components/orderflow/OrderBookPrimitive.ts` — 벤뉴 뱃지 렌더링 추가
+- `seokminal-dashboard/tests/lib/orderflow-data.test.ts` — `venues` 필드 반영
+- `docs/progress.md` — 이 항목
+
+### 다음 할 일
+- 없음 (요청 범위 완료)
+
+### 막힌 부분/결정사항
+- 없음
 
 ---
 

@@ -15,6 +15,7 @@ class OrderBookSnapshot(BaseModel):
     ts: float
     bids: list[OrderBookLevel]
     asks: list[OrderBookLevel]
+    venues: list[str] = []
 
 
 class TradeEvent(BaseModel):

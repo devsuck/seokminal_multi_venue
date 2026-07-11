@@ -107,7 +107,7 @@ def _pool_books(coin: str, latest_books: dict[str, OrderBookSnapshot], tick_size
     bids = _pool_levels((b.bids for b in latest_books.values()), tick_size, reverse=True)
     asks = _pool_levels((b.asks for b in latest_books.values()), tick_size, reverse=False)
     ts = max((b.ts for b in latest_books.values()), default=time.time())
-    return OrderBookSnapshot(symbol=f"{coin}.HL", ts=ts, bids=bids, asks=asks)
+    return OrderBookSnapshot(symbol=f"{coin}.HL", ts=ts, bids=bids, asks=asks, venues=sorted(latest_books))
 
 
 async def _pump_with_reconnect(

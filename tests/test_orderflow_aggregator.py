@@ -84,6 +84,7 @@ def test_latest_book_sorts_best_first_and_caps_each_side():
         "type": "book_snapshot",
         "bids": [{"price": 101, "size": 2}, {"price": 100, "size": 3}],
         "asks": [{"price": 103, "size": 2}, {"price": 104, "size": 3}],
+        "venues": [],
     }
 
 

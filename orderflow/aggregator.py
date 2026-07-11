@@ -82,6 +82,7 @@ class OrderflowAggregator:
             "type": "book_snapshot",
             "bids": [{"price": lvl.price, "size": lvl.size} for lvl in bids],
             "asks": [{"price": lvl.price, "size": lvl.size} for lvl in asks],
+            "venues": book.venues,
         }
 
     def snapshot(self) -> dict:

@@ -237,13 +237,16 @@ def patch_graph(patch: dict) -> dict:
 
     if "nodes" in patch:
         existing = {n["id"]: i for i, n in enumerate(g["nodes"])}
+        required = {"label", "type", "sector"}
         for n in patch["nodes"]:
             if n["id"] in existing:
                 g["nodes"][existing[n["id"]]].update(n)
                 g["nodes"][existing[n["id"]]]["last_updated"] = now
-            else:
+            elif required <= n.keys():
                 n["last_updated"] = now
                 g["nodes"].append(n)
+            else:
+                _log.warning("ai-update: dropping new node %r missing %s", n.get("id"), required - n.keys())
 
     if "edges" in patch:
         key = lambda e: (e["source"], e["target"], e.get("type", ""))

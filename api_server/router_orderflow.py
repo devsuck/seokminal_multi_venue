@@ -2,6 +2,7 @@
 매매 실행 로직(live_engine 등)과 임포트/상태 공유 없음."""
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from orderflow.hl_funding import get_cached_funding
 from orderflow.manager import default_manager
 
 router = APIRouter()
@@ -10,6 +11,21 @@ router = APIRouter()
 @router.get("/orderflow/symbols")
 def get_orderflow_symbols() -> dict:
     return {"symbols": default_manager.active_symbols()}
+
+
+@router.get("/orderflow/funding/{coin}")
+def get_funding(coin: str) -> dict:
+    coin = coin.upper()
+    cached = get_cached_funding(coin)
+    return cached or {
+        "coin": coin,
+        "funding": 0.0,
+        "open_interest": 0.0,
+        "mark_px": 0.0,
+        "prev_day_px": 0.0,
+        "day_ntl_vlm": 0.0,
+        "updated_at": 0.0,
+    }
 
 
 @router.websocket("/ws/orderflow/{symbol}")

@@ -5139,6 +5139,8 @@ async def _start_dart_bot() -> None:
     asyncio.create_task(_lkg_scheduler())
     from orderflow.gex import gex_poll_loop
     asyncio.create_task(gex_poll_loop())
+    from orderflow.hl_funding import funding_poll_loop
+    asyncio.create_task(funding_poll_loop())
 
 
 # ── Market Overview ───────────────────────────────────────────────────────────

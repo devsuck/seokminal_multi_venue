@@ -19,11 +19,8 @@ import json
 
 from orderflow.aggregator import OrderflowAggregator
 from orderflow.models import TradeEvent
-from research.hypotheses.orderflow_futures import (
-    CVD_LOOKBACK_BUCKETS,
-    SIGNAL_BUILDERS,
-    stop_run_events,
-)
+from research.hypotheses.orderflow_context_gate import build_confluence_signals, build_gated_confluence_signals
+from research.hypotheses.orderflow_futures import SIGNAL_BUILDERS, stop_run_events
 from research.validation.baselines import empirical_p_value, random_same_frequency
 from research.validation.cost_model import hl_effective_cost_bps
 from research.validation.engine import simulate_long_short
@@ -37,11 +34,9 @@ SEED = 42
 COST_BPS = hl_effective_cost_bps("major", taker=True)
 
 
-def ticks_to_footprint_deltas(paths: list[str], symbol: str) -> list[dict]:
-    """원시 틱 jsonl들을 시간순 병합 -> OrderflowAggregator.on_trade()로 footprint_delta 스트림 생성.
-
-    라이브 수집기(run_ib_orderflow_tick_collect.py)와 동일하게 Aggregator를
-    단일 소스로 재사용 — 버킷팅 로직을 여기서 새로 짜지 않는다."""
+def load_raw_ticks(paths: list[str]) -> list[dict]:
+    """원시 틱 jsonl들을 시간순 병합. build_gated_confluence_signals의 바 빌더 입력용
+    (footprint_delta로 버킷 합산하기 전, 개별 체결 {ts,price,size,side} 그대로)."""
     ticks = []
     for path in paths:
         with open(path) as f:
@@ -50,42 +45,21 @@ def ticks_to_footprint_deltas(paths: list[str], symbol: str) -> list[dict]:
                 if line:
                     ticks.append(json.loads(line))
     ticks.sort(key=lambda t: t["ts"])
+    return ticks
 
+
+def ticks_to_footprint_deltas(paths: list[str], symbol: str) -> list[dict]:
+    """원시 틱 -> OrderflowAggregator.on_trade()로 footprint_delta 스트림 생성.
+
+    라이브 수집기(run_ib_orderflow_tick_collect.py)와 동일하게 Aggregator를
+    단일 소스로 재사용 — 버킷팅 로직을 여기서 새로 짜지 않는다."""
+    ticks = load_raw_ticks(paths)
     agg = OrderflowAggregator()
     deltas = []
     for t in ticks:
         ev = TradeEvent(symbol=symbol, ts=t["ts"], price=t["price"], size=t["size"], side=t["side"])
         deltas.append(agg.on_trade(ev))
     return deltas
-
-
-def build_confluence_signals(deltas: list[dict]) -> dict:
-    """footprint_imbalance/absorption/cvd_divergence 3개 다수결(2개 이상 방향 일치) ->
-    그 방향, 아니면 HOLD. 세 서브신호 다 _footprint_buckets 기반이라 봉 정렬 동일.
-
-    사전에 고정한 단일 규칙 — 결과 보고 조합 방식 바꾸지 않는다(데이터 스누핑 방지).
-    eligible = cvd_divergence 판정 가능 구간(i >= CVD_LOOKBACK_BUCKETS)과 동일 —
-    세 의견이 다 갖춰진 구간만 다수결 판정 자격을 준다."""
-    fp = SIGNAL_BUILDERS["footprint_imbalance"](deltas)["signals"]
-    ab = SIGNAL_BUILDERS["absorption"](deltas)["signals"]
-    cvd_data = SIGNAL_BUILDERS["cvd_divergence"](deltas)
-    cvd, closes = cvd_data["signals"], cvd_data["closes"]
-
-    signals: list[str] = []
-    eligible: list[int] = []
-    for i in range(len(closes)):
-        sig = "HOLD"
-        if i >= CVD_LOOKBACK_BUCKETS:
-            eligible.append(i)
-            votes = [fp[i], ab[i], cvd[i]]
-            buy_votes = votes.count("BUY")
-            sell_votes = votes.count("SELL")
-            if buy_votes >= 2:
-                sig = "BUY"
-            elif sell_votes >= 2:
-                sig = "SELL"
-        signals.append(sig)
-    return {"closes": closes, "signals": signals, "eligible": eligible}
 
 
 def run_bar_signal(symbol: str, signal_name: str, deltas: list[dict]) -> dict:
@@ -151,16 +125,41 @@ def run_stop_run(symbol: str, deltas: list[dict]) -> dict:
             "n_events": len(events), "horizons": horizons}
 
 
+def run_gated_signal(symbol: str, deltas: list[dict], ticks: list[dict]) -> dict:
+    data = build_gated_confluence_signals(deltas, ticks)
+    closes, signals, eligible = data["closes"], data["signals"], data["eligible"]
+    if len(closes) < 10:
+        return {"symbol": symbol, "signal": "gated_confluence", "blocked": True,
+                "reason": f"{len(closes)}봉뿐 — 최소 표본 미달"}
+
+    trades = simulate_long_short(closes, signals, TRADE_SIZE, COST_BPS)
+    strat = trade_metrics(trades)
+    holds = [max(1, t["exit_idx"] - t["entry_idx"]) for t in trades] or [1]
+    rnd = random_same_frequency(
+        closes, n_trades=strat["num_trades"], holding_periods=holds,
+        trade_size=TRADE_SIZE, cost_bps=COST_BPS,
+        eligible_indices=eligible, n_runs=N_RUNS, seed=SEED,
+    )
+    pval = empirical_p_value(strat["total_pnl"], rnd)
+    return {"symbol": symbol, "signal": "gated_confluence", "blocked": False,
+            "strategy": strat, "random": pval, "n_bars": len(closes), "eligible_count": len(eligible)}
+
+
 def main() -> None:
     all_results: list[dict] = []
     pvals: list[float] = []
     pval_keys: list[str] = []
+
+    gated_results: list[dict] = []
+    gated_pvals: list[float] = []
+    gated_pval_keys: list[str] = []
 
     for symbol in ("BTC", "ETH"):
         paths = sorted(glob.glob(f"{DATA_DIR}/{symbol}_*.jsonl"))
         if not paths:
             print(f"{symbol}: 데이터 없음, 스킵")
             continue
+        ticks = load_raw_ticks(paths)
         deltas = ticks_to_footprint_deltas(paths, f"{symbol}.HL")
 
         for signal_name in ("footprint_imbalance", "absorption", "cvd_divergence", "confluence"):
@@ -181,8 +180,17 @@ def main() -> None:
             all_results.append({"symbol": symbol, "signal": signal_name, "blocked": True,
                                  "reason": "HL 틱 수집기는 heatmap_delta(오더북) 미저장 — 항상 BLOCKED"})
 
+        gr = run_gated_signal(symbol, deltas, ticks)
+        gated_results.append(gr)
+        if not gr["blocked"]:
+            gated_pvals.append(gr["random"]["p_value"])
+            gated_pval_keys.append(f"{symbol}:gated_confluence")
+
     bh = benjamini_hochberg(pvals, alpha=0.1) if pvals else {"survivors": [], "alpha": 0.1}
     bh["keys"] = pval_keys
+
+    gated_bh = benjamini_hochberg(gated_pvals, alpha=0.1) if gated_pvals else {"survivors": [], "alpha": 0.1}
+    gated_bh["keys"] = gated_pval_keys
 
     print(f"\n=== cost_bps(HL major taker) = {COST_BPS} ===\n")
     for r in all_results:
@@ -204,6 +212,20 @@ def main() -> None:
     print(f"\n=== BH-FDR (alpha=0.1) ===")
     print(f"keys: {bh['keys']}")
     print(f"survivors: {bh['survivors']}")
+
+    print(f"\n=== 컨텍스트 게이트 신규 가설 (별도 BH-FDR 풀, 이전 배치와 안 섞음) ===\n")
+    for r in gated_results:
+        if r["blocked"]:
+            print(f"{r['symbol']}:{r['signal']} -> BLOCKED ({r['reason']})")
+            continue
+        s = r["strategy"]
+        print(f"{r['symbol']}:{r['signal']} -> trades={s['num_trades']} "
+              f"win_rate={s['win_rate']:.3f} total_pnl={s['total_pnl']:.2f} "
+              f"p_value={r['random']['p_value']:.4f} (n_bars={r['n_bars']}, eligible={r['eligible_count']})")
+
+    print(f"\n=== 컨텍스트 게이트 BH-FDR (alpha=0.1) ===")
+    print(f"keys: {gated_bh['keys']}")
+    print(f"survivors: {gated_bh['survivors']}")
 
 
 if __name__ == "__main__":

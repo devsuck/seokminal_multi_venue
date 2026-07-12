@@ -3,6 +3,7 @@ from unittest.mock import patch
 from orderflow.aggregator import OrderflowAggregator
 from orderflow.models import TradeEvent
 from research.hypotheses.orderflow_context_gate import (
+    _broadcast_15m_to_60s,
     build_gated_confluence_signals,
     build_key_level_filter,
     build_ohlc_bars,
@@ -288,3 +289,27 @@ def test_build_gated_confluence_signals_no_lookahead_in_first_forming_bar_window
     # 첫 15분봉 구간(60s 버킷 idx0~14, bucket_ts 0~840)은 마감된 15분봉이 하나도 없으므로
     # bias가 절대 성립할 수 없다 -> 전부 HOLD.
     assert result["signals"][:15] == ["HOLD"] * 15
+
+
+def test_broadcast_15m_to_60s_uses_previous_closed_bar_not_current_forming_bar():
+    """_broadcast_15m_to_60s 직접 화이트박스 테스트 — 룩어헤드 버그의 정확한 재발을 잡는
+    최소 회귀 가드. bar0=[0,900), bar1=[900,1800), bar2=[1800,...) 3개 15분봉, 신호는
+    전부 다르게(BUY/SELL/BUY) 줘서 어느 봉의 신호가 새는지 명확히 구분한다.
+    old buggy code(signal_15m[j])라면 bar1 구간(900~1799)에 bar1 자신의 아직 마감 안 된
+    신호 "SELL"이 새어 들어간다 — 올바른 값은 그 직전에 마감된 bar0의 "BUY"."""
+    bars_15m_ts = [0.0, 900.0, 1800.0]
+    signal_15m = ["BUY", "SELL", "BUY"]
+
+    target_ts = [0.0, 500.0, 899.0, 900.0, 1500.0, 1799.0, 1800.0, 2500.0]
+    out = _broadcast_15m_to_60s(bars_15m_ts, signal_15m, target_ts)
+
+    assert out == [
+        "HOLD",  # 0.0: bar0 형성 중, 마감된 봉 없음
+        "HOLD",  # 500.0: bar0 형성 중
+        "HOLD",  # 899.0: bar0 형성 중(마감 직전)
+        "BUY",   # 900.0: bar0 방금 마감 -> bar0 신호("BUY") 사용, bar1 자신의 신호 아님
+        "BUY",   # 1500.0: bar1 형성 중, bar0 신호 유지
+        "BUY",   # 1799.0: bar1 형성 중(마감 직전), bar0 신호 유지
+        "SELL",  # 1800.0: bar1 방금 마감 -> bar1 신호("SELL") 사용
+        "SELL",  # 2500.0: bar2 형성 중, bar1 신호 유지
+    ]

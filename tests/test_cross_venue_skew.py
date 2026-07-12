@@ -4,7 +4,12 @@ import pandas as pd
 import pytest
 
 import research.hypotheses.cross_venue_skew as cvs
-from research.hypotheses.cross_venue_skew import build_imbalance, load_venue_snapshots
+from research.hypotheses.cross_venue_skew import (
+    align_venues,
+    build_imbalance,
+    build_price_series,
+    load_venue_snapshots,
+)
 
 
 def _write_jsonl(path, rows):
@@ -86,3 +91,50 @@ def test_build_imbalance_index_is_ts():
     })
     result = build_imbalance(df)
     assert list(result.index) == [1.0, 2.0]
+
+
+def test_align_venues_forward_fills_within_tolerance():
+    a = pd.Series([0.6, 0.7], index=[1.0, 20.0])
+    b = pd.Series([0.4], index=[1.0])
+    aligned = align_venues({"a": a, "b": b})
+    assert aligned.loc[2.0, "a"] == pytest.approx(0.6)
+    assert aligned.loc[4.0, "b"] == pytest.approx(0.4)  # gap=3s, 5s 이내
+
+
+def test_align_venues_nan_when_gap_exceeds_tolerance():
+    a = pd.Series([0.6, 0.65], index=[1.0, 20.0])
+    b = pd.Series([0.4], index=[1.0])
+    aligned = align_venues({"a": a, "b": b})
+    assert pd.isna(aligned.loc[9.0, "b"])  # gap=8s, 5s 초과
+
+
+def test_align_venues_columns_are_venue_names():
+    a = pd.Series([0.6], index=[1.0])
+    b = pd.Series([0.4], index=[1.0])
+    aligned = align_venues({"a": a, "b": b})
+    assert set(aligned.columns) == {"a", "b"}
+
+
+def test_build_price_series_averages_venue_mids():
+    venue_a = pd.DataFrame({
+        "ts": [1.0],
+        "bids": [[{"price": 99.0, "size": 1.0}]],
+        "asks": [[{"price": 101.0, "size": 1.0}]],
+    })  # mid = 100.0
+    venue_b = pd.DataFrame({
+        "ts": [1.0],
+        "bids": [[{"price": 98.0, "size": 1.0}]],
+        "asks": [[{"price": 102.0, "size": 1.0}]],
+    })  # mid = 100.0
+    price = build_price_series({"a": venue_a, "b": venue_b})
+    assert price.loc[1.0] == pytest.approx(100.0)
+
+
+def test_build_price_series_uses_max_bid_min_ask_not_list_order():
+    venue_a = pd.DataFrame({
+        "ts": [1.0],
+        "bids": [[{"price": 90.0, "size": 1.0}, {"price": 99.0, "size": 1.0}]],
+        "asks": [[{"price": 110.0, "size": 1.0}, {"price": 101.0, "size": 1.0}]],
+    })
+    price = build_price_series({"a": venue_a})
+    assert price.loc[1.0] == pytest.approx(100.0)  # (99+101)/2, 리스트상 첫 항목(90,110) 아님

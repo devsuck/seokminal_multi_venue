@@ -53,3 +53,54 @@ def build_imbalance(df: pd.DataFrame, depth_n: int = IMBALANCE_DEPTH_N) -> pd.Se
 
     values = df.apply(_imb, axis=1)
     return pd.Series(values.values, index=df["ts"].values)
+
+
+def align_venues(imbalance_by_venue: dict[str, pd.Series]) -> pd.DataFrame:
+    """RESAMPLE_GRID_S 그리드로 각 벤뉴 시계열을 asof-backward-fill
+    (tolerance=FFILL_TOLERANCE_S) 정렬. 컬럼=벤뉴명. tolerance 초과분은 NaN으로
+    남기고(추정값으로 메우지 않음), 이후 계산에서 자연스럽게 제외된다."""
+    if not imbalance_by_venue:
+        return pd.DataFrame()
+
+    non_empty = {v: s for v, s in imbalance_by_venue.items() if len(s)}
+    if not non_empty:
+        return pd.DataFrame(columns=list(imbalance_by_venue))
+
+    min_ts = min(s.index.min() for s in non_empty.values())
+    max_ts = max(s.index.max() for s in non_empty.values())
+    n_steps = int((max_ts - min_ts) // RESAMPLE_GRID_S) + 1
+    grid = [min_ts + i * RESAMPLE_GRID_S for i in range(n_steps)]
+
+    out = pd.DataFrame(index=grid)
+    for venue, series in imbalance_by_venue.items():
+        s = series.sort_index()
+        left = pd.DataFrame({"ts": grid})
+        right = pd.DataFrame({"ts": s.index.values, "value": s.values}).sort_values("ts")
+        merged = pd.merge_asof(left, right, on="ts", direction="backward", tolerance=FFILL_TOLERANCE_S)
+        out[venue] = merged["value"].values
+    out.index.name = "ts"
+    return out
+
+
+def build_price_series(raw_books_by_venue: dict[str, pd.DataFrame]) -> pd.Series:
+    """RESAMPLE_GRID_S 그리드에서 벤뉴별 mid=(best_bid+best_ask)/2를 구하고
+    벤뉴간 평균 — 레이블 계산용 단일 가격 시계열(코인당 1개).
+    best_bid/best_ask는 리스트 순서를 신뢰하지 않고 명시적으로
+    best_bid=max(bid.price), best_ask=min(ask.price)로 계산한다."""
+    if not raw_books_by_venue:
+        return pd.Series(dtype=float)
+
+    def _mid(row):
+        if not row["bids"] or not row["asks"]:
+            return float("nan")
+        best_bid = max(lvl["price"] for lvl in row["bids"])
+        best_ask = min(lvl["price"] for lvl in row["asks"])
+        return (best_bid + best_ask) / 2.0
+
+    mids_by_venue: dict[str, pd.Series] = {}
+    for venue, df in raw_books_by_venue.items():
+        values = df.apply(_mid, axis=1)
+        mids_by_venue[venue] = pd.Series(values.values, index=df["ts"].values)
+
+    aligned = align_venues(mids_by_venue)
+    return aligned.mean(axis=1, skipna=True)

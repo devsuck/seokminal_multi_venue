@@ -180,3 +180,56 @@ def test_build_spike_signal_negative_direction():
     divergence = pd.DataFrame({"a": values}, index=[float(i) for i in range(n + 1)])
     spikes = build_spike_signal(divergence)
     assert spikes.iloc[0]["direction"] == -1.0
+
+
+def test_build_spike_signal_boundary_at_exact_threshold_and_lookback():
+    """z==threshold 정확한 경계값 + lookback 경계 인덱스를 동시에 판별.
+    `>=` 대신 `>`를 쓰는 버그(경계값은 fire해야 하는데 `>`면 제외됨)와
+    `min_periods` off-by-one 버그(윈도우가 1칸 이르게 꽉 참, 예: min_periods=lookback-1)
+    둘 다 잡아낸다.
+
+    주의 1: rolling 윈도우(size=lookback)는 판정 대상 값 자기 자신을 마지막 원소로
+    포함하므로, "목표 z"에 도달하는 입력값은 평균/표준편차가 그 값 자신에 의존하는
+    자기참조 방정식이 되어 닫힌 형태로 못 구한다(단순 mean+threshold*std 공식은 성립
+    안 함 — 실제로 시도해보면 z가 threshold보다 살짝 낮게 나옴). 대신 production과
+    동일한 rolling mean/std(ddof=1) 계산을 그대로 사용해 이분탐색으로 z가 정확히
+    threshold가 되는 입력값을 수치적으로 구한다.
+
+    주의 2: warmup의 마지막 원소(index n-2)를 나머지(전부 0)와 다른 값(1.0)으로 둔다.
+    이러면 warmup만으로 이루어진 윈도우(길이 n-1)에서 그 마지막 원소 자신의 z가
+    ~sqrt(n-1)로 threshold를 훨씬 웃돌게 되어, `min_periods=lookback-1` 버그가 있을 때
+    index n-2에서도 스파이크가 (부당하게) 뜬다 — 이걸로 조기 발화를 판별한다. 반대로
+    올바른 구현(min_periods=lookback)에서는 index n-2 시점엔 데이터가 n-1개뿐이라
+    항상 NaN이므로 warmup 값이 무엇이든 스파이크가 안 뜬다(안전).
+    """
+    n = cvs.DIVERGENCE_ZSCORE_LOOKBACK
+    threshold = cvs.SPIKE_ZSCORE_THRESHOLD
+    warmup = [0.0] * (n - 2) + [1.0]
+
+    def _z_if_last(x: float) -> float:
+        s = pd.Series(warmup + [x])
+        m = s.rolling(window=n, min_periods=n).mean().iloc[-1]
+        sd = s.rolling(window=n, min_periods=n).std().iloc[-1]
+        return (x - m) / sd
+
+    lo = sum(warmup) / len(warmup)
+    assert _z_if_last(lo) < threshold
+    hi = lo + 1.0
+    while _z_if_last(hi) < threshold:
+        hi = hi * 2 + 1.0
+    for _ in range(200):
+        mid = (lo + hi) / 2
+        if _z_if_last(mid) < threshold:
+            lo = mid
+        else:
+            hi = mid
+    boundary_value = hi  # 이분탐색 수렴 지점: z(boundary_value) == threshold (bit-precise)
+    assert _z_if_last(boundary_value) == pytest.approx(threshold, abs=1e-9)
+
+    values = warmup + [boundary_value]
+    divergence = pd.DataFrame({"a": values}, index=[float(i) for i in range(n)])
+    spikes = build_spike_signal(divergence)
+    # 정확히 index n-1(첫 풀윈도우 인덱스)에서만 fire — 더 이르면(n-2 포함, lookback
+    # off-by-one) 리스트에 항목이 더 생겨서 실패하고, 아예 안 뜨면(>= 대신 > 버그)
+    # 리스트가 비어서 실패한다.
+    assert list(spikes["ts"]) == [float(n - 1)]

@@ -104,3 +104,41 @@ def build_price_series(raw_books_by_venue: dict[str, pd.DataFrame]) -> pd.Series
 
     aligned = align_venues(mids_by_venue)
     return aligned.mean(axis=1, skipna=True)
+
+
+def build_skew_divergence(aligned: pd.DataFrame) -> pd.DataFrame:
+    """벤뉴 컬럼 2개 이상 유효한 시점만 대상. 각 벤뉴 v에 대해
+    divergence[v] = imbalance[v] - mean(imbalance[다른 벤뉴들])."""
+    venues = list(aligned.columns)
+    out = pd.DataFrame(index=aligned.index)
+    valid_count = aligned.notna().sum(axis=1)
+    for v in venues:
+        others = [c for c in venues if c != v]
+        others_mean = aligned[others].mean(axis=1, skipna=True) if others else pd.Series(float("nan"), index=aligned.index)
+        div = aligned[v] - others_mean
+        out[v] = div.where(valid_count >= 2)
+    return out
+
+
+def build_spike_signal(
+    divergence: pd.DataFrame,
+    lookback: int = DIVERGENCE_ZSCORE_LOOKBACK,
+    threshold: float = SPIKE_ZSCORE_THRESHOLD,
+) -> pd.DataFrame:
+    """벤뉴별 divergence 컬럼마다 롤링(lookback) z-score 계산, |z|>=threshold인
+    시점을 스파이크로 표시. long-format 반환(컬럼: ts, venue, spike, direction) —
+    build_labels_multi_horizon이 이벤트 단위로 순회하기 위함."""
+    records = []
+    for venue in divergence.columns:
+        series = divergence[venue]
+        roll_mean = series.rolling(window=lookback, min_periods=lookback).mean()
+        roll_std = series.rolling(window=lookback, min_periods=lookback).std()
+        z = (series - roll_mean) / roll_std
+        spike = (z.abs() >= threshold) & roll_std.gt(0)
+        for ts, is_spike, div_val in zip(divergence.index, spike.values, series.values):
+            if is_spike:
+                records.append({
+                    "ts": ts, "venue": venue, "spike": True,
+                    "direction": 1.0 if div_val > 0 else -1.0,
+                })
+    return pd.DataFrame(records, columns=["ts", "venue", "spike", "direction"])

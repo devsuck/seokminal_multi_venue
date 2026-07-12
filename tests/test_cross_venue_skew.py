@@ -8,6 +8,8 @@ from research.hypotheses.cross_venue_skew import (
     align_venues,
     build_imbalance,
     build_price_series,
+    build_skew_divergence,
+    build_spike_signal,
     load_venue_snapshots,
 )
 
@@ -140,3 +142,41 @@ def test_build_price_series_uses_max_bid_min_ask_not_list_order():
     # correct mid = (max(90,99)=99 + min(105,101)=101)/2 = 100.0
     # naive first-element mid = (90+105)/2 = 97.5 (differs, so this discriminates)
     assert price.loc[1.0] == pytest.approx(100.0)
+
+
+def test_build_skew_divergence_computes_v_minus_mean_of_others():
+    aligned = pd.DataFrame({"a": [0.8], "b": [0.4], "c": [0.5]}, index=[1.0])
+    div = build_skew_divergence(aligned)
+    assert div.loc[1.0, "a"] == pytest.approx(0.8 - (0.4 + 0.5) / 2)
+    assert div.loc[1.0, "b"] == pytest.approx(0.4 - (0.8 + 0.5) / 2)
+
+
+def test_build_skew_divergence_nan_when_fewer_than_two_valid():
+    aligned = pd.DataFrame({"a": [0.8], "b": [float("nan")], "c": [float("nan")]}, index=[1.0])
+    div = build_skew_divergence(aligned)
+    assert pd.isna(div.loc[1.0, "a"])
+
+
+def test_build_spike_signal_flags_above_threshold_after_warmup():
+    n = cvs.DIVERGENCE_ZSCORE_LOOKBACK
+    values = [0.0] * n + [10.0]
+    divergence = pd.DataFrame({"a": values}, index=[float(i) for i in range(n + 1)])
+    spikes = build_spike_signal(divergence)
+    assert list(spikes["ts"]) == [float(n)]
+    assert spikes.iloc[0]["venue"] == "a"
+    assert spikes.iloc[0]["direction"] == 1.0
+
+
+def test_build_spike_signal_no_spikes_during_warmup():
+    n = cvs.DIVERGENCE_ZSCORE_LOOKBACK
+    divergence = pd.DataFrame({"a": [float(i) for i in range(n - 1)]}, index=list(range(n - 1)))
+    spikes = build_spike_signal(divergence)
+    assert spikes.empty
+
+
+def test_build_spike_signal_negative_direction():
+    n = cvs.DIVERGENCE_ZSCORE_LOOKBACK
+    values = [0.0] * n + [-10.0]
+    divergence = pd.DataFrame({"a": values}, index=[float(i) for i in range(n + 1)])
+    spikes = build_spike_signal(divergence)
+    assert spikes.iloc[0]["direction"] == -1.0

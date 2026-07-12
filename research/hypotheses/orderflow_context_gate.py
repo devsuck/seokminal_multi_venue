@@ -115,3 +115,93 @@ def build_vwap_filter(deltas: list[dict], window_buckets: int = VWAP_WINDOW_BUCK
                 sig = "SELL"
         out.append(sig)
     return out
+
+
+def build_confluence_signals(deltas: list[dict]) -> dict:
+    """footprint_imbalance/absorption/cvd_divergence 3개 다수결(2개 이상 방향 일치) ->
+    그 방향, 아니면 HOLD. 세 서브신호 다 _footprint_buckets 기반이라 봉 정렬 동일.
+
+    사전에 고정한 단일 규칙 — 결과 보고 조합 방식 바꾸지 않는다(데이터 스누핑 방지).
+    eligible = cvd_divergence 판정 가능 구간(i >= CVD_LOOKBACK_BUCKETS)과 동일 —
+    세 의견이 다 갖춰진 구간만 다수결 판정 자격을 준다."""
+    fp = SIGNAL_BUILDERS["footprint_imbalance"](deltas)["signals"]
+    ab = SIGNAL_BUILDERS["absorption"](deltas)["signals"]
+    cvd_data = SIGNAL_BUILDERS["cvd_divergence"](deltas)
+    cvd, closes = cvd_data["signals"], cvd_data["closes"]
+
+    signals: list[str] = []
+    eligible: list[int] = []
+    for i in range(len(closes)):
+        sig = "HOLD"
+        if i >= CVD_LOOKBACK_BUCKETS:
+            eligible.append(i)
+            votes = [fp[i], ab[i], cvd[i]]
+            buy_votes = votes.count("BUY")
+            sell_votes = votes.count("SELL")
+            if buy_votes >= 2:
+                sig = "BUY"
+            elif sell_votes >= 2:
+                sig = "SELL"
+        signals.append(sig)
+    return {"closes": closes, "signals": signals, "eligible": eligible}
+
+
+def _broadcast_15m_to_60s(bars_15m_ts: list[float], signal_15m: list[str], target_ts: list[float]) -> list[str]:
+    """15분봉 신호를 그 구간에 속한 모든 60s 버킷에 forward-fill로 broadcast.
+    target_ts가 첫 15분봉보다 이르면(워밍업 전) HOLD."""
+    out = []
+    j = -1
+    for ts in target_ts:
+        while j + 1 < len(bars_15m_ts) and bars_15m_ts[j + 1] <= ts:
+            j += 1
+        out.append(signal_15m[j] if j >= 0 else "HOLD")
+    return out
+
+
+def build_gated_confluence_signals(deltas: list[dict], ticks: list[dict]) -> dict:
+    """전체 파이프라인 조립:
+    1. build_ohlc_bars(ticks) -> resample_bars(15) -> trend_filter, key_level_filter (15m)
+    2. build_vwap_filter(deltas) (60s)
+    3. killzone_indices (60s bucket_ts)
+    4. 15m 신호 -> 60s로 broadcast
+    5. bias = trend/key_level/vwap 3개 전부 같은 방향이면 그 방향, 아니면 HOLD
+    6. 기존 confluence(footprint/absorption/cvd 2/3 다수결) 계산
+    7. bias!=HOLD and killzone 안 and confluence==bias -> 그 방향 신호, 아니면 HOLD
+
+    eligible = bias 계산 가능했던 구간(15분봉 워밍업 지난 이후) 전체 —
+    신호가 실제로 뜬 곳만이 아니라 판정 가능 모집단 전체(다른 build_*_signals와 동일 규칙)."""
+    bars_1m = build_ohlc_bars(ticks, bucket_sec=60.0)
+    bars_15m = resample_bars(bars_1m, factor=15)
+    bars_15m_ts = [b["bucket_ts"] for b in bars_15m]
+
+    trend_15m = build_trend_filter(bars_15m)
+    key_level_15m = build_key_level_filter(bars_15m)
+    vwap_60s = build_vwap_filter(deltas)
+
+    order, _buy, _sell, _open_price, last_price = _footprint_buckets(deltas)
+    closes = [last_price[b] for b in order]
+    kz = set(killzone_indices([int(b) for b in order]))
+
+    trend_60s = _broadcast_15m_to_60s(bars_15m_ts, trend_15m, order)
+    key_level_60s = _broadcast_15m_to_60s(bars_15m_ts, key_level_15m, order)
+
+    confluence = build_confluence_signals(deltas)
+    conf_signals = confluence["signals"]
+
+    signals: list[str] = []
+    eligible: list[int] = []
+    for i in range(len(order)):
+        warmed_up = bool(bars_15m_ts) and order[i] >= bars_15m_ts[0]
+        if warmed_up:
+            eligible.append(i)
+
+        bias = "HOLD"
+        if warmed_up and trend_60s[i] == key_level_60s[i] == vwap_60s[i] and trend_60s[i] != "HOLD":
+            bias = trend_60s[i]
+
+        sig = "HOLD"
+        if bias != "HOLD" and i in kz and conf_signals[i] == bias:
+            sig = bias
+        signals.append(sig)
+
+    return {"closes": closes, "signals": signals, "eligible": eligible}

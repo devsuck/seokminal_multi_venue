@@ -1,4 +1,7 @@
+from unittest.mock import patch
+
 from research.hypotheses.orderflow_context_gate import (
+    build_gated_confluence_signals,
     build_key_level_filter,
     build_ohlc_bars,
     build_trend_filter,
@@ -120,3 +123,131 @@ def test_build_vwap_filter_window_excludes_older_buckets():
     windowed = build_vwap_filter(deltas, window_buckets=2)
     assert full[2] == "BUY"
     assert windowed[2] == "SELL"
+
+
+# build_gated_confluence_signals는 build_trend_filter/build_key_level_filter/
+# build_vwap_filter/build_ohlc_bars/resample_bars/build_confluence_signals를 조립만
+# 하는 함수라, 각 구성요소는 이미 위에서 단위테스트했다. 여기서는 조립 로직(3필터
+# 만장일치 bias, 15분봉->60s 브로드캐스트, killzone 게이팅, confluence 일치 확인)만
+# 독립적으로 검증하기 위해 구성요소를 mock으로 고정한다.
+
+_KZ_OUTSIDE = 1704115740.0  # 2024-01-01 13:29:00 UTC — 킬존(13:30-15:00) 밖
+_KZ_START = 1704115800.0    # 2024-01-01 13:30:00 UTC — 킬존 시작(포함)
+_KZ_INSIDE = 1704115860.0   # 2024-01-01 13:31:00 UTC — 킬존 안
+
+
+@patch("research.hypotheses.orderflow_context_gate.build_confluence_signals")
+@patch("research.hypotheses.orderflow_context_gate.build_vwap_filter")
+@patch("research.hypotheses.orderflow_context_gate.build_key_level_filter")
+@patch("research.hypotheses.orderflow_context_gate.build_trend_filter")
+@patch("research.hypotheses.orderflow_context_gate.resample_bars")
+@patch("research.hypotheses.orderflow_context_gate.build_ohlc_bars")
+def test_build_gated_confluence_signals_all_agree_in_killzone_yields_signal(
+    mock_ohlc, mock_resample, mock_trend, mock_key_level, mock_vwap, mock_confluence,
+):
+    deltas = [
+        _fd(_KZ_OUTSIDE, 100.0, "buy", 1.0),
+        _fd(_KZ_START, 101.0, "buy", 1.0),
+        _fd(_KZ_INSIDE, 102.0, "buy", 1.0),
+    ]
+    mock_ohlc.return_value = []
+    mock_resample.return_value = [{"bucket_ts": _KZ_OUTSIDE}]  # 워밍업 완료선 = 가장 이른 버킷
+    mock_trend.return_value = ["BUY"]
+    mock_key_level.return_value = ["BUY"]
+    mock_vwap.return_value = ["BUY", "BUY", "BUY"]
+    mock_confluence.return_value = {
+        "closes": [100.0, 101.0, 102.0], "signals": ["BUY", "BUY", "BUY"], "eligible": [0, 1, 2],
+    }
+
+    result = build_gated_confluence_signals(deltas, ticks=[])
+
+    assert result["closes"] == [100.0, 101.0, 102.0]
+    assert result["eligible"] == [0, 1, 2]
+    # idx0: 3필터+confluence 전부 BUY 만장일치지만 킬존 밖 -> HOLD.
+    # idx1,idx2: 만장일치 + 킬존 안 + confluence 일치 -> BUY.
+    assert result["signals"] == ["HOLD", "BUY", "BUY"]
+
+
+@patch("research.hypotheses.orderflow_context_gate.build_confluence_signals")
+@patch("research.hypotheses.orderflow_context_gate.build_vwap_filter")
+@patch("research.hypotheses.orderflow_context_gate.build_key_level_filter")
+@patch("research.hypotheses.orderflow_context_gate.build_trend_filter")
+@patch("research.hypotheses.orderflow_context_gate.resample_bars")
+@patch("research.hypotheses.orderflow_context_gate.build_ohlc_bars")
+def test_build_gated_confluence_signals_filter_disagreement_is_hold(
+    mock_ohlc, mock_resample, mock_trend, mock_key_level, mock_vwap, mock_confluence,
+):
+    deltas = [
+        _fd(_KZ_OUTSIDE, 100.0, "buy", 1.0),
+        _fd(_KZ_START, 101.0, "buy", 1.0),
+        _fd(_KZ_INSIDE, 102.0, "buy", 1.0),
+    ]
+    mock_ohlc.return_value = []
+    mock_resample.return_value = [{"bucket_ts": _KZ_OUTSIDE}]
+    mock_trend.return_value = ["BUY"]
+    mock_key_level.return_value = ["SELL"]  # 트렌드와 불일치 -> bias 성립 안 함
+    mock_vwap.return_value = ["BUY", "BUY", "BUY"]
+    mock_confluence.return_value = {
+        "closes": [100.0, 101.0, 102.0], "signals": ["BUY", "BUY", "BUY"], "eligible": [0, 1, 2],
+    }
+
+    result = build_gated_confluence_signals(deltas, ticks=[])
+
+    assert result["signals"] == ["HOLD", "HOLD", "HOLD"]
+
+
+@patch("research.hypotheses.orderflow_context_gate.build_confluence_signals")
+@patch("research.hypotheses.orderflow_context_gate.build_vwap_filter")
+@patch("research.hypotheses.orderflow_context_gate.build_key_level_filter")
+@patch("research.hypotheses.orderflow_context_gate.build_trend_filter")
+@patch("research.hypotheses.orderflow_context_gate.resample_bars")
+@patch("research.hypotheses.orderflow_context_gate.build_ohlc_bars")
+def test_build_gated_confluence_signals_confluence_mismatch_is_hold(
+    mock_ohlc, mock_resample, mock_trend, mock_key_level, mock_vwap, mock_confluence,
+):
+    deltas = [
+        _fd(_KZ_START, 101.0, "buy", 1.0),
+        _fd(_KZ_INSIDE, 102.0, "buy", 1.0),
+    ]
+    mock_ohlc.return_value = []
+    mock_resample.return_value = [{"bucket_ts": _KZ_START}]
+    mock_trend.return_value = ["BUY"]
+    mock_key_level.return_value = ["BUY"]
+    mock_vwap.return_value = ["BUY", "BUY"]
+    # bias는 BUY 성립(만장일치)이지만 confluence가 SELL -> 진입 신호는 HOLD.
+    mock_confluence.return_value = {
+        "closes": [101.0, 102.0], "signals": ["SELL", "SELL"], "eligible": [0, 1],
+    }
+
+    result = build_gated_confluence_signals(deltas, ticks=[])
+
+    assert result["signals"] == ["HOLD", "HOLD"]
+
+
+@patch("research.hypotheses.orderflow_context_gate.build_confluence_signals")
+@patch("research.hypotheses.orderflow_context_gate.build_vwap_filter")
+@patch("research.hypotheses.orderflow_context_gate.build_key_level_filter")
+@patch("research.hypotheses.orderflow_context_gate.build_trend_filter")
+@patch("research.hypotheses.orderflow_context_gate.resample_bars")
+@patch("research.hypotheses.orderflow_context_gate.build_ohlc_bars")
+def test_build_gated_confluence_signals_before_warmup_is_not_eligible(
+    mock_ohlc, mock_resample, mock_trend, mock_key_level, mock_vwap, mock_confluence,
+):
+    deltas = [
+        _fd(_KZ_OUTSIDE, 100.0, "buy", 1.0),  # 15분봉 워밍업 전(첫 15분봉보다 이름)
+        _fd(_KZ_START, 101.0, "buy", 1.0),
+        _fd(_KZ_INSIDE, 102.0, "buy", 1.0),
+    ]
+    mock_ohlc.return_value = []
+    mock_resample.return_value = [{"bucket_ts": _KZ_START}]  # 워밍업 완료선 = idx1과 동일 시각
+    mock_trend.return_value = ["BUY"]
+    mock_key_level.return_value = ["BUY"]
+    mock_vwap.return_value = ["BUY", "BUY", "BUY"]
+    mock_confluence.return_value = {
+        "closes": [100.0, 101.0, 102.0], "signals": ["BUY", "BUY", "BUY"], "eligible": [1, 2],
+    }
+
+    result = build_gated_confluence_signals(deltas, ticks=[])
+
+    assert result["eligible"] == [1, 2]  # idx0은 워밍업 전 -> 판정 불가 모집단에서 제외
+    assert result["signals"][0] == "HOLD"

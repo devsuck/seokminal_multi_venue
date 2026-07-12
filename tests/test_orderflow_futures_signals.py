@@ -65,3 +65,18 @@ def test_cvd_divergence_insufficient_lookback_is_hold():
     result = build_cvd_divergence_signals(deltas, lookback_buckets=3)
     assert result["signals"] == ["HOLD"]
     assert result["eligible"] == []
+
+
+def test_cvd_divergence_hold_bucket_with_sufficient_lookback_is_still_eligible():
+    # 가격도 오르고 CVD도 올라 다이버전스가 아닌(HOLD) 버킷이라도, lookback 계산이
+    # 가능했다면(i >= lookback_buckets) eligible에는 포함되어야 한다 — eligible은
+    # "신호가 뜬 인덱스"가 아니라 "판정 가능 모집단"이어야 함(footprint_imbalance와 동일 의미).
+    deltas = [
+        _fd(0.0, 100.0, "buy", 1.0), _fd(0.0, 100.0, "sell", 1.0),    # cvd=0, price=100
+        _fd(60.0, 101.0, "buy", 1.0), _fd(60.0, 101.0, "sell", 1.0),  # cvd=0, price=101
+        _fd(120.0, 102.0, "buy", 1.0), _fd(120.0, 102.0, "sell", 1.0),# cvd=0, price=102
+        _fd(180.0, 103.0, "buy", 5.0),                                 # cvd=+5, price=103 (up + up -> no divergence)
+    ]
+    result = build_cvd_divergence_signals(deltas, lookback_buckets=3)
+    assert result["signals"][-1] == "HOLD"
+    assert result["eligible"] == [3]

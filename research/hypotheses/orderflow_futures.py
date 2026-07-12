@@ -80,7 +80,9 @@ def build_cvd_divergence_signals(deltas: list[dict], lookback_buckets: int = CVD
     """누적 delta(CVD)가 lookback 구간 동안 가격과 반대 방향이면 다이버전스 신호.
 
     가격 하락+CVD 상승 -> BUY(매도세인 척하지만 실제 매수 우위 -> 반등 기대).
-    가격 상승+CVD 하락 -> SELL. lookback 미달 버킷은 HOLD/not eligible."""
+    가격 상승+CVD 하락 -> SELL. lookback 미달 버킷은 HOLD/not eligible.
+    eligible은 "다이버전스가 실제로 뜬 인덱스"가 아니라 build_footprint_imbalance_signals와
+    동일하게 "판정 가능했던 버킷"(i >= lookback_buckets) 전체 — HOLD로 끝난 버킷도 포함."""
     order, buy, sell, last_price = _footprint_buckets(deltas)
 
     cvd = 0.0
@@ -95,13 +97,12 @@ def build_cvd_divergence_signals(deltas: list[dict], lookback_buckets: int = CVD
 
         sig = "HOLD"
         if i >= lookback_buckets:
+            eligible.append(i)
             price_delta = closes[i] - closes[i - lookback_buckets]
             cvd_delta = cvd_history[i] - cvd_history[i - lookback_buckets]
             if price_delta < 0 and cvd_delta > 0:
-                eligible.append(i)
                 sig = "BUY"
             elif price_delta > 0 and cvd_delta < 0:
-                eligible.append(i)
                 sig = "SELL"
         signals.append(sig)
     return {"closes": closes, "signals": signals, "eligible": eligible}

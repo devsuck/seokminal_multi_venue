@@ -48,12 +48,11 @@ def load_raw_ticks(paths: list[str]) -> list[dict]:
     return ticks
 
 
-def ticks_to_footprint_deltas(paths: list[str], symbol: str) -> list[dict]:
-    """원시 틱 -> OrderflowAggregator.on_trade()로 footprint_delta 스트림 생성.
+def ticks_to_footprint_deltas(ticks: list[dict], symbol: str) -> list[dict]:
+    """원시 틱(이미 로드된 것) -> OrderflowAggregator.on_trade()로 footprint_delta 스트림 생성.
 
     라이브 수집기(run_ib_orderflow_tick_collect.py)와 동일하게 Aggregator를
     단일 소스로 재사용 — 버킷팅 로직을 여기서 새로 짜지 않는다."""
-    ticks = load_raw_ticks(paths)
     agg = OrderflowAggregator()
     deltas = []
     for t in ticks:
@@ -160,7 +159,7 @@ def main() -> None:
             print(f"{symbol}: 데이터 없음, 스킵")
             continue
         ticks = load_raw_ticks(paths)
-        deltas = ticks_to_footprint_deltas(paths, f"{symbol}.HL")
+        deltas = ticks_to_footprint_deltas(ticks, f"{symbol}.HL")
 
         for signal_name in ("footprint_imbalance", "absorption", "cvd_divergence", "confluence"):
             r = run_bar_signal(symbol, signal_name, deltas)

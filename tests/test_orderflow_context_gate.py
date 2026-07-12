@@ -1,5 +1,7 @@
 from unittest.mock import patch
 
+from orderflow.aggregator import OrderflowAggregator
+from orderflow.models import TradeEvent
 from research.hypotheses.orderflow_context_gate import (
     build_gated_confluence_signals,
     build_key_level_filter,
@@ -151,9 +153,13 @@ def test_build_gated_confluence_signals_all_agree_in_killzone_yields_signal(
         _fd(_KZ_INSIDE, 102.0, "buy", 1.0),
     ]
     mock_ohlc.return_value = []
-    mock_resample.return_value = [{"bucket_ts": _KZ_OUTSIDE}]  # 워밍업 완료선 = 가장 이른 버킷
-    mock_trend.return_value = ["BUY"]
-    mock_key_level.return_value = ["BUY"]
+    # 룩어헤드 수정 이후: 봉이 하나뿐이면 "마감됐다"고 증명할 다음 봉이 없어 그 봉 신호를
+    # 절대 쓸 수 없다(항상 HOLD). idx1(_KZ_START)부터 bar0가 마감됐음을 보여주기 위해
+    # bar1(dummy)을 _KZ_START 시각에 시작하는 걸로 추가한다 -> idx1,idx2는 "직전에 마감된
+    # bar0"의 신호(BUY)를 참조하게 된다.
+    mock_resample.return_value = [{"bucket_ts": _KZ_OUTSIDE}, {"bucket_ts": _KZ_START}]
+    mock_trend.return_value = ["BUY", "BUY"]
+    mock_key_level.return_value = ["BUY", "BUY"]
     mock_vwap.return_value = ["BUY", "BUY", "BUY"]
     mock_confluence.return_value = {
         "closes": [100.0, 101.0, 102.0], "signals": ["BUY", "BUY", "BUY"], "eligible": [0, 1, 2],
@@ -163,8 +169,8 @@ def test_build_gated_confluence_signals_all_agree_in_killzone_yields_signal(
 
     assert result["closes"] == [100.0, 101.0, 102.0]
     assert result["eligible"] == [0, 1, 2]
-    # idx0: 3필터+confluence 전부 BUY 만장일치지만 킬존 밖 -> HOLD.
-    # idx1,idx2: 만장일치 + 킬존 안 + confluence 일치 -> BUY.
+    # idx0: bar0가 아직 마감 전(형성 중)이라 bias 자체가 성립 불가 -> HOLD(킬존 밖이기도 함).
+    # idx1,idx2: 마감된 bar0의 신호로 만장일치 + 킬존 안 + confluence 일치 -> BUY.
     assert result["signals"] == ["HOLD", "BUY", "BUY"]
 
 
@@ -251,3 +257,34 @@ def test_build_gated_confluence_signals_before_warmup_is_not_eligible(
 
     assert result["eligible"] == [1, 2]  # idx0은 워밍업 전 -> 판정 불가 모집단에서 제외
     assert result["signals"][0] == "HOLD"
+
+
+def test_build_gated_confluence_signals_no_lookahead_in_first_forming_bar_window():
+    """룩어헤드 회귀 가드 — 위 4개 테스트와 달리 아무것도 mock하지 않고 실제 틱 데이터를
+    build_ohlc_bars/resample_bars/build_trend_filter/build_key_level_filter/
+    build_vwap_filter/build_confluence_signals 전체 실파이프라인으로 통과시킨다.
+
+    45분(첫 15분봉 3개 완결 구간)짜리 실틱을 만들어 build_gated_confluence_signals를
+    직접 호출한다. 첫 15분봉(bucket_ts=0~840, 아직 마감 안 됨)의 구간에 속하는 모든 60s
+    버킷은 그 어떤 15분봉 신호도 참조할 수 없어야 하므로(마감된 봉이 하나도 없음)
+    signals가 전부 "HOLD"여야 한다 — 이게 깨지면 _broadcast_15m_to_60s가 형성 중인
+    봉 자신(또는 그보다 미래)의 신호를 과거 버킷에 흘려보내는 룩어헤드 버그가 재발한 것."""
+    ticks = []
+    for minute in range(45):
+        base = float(minute * 60)
+        price = 100.0 + minute * 0.5
+        ticks.append({"ts": base + 10.0, "price": price, "size": 1.0, "side": "buy"})
+        ticks.append({"ts": base + 40.0, "price": price + 0.1, "size": 1.0, "side": "sell"})
+
+    agg = OrderflowAggregator()
+    deltas = []
+    for t in sorted(ticks, key=lambda x: x["ts"]):
+        ev = TradeEvent(symbol="BTC.HL", ts=t["ts"], price=t["price"], size=t["size"], side=t["side"])
+        deltas.append(agg.on_trade(ev))
+
+    result = build_gated_confluence_signals(deltas, ticks)
+
+    assert len(result["signals"]) == 45  # 45개 60s 버킷(45분치) 전부 판정 대상
+    # 첫 15분봉 구간(60s 버킷 idx0~14, bucket_ts 0~840)은 마감된 15분봉이 하나도 없으므로
+    # bias가 절대 성립할 수 없다 -> 전부 HOLD.
+    assert result["signals"][:15] == ["HOLD"] * 15

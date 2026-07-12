@@ -147,14 +147,16 @@ def build_confluence_signals(deltas: list[dict]) -> dict:
 
 
 def _broadcast_15m_to_60s(bars_15m_ts: list[float], signal_15m: list[str], target_ts: list[float]) -> list[str]:
-    """15분봉 신호를 그 구간에 속한 모든 60s 버킷에 forward-fill로 broadcast.
-    target_ts가 첫 15분봉보다 이르면(워밍업 전) HOLD."""
+    """직전에 마감된 15분봉의 신호를 그 다음 15분봉 구간에 속한 60s 버킷들에 forward-fill로
+    broadcast — 형성 중인(마감 안 된) 봉 자신의 구간에는 그 봉의 신호를 적용하지 않는다
+    (룩어헤드 방지: 15분봉 신호는 그 봉의 종가로 계산되므로 봉이 마감돼야 알 수 있다).
+    target_ts가 첫(마감된) 15분봉보다 이르면 HOLD."""
     out = []
     j = -1
     for ts in target_ts:
         while j + 1 < len(bars_15m_ts) and bars_15m_ts[j + 1] <= ts:
             j += 1
-        out.append(signal_15m[j] if j >= 0 else "HOLD")
+        out.append(signal_15m[j - 1] if j >= 1 else "HOLD")
     return out
 
 
@@ -191,6 +193,9 @@ def build_gated_confluence_signals(deltas: list[dict], ticks: list[dict]) -> dic
     signals: list[str] = []
     eligible: list[int] = []
     for i in range(len(order)):
+        # 방어적 no-op: order[i]와 bars_15m_ts[0]가 같은 첫 틱에서 파생돼 실질적으로 항상
+        # True다. 실제 워밍업 배제(첫 15분봉 마감 전 구간)는 이제 _broadcast_15m_to_60s가
+        # 마감된 봉이 없을 때 HOLD를 반환하는 것으로 처리된다(룩어헤드 수정 이후).
         warmed_up = bool(bars_15m_ts) and order[i] >= bars_15m_ts[0]
         if warmed_up:
             eligible.append(i)

@@ -159,7 +159,20 @@ def test_stop_run_events_detects_volume_spike_after_quiet_period():
     assert events[0]["price"] == 99.5
 
 
-def test_stop_run_events_empty_when_no_spike():
+def test_stop_run_events_empty_during_warmup():
+    # 버킷 수(10) == lookback_buckets(10) -> 모든 인덱스가 i < lookback_buckets 가드에
+    # 걸려 스킵됨. totals[i] >= avg * spike_ratio 비교 자체는 한 번도 실행되지 않는다
+    # (아래 test_stop_run_events_empty_when_no_spike_after_warmup이 그 분기를 검증).
     deltas = [_fd(float(t), 100.0, "buy", 1.0) for t in range(0, 600, 60)]
+    events = stop_run_events(deltas, spike_ratio=3.0, lookback_buckets=10)
+    assert events == []
+
+
+def test_stop_run_events_empty_when_no_spike_after_warmup():
+    # lookback_buckets(10)보다 많은 15개 버킷을 모두 평탄한(스파이크 없는) 볼륨으로
+    # 구성 -> i >= lookback_buckets인 인덱스(10~14)에서 totals[i] >= avg * spike_ratio
+    # 비교가 실제로 평가되어 False가 나오는지(= 이벤트 없음) 검증한다.
+    deltas = [_fd(float(t), 100.0, "buy", 1.0) for t in range(0, 900, 60)]
+    assert len(deltas) == 15
     events = stop_run_events(deltas, spike_ratio=3.0, lookback_buckets=10)
     assert events == []

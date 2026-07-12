@@ -390,3 +390,31 @@
 - beta_analysis 모듈 구현 (`/beta` 엔드포인트 제외)
 - docs/progress.md 작업 루틴 세팅
 - pyproject.toml 패키지 누락 수정
+
+---
+
+## 2026-07-12: 오더플로우 시그널 검증 하네스 (NQ/MNQ) — subagent-driven 7태스크 완료
+
+### 완료된 작업
+- footprint 불균형/CVD 다이버전스/heatmap 유동성벽 근접/iceberg refill/stop-run 패턴 5개 시그널 통계 검증 하네스. 브레인스토밍→스펙(`docs/superpowers/specs/2026-07-12-orderflow-signal-validation-harness-design.md`)→계획(`docs/superpowers/plans/2026-07-12-orderflow-signal-validation-harness.md`)→subagent-driven 구현 7태스크 전부 태스크리뷰 통과, 최종 브랜치리뷰(opus) READY TO MERGE(Critical/Important 0건)
+- 기존 검증 철학(TSMOM 때와 동일) 그대로: 랜덤 베이스라인 대비 empirical p-value, cost-robust, BH-FDR 다중검정. 실집행 없음 — 순수 통계 검증만
+- 계획 자체의 태스크 순서 버그 1건 발견 후 즉시 수정: Task 6이 `_blocked`/`DEFAULTS`/`NOTIONAL_MULTIPLIER`를 호출하는데 셋 다 어느 태스크에서도 정의 안 됨(`_blocked`는 Task 7에 배정돼 있었는데 Task 6 자체 테스트가 이미 이걸 필요로 함) — Task 6 구현자가 앞당겨서 전부 추가, `NOTIONAL_MULTIPLIER={"NQ":20.0,"MNQ":2.0}`는 기존 `IB_FUTURES_TICK_VALUE_USD` 상수에서 역산(CME 실제 계약승수와 일치 확인). Task 7은 자연스럽게 순수 검증만 남아 subagent 없이 직접 실행
+- "eligible = 판정가능 모집단(신호 발동분만 아님)" 시멘틱 버그가 이번에도 3회 발생(Task3 CVD, Task5 테스트커버리지) — 전부 그 자리에서 수정, 최종 리뷰에서 4개 빌더 전부 정상 확인(랜덤베이스라인 공정성의 핵심 전제)
+- 전체 스위트: 신규모듈 33 passed, 프로젝트 전체 915 passed / 4 failed(기존 pre-existing만: test_auth.py×3, test_backtest_happy_path)
+
+### 변경된 파일
+- `research/validation/cost_model.py` — IB futures 커미션/틱밸류/슬리피지 상수(NQ/MNQ) + `ib_futures_effective_cost_bps()`
+- `research/run_ib_orderflow_tick_collect.py`(신규) — IB NQ/MNQ 틱+뎁스 수집기, `OrderflowAggregator` 재사용(라이브 대시보드와 동일 소스)
+- `orderflow/ib_adapter.py` — `_FUTURES_SYMBOLS`에 MNQ 누락 수정(있었으면 Stock으로 오인식됐을 버그)
+- `research/hypotheses/orderflow_futures.py`(신규, 핵심 결과물) — 5개 시그널 빌더 + `run_signal_hypothesis`/`run_stop_run_hypothesis`/`run_all_hypotheses`/`_blocked` 오케스트레이션
+- `tests/test_cost_model.py`, `tests/test_run_ib_orderflow_tick_collect.py`, `tests/test_orderflow_futures_signals.py`, `tests/test_orderflow_futures_run.py` — 신규 테스트 4파일
+- 커밋 히스토리: `1b24c6c..8e81a1e`(main 직접, 9커밋)
+
+### 다음 할 일
+- 실제 데이터 수집 시작(tmux 상시실행) 후 통계 판정 실행 — 지금은 하네스만 완성, 아직 실데이터로 `run_all_hypotheses` 안 돌려봄
+- IB futures 커미션/틱밸류 상수는 미검증 근사치(코드 주석에 명시) — 페이퍼 단계 진입 전 IB 실제 요금표 대조 필요
+- Minor findings 잔존(비블로킹, 안 고침): `_blocked` 불필요한 로컬 `import json`, 미사용 `patch` import, `run_stop_run_hypothesis` trade_size 하드코딩(DEFAULTS 안 읽음), Task2 테스트 unmocked sleep(~4s)
+
+### 막힌 부분/결정사항
+- 없음 — 계획 순서버그 1건은 에스컬레이션 없이 직접 판단해 수정(사용자가 세션 시작 시 "허락 여부 묻지말고 태스크 끝까지" 명시 위임)
+- 부수 조사: 사용자 신규 한투(KIS) 해외선물옵션 계좌로 IB 대체 가능한지 질의 받아 조사 — KIS도 실시간체결(`ccnl`, TR `HDFFF020`) + 5레벨 뎁스(`asking_price`) 둘 다 있어 이론상 5개 시그널 전부 가능. 단 (1) 매수/매도 방향 필드(`quotsign` 등) 의미가 공개문서에 전혀 없어 IB의 `tick_rule.classify()`처럼 신뢰 가능한지 불명, (2) CME 종목은 별도 유료시세 신청 필수, (3) NQ/MNQ가 실제 지원 상품에 포함되는지 공개 종목마스터로 확인 불가, (4) 프로토콜이 완전히 달라 새 어댑터 통짜 구현 필요(Task2급 작업량) — 결론: 지금 전환할 이유 없음, IB 하네스가 이미 완성·검증됐고 미해결 의문(방향 필드)은 실제 KIS API 키로 라이브 페이로드 까봐야 풀림(사용자가 직접 해야 할 일)

@@ -7,9 +7,9 @@ stop-run 패턴, heatmap 유동성벽 근접, iceberg refill.
 heatmap_delta jsonl — 라이브 대시보드와 동일한 OrderflowAggregator 버킷팅을
 거친 값이므로 원시 틱과 1:1은 아니다(footprint 60s 버킷, heatmap 2s 버킷).
 
-footprint 불균형 + CVD 다이버전스 + heatmap 유동성벽 근접 + iceberg refill까지
-구현한다. stop_run 시그널과 검증 실행기(run_hypothesis류)는 후속 태스크 범위 —
-YAGNI, 여기서 미리 만들지 않는다.
+footprint 불균형 + CVD 다이버전스 + heatmap 유동성벽 근접 + iceberg refill +
+stop-run(이벤트 레벨) 까지 구현한다. 검증 실행기(run_hypothesis류)는 후속 태스크
+범위 — YAGNI, 여기서 미리 만들지 않는다.
 """
 from __future__ import annotations
 
@@ -214,3 +214,34 @@ def build_iceberg_refill_signals(
             eligible.append(i)
         signals.append(sig)
     return {"closes": closes, "signals": signals, "eligible": eligible}
+
+
+STOP_RUN_SPIKE_RATIO = 3.0  # 고정 파라미터, 최적화 금지
+STOP_RUN_LOOKBACK_BUCKETS = 10  # 고정 파라미터, 최적화 금지
+
+
+def stop_run_events(
+    deltas: list[dict],
+    spike_ratio: float = STOP_RUN_SPIKE_RATIO,
+    lookback_buckets: int = STOP_RUN_LOOKBACK_BUCKETS,
+) -> list[dict]:
+    """직전 lookback_buckets 평균 대비 총 거래량이 spike_ratio배 이상 튄 버킷을
+    스탑런(청산 유발성 급변동) 이벤트로 간주. side는 그 버킷의 우세 방향.
+
+    다른 build_*_signals류(bar-index 방식, HOLD 포함 전체 길이 반환)와 다르게
+    이벤트가 발생한 버킷만 담은 이벤트 리스트를 반환한다 —
+    research/strategies/orderflow_absorption.py의 _large_trade_events와 동일 패턴."""
+    order, buy, sell, last_price = _footprint_buckets(deltas)
+    totals = [buy.get(b, 0.0) + sell.get(b, 0.0) for b in order]
+
+    events: list[dict] = []
+    for i, b in enumerate(order):
+        if i < lookback_buckets:
+            continue
+        window = totals[i - lookback_buckets:i]
+        avg = sum(window) / len(window) if window else 0.0
+        if avg > 0 and totals[i] >= avg * spike_ratio:
+            bv, sv = buy.get(b, 0.0), sell.get(b, 0.0)
+            side = "buy" if bv >= sv else "sell"
+            events.append({"idx": i, "bucket_ts": b, "side": side, "price": last_price[b]})
+    return events

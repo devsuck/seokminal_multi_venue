@@ -4,6 +4,7 @@ from research.hypotheses.orderflow_futures import (
     build_iceberg_refill_signals,
     build_wall_proximity_signals,
     load_deltas,
+    stop_run_events,
 )
 
 
@@ -143,3 +144,22 @@ def test_iceberg_refill_flat_size_is_hold_but_eligible():
     result = build_iceberg_refill_signals(deltas, refill_ratio=0.8, min_depletion=3.0)
     assert result["signals"] == ["HOLD", "HOLD", "HOLD"]
     assert result["eligible"] == [2]
+
+
+def test_stop_run_events_detects_volume_spike_after_quiet_period():
+    deltas = []
+    for t in range(0, 600, 60):
+        deltas.append(_fd(float(t), 100.0, "buy", 1.0))
+        deltas.append(_fd(float(t), 100.0, "sell", 1.0))
+    # 급증: 조용한 구간(2.0/bucket) 대비 3배 이상
+    deltas.append(_fd(600.0, 99.5, "sell", 10.0))
+    events = stop_run_events(deltas, spike_ratio=3.0, lookback_buckets=10)
+    assert len(events) == 1
+    assert events[0]["side"] == "sell"
+    assert events[0]["price"] == 99.5
+
+
+def test_stop_run_events_empty_when_no_spike():
+    deltas = [_fd(float(t), 100.0, "buy", 1.0) for t in range(0, 600, 60)]
+    events = stop_run_events(deltas, spike_ratio=3.0, lookback_buckets=10)
+    assert events == []

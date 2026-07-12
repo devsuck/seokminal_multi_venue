@@ -7,6 +7,7 @@ import research.hypotheses.cross_venue_skew as cvs
 from research.hypotheses.cross_venue_skew import (
     align_venues,
     build_imbalance,
+    build_labels_multi_horizon,
     build_price_series,
     build_skew_divergence,
     build_spike_signal,
@@ -233,3 +234,34 @@ def test_build_spike_signal_boundary_at_exact_threshold_and_lookback():
     # off-by-one) 리스트에 항목이 더 생겨서 실패하고, 아예 안 뜨면(>= 대신 > 버그)
     # 리스트가 비어서 실패한다.
     assert list(spikes["ts"]) == [float(n - 1)]
+
+
+def test_build_labels_multi_horizon_applies_direction_and_horizon():
+    price = pd.Series([100.0, 100.0, 100.0, 100.0, 105.0, 100.0], index=[0.0, 1.0, 2.0, 3.0, 5.0, 15.0])
+    spikes = pd.DataFrame([{"ts": 0.0, "venue": "a", "spike": True, "direction": 1.0}])
+    labels = build_labels_multi_horizon(price, spikes, horizons_s=[5, 15])
+    row5 = labels[labels["horizon_s"] == 5].iloc[0]
+    assert row5["forward_return"] == pytest.approx((105.0 - 100.0) / 100.0 * 1.0)
+    row15 = labels[labels["horizon_s"] == 15].iloc[0]
+    assert row15["forward_return"] == pytest.approx((100.0 - 100.0) / 100.0 * 1.0)
+
+
+def test_build_labels_multi_horizon_flips_sign_for_short_direction():
+    price = pd.Series([100.0, 95.0], index=[0.0, 5.0])
+    spikes = pd.DataFrame([{"ts": 0.0, "venue": "a", "spike": True, "direction": -1.0}])
+    labels = build_labels_multi_horizon(price, spikes, horizons_s=[5])
+    assert labels.iloc[0]["forward_return"] == pytest.approx((95.0 - 100.0) / 100.0 * -1.0)
+
+
+def test_build_labels_multi_horizon_excludes_out_of_range_horizon():
+    price = pd.Series([100.0], index=[0.0])
+    spikes = pd.DataFrame([{"ts": 0.0, "venue": "a", "spike": True, "direction": 1.0}])
+    labels = build_labels_multi_horizon(price, spikes, horizons_s=[5])
+    assert labels.empty
+
+
+def test_build_labels_multi_horizon_excludes_entry_ts_missing_from_price():
+    price = pd.Series([100.0, 101.0], index=[1.0, 6.0])
+    spikes = pd.DataFrame([{"ts": 0.0, "venue": "a", "spike": True, "direction": 1.0}])
+    labels = build_labels_multi_horizon(price, spikes, horizons_s=[5])
+    assert labels.empty

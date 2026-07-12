@@ -142,3 +142,38 @@ def build_spike_signal(
                     "direction": 1.0 if div_val > 0 else -1.0,
                 })
     return pd.DataFrame(records, columns=["ts", "venue", "spike", "direction"])
+
+
+def build_labels_multi_horizon(
+    price: pd.Series,
+    spikes: pd.DataFrame,
+    horizons_s: list[int] = HORIZONS_S,
+) -> pd.DataFrame:
+    """스파이크 시점 t마다 각 h in horizons_s에 대해
+    forward_return = (price[t+h] - price[t]) / price[t] * direction(모멘텀 컨벤션).
+    t+h가 price 인덱스에 없거나(범위 밖) NaN이면 그 행 제외. price/spikes 모두
+    align_venues가 만든 동일 1s그리드 위에 있으므로 t+h는 정확히 그리드 포인트에
+    떨어진다(horizons_s가 전부 RESAMPLE_GRID_S의 배수)."""
+    price = price.sort_index()
+    records = []
+    for _, row in spikes.iterrows():
+        t, venue, direction = row["ts"], row["venue"], row["direction"]
+        if t not in price.index or pd.isna(price.loc[t]):
+            continue
+        entry_price = price.loc[t]
+        for h in horizons_s:
+            exit_ts = t + h
+            if exit_ts not in price.index:
+                continue
+            exit_price = price.loc[exit_ts]
+            if pd.isna(exit_price):
+                continue
+            forward_return = (exit_price - entry_price) / entry_price * direction
+            records.append({
+                "ts": t, "venue": venue, "horizon_s": h,
+                "entry_price": entry_price, "exit_price": exit_price,
+                "direction": direction, "forward_return": forward_return,
+            })
+    return pd.DataFrame(records, columns=[
+        "ts", "venue", "horizon_s", "entry_price", "exit_price", "direction", "forward_return",
+    ])

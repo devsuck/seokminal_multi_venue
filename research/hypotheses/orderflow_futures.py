@@ -8,15 +8,24 @@ heatmap_delta jsonl — 라이브 대시보드와 동일한 OrderflowAggregator 
 거친 값이므로 원시 틱과 1:1은 아니다(footprint 60s 버킷, heatmap 2s 버킷).
 
 footprint 불균형 + CVD 다이버전스 + heatmap 유동성벽 근접 + iceberg refill +
-stop-run(이벤트 레벨) 까지 구현한다. 검증 실행기(run_hypothesis류)는 후속 태스크
-범위 — YAGNI, 여기서 미리 만들지 않는다.
+stop-run(이벤트 레벨) 까지 구현하고, 5신호 x 심볼 전체를 BH-FDR로 종합 판정하는
+검증 오케스트레이션(run_signal_hypothesis/run_stop_run_hypothesis/run_all_hypotheses)까지 포함한다.
 """
 from __future__ import annotations
 
 import json
 
+from research.reports.alpha_report import build_report
+from research.validation.baselines import empirical_p_value, random_same_frequency
+from research.validation.cost_model import ib_futures_effective_cost_bps
+from research.validation.engine import simulate_long_short
+from research.validation.metrics import trade_metrics
+
 FOOTPRINT_IMBALANCE_RATIO = 0.7  # lib/orderflow-data.ts 흡수 판정 임계값과 동일 — 고정 파라미터, 최적화 금지
 CVD_LOOKBACK_BUCKETS = 5  # 고정 파라미터, 최적화 금지
+
+DEFAULTS = {"trade_size": 1.0}  # 계약수(contracts) — futures는 notional이 multiplier로 이미 반영됨
+NOTIONAL_MULTIPLIER = {"NQ": 20.0, "MNQ": 2.0}  # IB_FUTURES_TICK_VALUE_USD / tick_size(0.25)
 
 
 def load_deltas(paths: list[str]) -> list[dict]:
@@ -245,3 +254,206 @@ def stop_run_events(
             side = "buy" if bv >= sv else "sell"
             events.append({"idx": i, "bucket_ts": b, "side": side, "price": last_price[b]})
     return events
+
+
+SIGNAL_BUILDERS = {
+    "footprint_imbalance": build_footprint_imbalance_signals,
+    "cvd_divergence": build_cvd_divergence_signals,
+    "wall_proximity": build_wall_proximity_signals,
+    "iceberg_refill": build_iceberg_refill_signals,
+}
+
+HYPOTHESIS_TEXT = {
+    "footprint_imbalance": f"1분봉 footprint 매수/매도 비율 {FOOTPRINT_IMBALANCE_RATIO} 이상 우세 방향 추종",
+    "cvd_divergence": f"누적델타(CVD) {CVD_LOOKBACK_BUCKETS}버킷 다이버전스 역추세 진입",
+    "wall_proximity": f"heatmap 대형벽({WALL_SIZE_THRESHOLD} 이상) {WALL_PROXIMITY_TICKS}틱 근접 시 벽 방향 진입",
+    "iceberg_refill": f"동일가 잔량 급감후 재충전({int(ICEBERG_REFILL_RATIO*100)}% 이상) 패턴 추종",
+}
+
+
+def run_signal_hypothesis(
+    symbol: str,
+    signal_name: str,
+    delta_paths: list[str],
+    params: dict | None = None,
+    n_runs: int = 500,
+    seed: int = 42,
+    write_report: bool = True,
+) -> dict:
+    """bar 기반 4개 시그널(footprint_imbalance/cvd_divergence/wall_proximity/iceberg_refill)
+    공통 실행 경로. 데이터 없음/표본 부족 -> BLOCKED 리포트."""
+    if signal_name not in SIGNAL_BUILDERS:
+        raise ValueError(f"unknown signal_name: {signal_name}")
+
+    p = {**DEFAULTS, **(params or {})}
+    deltas = load_deltas(delta_paths)
+    if not deltas:
+        return _blocked(symbol, signal_name, "no delta data — collector 확인 필요", write_report)
+
+    data = SIGNAL_BUILDERS[signal_name](deltas)
+    closes, signals, eligible = data["closes"], data["signals"], data["eligible"]
+    if len(closes) < 10:
+        return _blocked(symbol, signal_name, f"델타→버킷 변환 후 {len(closes)}봉뿐 — 최소 표본 미달", write_report)
+
+    notional = closes[-1] * NOTIONAL_MULTIPLIER.get(symbol, 20.0)
+    cost_bps = ib_futures_effective_cost_bps(symbol, notional)
+    trades = simulate_long_short(closes, signals, p["trade_size"], cost_bps)
+    strat = trade_metrics(trades)
+
+    holds = [max(1, t["exit_idx"] - t["entry_idx"]) for t in trades] or [1]
+    rnd = random_same_frequency(
+        closes, n_trades=strat["num_trades"], holding_periods=holds,
+        trade_size=p["trade_size"], cost_bps=cost_bps,
+        eligible_indices=eligible, n_runs=n_runs, seed=seed,
+    )
+    pval = empirical_p_value(strat["total_pnl"], rnd)
+
+    result = {
+        "symbol": symbol, "signal": signal_name, "blocked": False,
+        "strategy": strat, "random": pval,
+        "n_bars": len(closes), "eligible_count": len(eligible),
+    }
+    if write_report:
+        rep = build_report(
+            name=f"orderflow_futures_{signal_name}_{symbol}",
+            hypothesis=HYPOTHESIS_TEXT[signal_name],
+            universe=[symbol], timeframe="1m/2s(신호별 상이)",
+            cost={"cost_bps": cost_bps, "slippage_bps": 0, "spread_bps": 0, "effective_bps": cost_bps},
+            strategy=strat, random_pval=pval,
+            naive={"total_pnl": None, "note": "오더플로우 신호는 buy&hold 비교 부적합 -> random 분포가 주판정"},
+            walk_forward_result={"summary": {}},
+            is_harness_dryrun=False,
+            extra={
+                "n_bars": len(closes), "eligible_count": len(eligible),
+                "note": "DORMANT hypothesis. NOT validated alpha. 1차 생존 판정용.",
+            },
+        )
+        result["report"] = rep
+    return result
+
+
+def run_stop_run_hypothesis(
+    symbol: str,
+    delta_paths: list[str],
+    hold_buckets_list: tuple[int, ...] = (1, 3, 5),
+    trade_size: float = 1.0,
+    n_runs: int = 500,
+    seed: int = 42,
+    write_report: bool = True,
+) -> dict:
+    """스탑런 이벤트 방향 즉시추종, N버킷 뒤 고정청산. random은 방향만 셔플
+    (orderflow_absorption.run_large_trade_event_hypothesis와 동일 검정 설계)."""
+    deltas = load_deltas(delta_paths)
+    if not deltas:
+        return _blocked(symbol, "stop_run", "no delta data — collector 확인 필요", write_report)
+
+    events = stop_run_events(deltas)
+    if len(events) < 10:
+        return _blocked(symbol, "stop_run", f"스탑런 이벤트 {len(events)}건뿐 — 최소 표본 미달", write_report)
+
+    order, buy, sell, last_price = _footprint_buckets(deltas)
+    closes = [last_price[b] for b in order]
+    notional = closes[-1] * NOTIONAL_MULTIPLIER.get(symbol, 20.0)
+    cost_bps = ib_futures_effective_cost_bps(symbol, notional)
+
+    import random as _random
+    rng = _random.Random(seed)
+
+    horizons: dict[str, dict] = {}
+    for hold in hold_buckets_list:
+        precomputed = []
+        for ev in events:
+            idx = ev["idx"]
+            exit_idx = min(idx + hold, len(closes) - 1)
+            entry_px, exit_px = closes[idx], closes[exit_idx]
+            cost = (abs(entry_px) + abs(exit_px)) * trade_size * cost_bps / 10_000.0
+            side_sign = 1.0 if ev["side"] == "buy" else -1.0
+            precomputed.append((side_sign, entry_px, exit_px, cost))
+
+        actual_pnls = [sign * (ex - en) * trade_size - c for sign, en, ex, c in precomputed]
+        strat = trade_metrics([{"pnl": pnl} for pnl in actual_pnls])
+
+        random_totals = []
+        for _ in range(n_runs):
+            total = 0.0
+            for _sign, en, ex, c in precomputed:
+                rsign = rng.choice((1.0, -1.0))
+                total += rsign * (ex - en) * trade_size - c
+            random_totals.append(round(total, 6))
+        pval = empirical_p_value(strat["total_pnl"], random_totals)
+        horizons[f"{hold}b"] = {"strategy": strat, "random": pval}
+
+    result = {"symbol": symbol, "signal": "stop_run", "blocked": False,
+              "n_events": len(events), "horizons": horizons}
+    if write_report:
+        for h_key, h_res in horizons.items():
+            rep = build_report(
+                name=f"orderflow_futures_stop_run_{symbol}_{h_key}",
+                hypothesis=f"스탑런 이벤트 방향 즉시추종, {h_key} 고정청산",
+                universe=[symbol], timeframe="event",
+                cost={"cost_bps": cost_bps, "slippage_bps": 0, "spread_bps": 0, "effective_bps": cost_bps},
+                strategy=h_res["strategy"], random_pval=h_res["random"],
+                naive={"total_pnl": None, "note": "이벤트기반 방향추종 buy&hold 비교 부적합"},
+                walk_forward_result={"summary": {}},
+                is_harness_dryrun=False,
+                extra={"n_events": len(events), "note": "DORMANT hypothesis. NOT validated alpha."},
+            )
+            h_res["report"] = rep
+    return result
+
+
+def run_all_hypotheses(
+    delta_paths_by_symbol: dict[str, list[str]],
+    n_runs: int = 500,
+    seed: int = 42,
+    write_report: bool = True,
+) -> dict:
+    """5신호 x N심볼 전부 실행 -> p-value 모아 BH-FDR 보정. BLOCKED 결과는
+    p-value 없어 BH-FDR 입력에서 제외(survivors 배열은 results와 동일 순서 유지,
+    BLOCKED 위치는 항상 False)."""
+    results: dict[str, dict] = {}
+    for symbol, paths in delta_paths_by_symbol.items():
+        for signal_name in SIGNAL_BUILDERS:
+            key = f"{symbol}:{signal_name}"
+            results[key] = run_signal_hypothesis(symbol, signal_name, paths, n_runs=n_runs, seed=seed, write_report=write_report)
+        results[f"{symbol}:stop_run"] = run_stop_run_hypothesis(symbol, paths, n_runs=n_runs, seed=seed, write_report=write_report)
+
+    keys = list(results.keys())
+    pvals: list[float] = []
+    pval_keys: list[str] = []
+    for k in keys:
+        r = results[k]
+        if r.get("blocked"):
+            continue
+        if "random" in r:
+            p = r["random"].get("p_value")
+            if p is not None:
+                pvals.append(p)
+                pval_keys.append(k)
+        elif "horizons" in r:
+            for h_key, h_res in r["horizons"].items():
+                p = h_res["random"].get("p_value")
+                if p is not None:
+                    pvals.append(p)
+                    pval_keys.append(f"{k}:{h_key}")
+
+    from research.validation.multiple_testing import benjamini_hochberg
+    bh = benjamini_hochberg(pvals, alpha=0.1)
+    bh["keys"] = pval_keys
+    return {"results": results, "bh_fdr": bh}
+
+
+def _blocked(symbol: str, signal_name: str, msg: str, write_report: bool) -> dict:
+    res = {"symbol": symbol, "signal": signal_name, "blocked": True, "reason": msg,
+           "verdict": "BLOCKED: " + msg}
+    if write_report:
+        import json
+        import os
+        from research.reports.alpha_report import REPORT_DIR
+        os.makedirs(REPORT_DIR, exist_ok=True)
+        base = os.path.join(REPORT_DIR, f"orderflow_futures_{signal_name}_{symbol}")
+        with open(base + ".json", "w") as f:
+            json.dump(res, f, indent=2)
+        with open(base + ".md", "w") as f:
+            f.write(f"# Orderflow Futures {signal_name} — {symbol}\n\n**BLOCKED.** {msg}\n")
+    return res

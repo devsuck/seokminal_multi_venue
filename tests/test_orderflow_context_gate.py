@@ -1,5 +1,7 @@
 from research.hypotheses.orderflow_context_gate import (
+    build_key_level_filter,
     build_ohlc_bars,
+    build_trend_filter,
     resample_bars,
 )
 
@@ -48,3 +50,33 @@ def test_resample_bars_drops_incomplete_trailing_group():
     bars = [_bar(float(i * 60), 100.0, 101.0, 99.0, 100.0) for i in range(5)]
     out = resample_bars(bars, factor=3)
     assert len(out) == 1  # 5바 중 마지막 2개(미완성 그룹)는 버림
+
+
+def test_build_trend_filter_holds_before_first_event_then_forward_fills_direction():
+    # k=1로 swing 창을 좁혀 5바만으로 BOS 하나를 만든다.
+    # swings(h,l,k=1): swing high idx=1(h=8), swing low idx=2(l=5).
+    # market_structure: idx3에서 c=9.5가 직전 swing high(8) 상향 돌파 -> BOS bullish.
+    bars = [
+        _bar(0.0, 5.0, 5.0, 4.0, 4.5),
+        _bar(60.0, 8.0, 8.0, 7.0, 7.5),
+        _bar(120.0, 6.0, 6.0, 5.0, 5.5),
+        _bar(180.0, 10.0, 10.0, 9.0, 9.5),
+        _bar(240.0, 10.0, 10.0, 9.0, 9.5),
+    ]
+    out = build_trend_filter(bars, k=1)
+    assert out == ["HOLD", "HOLD", "HOLD", "BUY", "BUY"]
+
+
+def test_build_key_level_filter_proximity_in_and_out_of_range():
+    # h 전부 20(동률) -> swing high 없음(count!=1 걸림). l=[10,10,5,10,10] -> idx2에서
+    # swing low(=5) 유일 확정. levels=[(5.0,"BUY")]. c는 5.003(0.06%,in)/100.0(멀음)/
+    # 5.0(정확히 일치,in)/5.006(0.12%,out)/200.0(멀음) — proximity_pct=0.001(0.1%) 기준.
+    bars = [
+        _bar(0.0, 20.0, 20.0, 10.0, 5.003),
+        _bar(60.0, 20.0, 20.0, 10.0, 100.0),
+        _bar(120.0, 20.0, 20.0, 5.0, 5.0),
+        _bar(180.0, 20.0, 20.0, 10.0, 5.006),
+        _bar(240.0, 20.0, 20.0, 10.0, 200.0),
+    ]
+    out = build_key_level_filter(bars, proximity_pct=0.001)
+    assert out == ["BUY", "HOLD", "BUY", "HOLD", "HOLD"]

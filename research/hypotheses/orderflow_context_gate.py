@@ -52,3 +52,42 @@ def resample_bars(bars: list[dict], factor: int = 15) -> list[dict]:
             "c": group[-1]["c"],
         })
     return out
+
+
+def build_trend_filter(bars_15m: list[dict], k: int = 2) -> list[str]:
+    """market_structure(h,l,c,k)를 15분봉에 적용. 최근 BOS/CHoCH의 dir을
+    다음 이벤트 나올 때까지 forward-fill(상태 유지). 이벤트 없는 초반 구간은 HOLD."""
+    h = [b["h"] for b in bars_15m]
+    l = [b["l"] for b in bars_15m]
+    c = [b["c"] for b in bars_15m]
+    events = market_structure(h, l, c, k)
+    dir_by_idx = {e["idx"]: ("BUY" if e["dir"] == "bullish" else "SELL") for e in events}
+
+    out = []
+    current = "HOLD"
+    for i in range(len(bars_15m)):
+        if i in dir_by_idx:
+            current = dir_by_idx[i]
+        out.append(current)
+    return out
+
+
+def build_key_level_filter(bars_15m: list[dict], proximity_pct: float = KEY_LEVEL_PROXIMITY_PCT) -> list[str]:
+    """swings(h,l,k=2)로 스윙하이/로우 추출 -> 현재가가 가장 가까운 스윙레벨의
+    proximity_pct 이내면 그 방향(스윙로우 근접=BUY, 스윙하이 근접=SELL)."""
+    h = [b["h"] for b in bars_15m]
+    l = [b["l"] for b in bars_15m]
+    c = [b["c"] for b in bars_15m]
+    sw = swings(h, l, k=2)
+    levels = [(l[i], "BUY") for i in sw["lows"]] + [(h[i], "SELL") for i in sw["highs"]]
+
+    out = []
+    for i in range(len(bars_15m)):
+        price = c[i]
+        sig = "HOLD"
+        if levels and price != 0:
+            level_price, level_sig = min(levels, key=lambda lv: abs(lv[0] - price))
+            if abs(level_price - price) / abs(price) <= proximity_pct:
+                sig = level_sig
+        out.append(sig)
+    return out

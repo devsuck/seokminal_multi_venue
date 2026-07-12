@@ -14,9 +14,10 @@ class OrderflowAggregator:
         heatmap_bucket_sec: float = 2.0,
         max_window_sec: float = 7200.0,
         # heatmap은 footprint(60s 버킷)보다 20~30배 촘촘한 2s 버킷이라 footprint와 같은
-        # 2시간 윈도우를 쓰면 스냅샷이 WS 메시지 크기 한도(1MB)를 넘어 연결이 끊긴다
-        # (레벨당 ~40개 x 3600버킷 = 144000+ 셀). heatmap은 별도의 짧은 윈도우로 관리.
-        heatmap_max_window_sec: float = 300.0,
+        # 2시간 윈도우를 쓰면 스냅샷이 WS 메시지 크기 한도(1MB)를 넘어 연결이 끊긴다.
+        # 실측(2026-07-12, BTC.HL): 300s(150버킷×~125가격)=6152셀=스냅샷 페이로드 340KB.
+        # 600s로 올려도 페이로드가 선형으로 ~2배(약 680KB)에 그쳐 1MB 한도 내 안전마진 확보.
+        heatmap_max_window_sec: float = 600.0,
     ) -> None:
         self._tick_size = tick_size
         self._footprint_bucket_sec = footprint_bucket_sec

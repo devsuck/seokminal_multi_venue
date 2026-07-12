@@ -1,8 +1,14 @@
 from research.hypotheses.orderflow_futures import (
     build_cvd_divergence_signals,
     build_footprint_imbalance_signals,
+    build_iceberg_refill_signals,
+    build_wall_proximity_signals,
     load_deltas,
 )
+
+
+def _hd(ts, price, size):
+    return {"type": "heatmap_delta", "ts": ts, "price": price, "size": size}
 
 
 def _fd(bucket_ts, price, side, vol):
@@ -80,3 +86,60 @@ def test_cvd_divergence_hold_bucket_with_sufficient_lookback_is_still_eligible()
     result = build_cvd_divergence_signals(deltas, lookback_buckets=3)
     assert result["signals"][-1] == "HOLD"
     assert result["eligible"] == [3]
+
+
+def test_wall_proximity_price_approaching_large_bid_wall_yields_buy():
+    # 가격이 10에서 10.25(벽 바로 위)로 접근 -> 벽이 지지선 -> BUY
+    deltas = [
+        _hd(0.0, 9.75, 20.0),   # 큰 매수벽 (임계 15.0 이상)
+        _hd(0.0, 10.5, 1.0),
+        _hd(2.0, 9.75, 20.0),
+        _hd(2.0, 10.5, 1.0),
+    ]
+    result = build_wall_proximity_signals(deltas, wall_size_threshold=15.0, proximity_ticks=4, tick_size=0.25)
+    assert "BUY" in result["signals"]
+
+
+def test_wall_proximity_no_large_wall_is_all_hold():
+    deltas = [_hd(0.0, 100.0, 1.0), _hd(2.0, 100.0, 1.0)]
+    result = build_wall_proximity_signals(deltas, wall_size_threshold=15.0)
+    assert all(s == "HOLD" for s in result["signals"])
+    assert result["eligible"] == []
+
+
+def test_wall_proximity_wall_present_but_too_far_is_hold_but_eligible():
+    # 벽은 존재하지만 근접 범위(proximity_ticks) 밖 -> HOLD이나 판정 가능했으므로 eligible
+    # (신호가 뜬 인덱스가 아니라 "판정 가능 모집단"이 eligible이어야 함 -- footprint/CVD와 동일 규칙)
+    deltas = [
+        _hd(0.0, 8.0, 20.0),
+        _hd(0.0, 11.0, 1.0),
+    ]
+    result = build_wall_proximity_signals(deltas, wall_size_threshold=15.0, proximity_ticks=4, tick_size=0.25)
+    assert result["signals"] == ["HOLD"]
+    assert result["eligible"] == [0]
+
+
+def test_iceberg_refill_repeated_depletion_and_refill_at_same_price_yields_signal():
+    # 같은 가격에서 size가 10 -> 2(소진) -> 9(즉시 재충전) 반복 -> iceberg 패턴
+    deltas = [
+        _hd(0.0, 100.0, 10.0),
+        _hd(2.0, 100.0, 2.0),   # 80% 소진
+        _hd(4.0, 100.0, 9.0),   # 재충전(refill_ratio>=0.8 of 원래)
+    ]
+    result = build_iceberg_refill_signals(deltas, refill_ratio=0.8, min_depletion=3.0)
+    assert "BUY" in result["signals"] or "SELL" in result["signals"]
+
+
+def test_iceberg_refill_gradual_decline_without_refill_is_hold():
+    deltas = [_hd(0.0, 100.0, 10.0), _hd(2.0, 100.0, 8.0), _hd(4.0, 100.0, 6.0)]
+    result = build_iceberg_refill_signals(deltas, refill_ratio=0.8, min_depletion=3.0)
+    assert all(s == "HOLD" for s in result["signals"])
+
+
+def test_iceberg_refill_flat_size_is_hold_but_eligible():
+    # 같은 가격에서 사이즈가 그대로(소진/재충전 없음) -> HOLD이나 이력 3개 이상 있어
+    # 판정은 가능했으므로 eligible(신호 발생 여부와 무관 -- footprint/CVD와 동일 규칙)
+    deltas = [_hd(0.0, 100.0, 10.0), _hd(2.0, 100.0, 10.0), _hd(4.0, 100.0, 10.0)]
+    result = build_iceberg_refill_signals(deltas, refill_ratio=0.8, min_depletion=3.0)
+    assert result["signals"] == ["HOLD", "HOLD", "HOLD"]
+    assert result["eligible"] == [2]

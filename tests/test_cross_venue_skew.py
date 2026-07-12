@@ -261,7 +261,7 @@ def test_build_labels_multi_horizon_excludes_out_of_range_horizon():
 
 
 def test_build_labels_multi_horizon_excludes_entry_ts_missing_from_price():
-    price = pd.Series([100.0, 101.0], index=[1.0, 6.0])
+    price = pd.Series([100.0, 105.0], index=[1.0, 5.0])
     spikes = pd.DataFrame([{"ts": 0.0, "venue": "a", "spike": True, "direction": 1.0}])
     labels = build_labels_multi_horizon(price, spikes, horizons_s=[5])
     assert labels.empty

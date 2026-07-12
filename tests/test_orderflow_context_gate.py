@@ -261,15 +261,17 @@ def test_build_gated_confluence_signals_before_warmup_is_not_eligible(
 
 
 def test_build_gated_confluence_signals_no_lookahead_in_first_forming_bar_window():
-    """룩어헤드 회귀 가드 — 위 4개 테스트와 달리 아무것도 mock하지 않고 실제 틱 데이터를
-    build_ohlc_bars/resample_bars/build_trend_filter/build_key_level_filter/
+    """전체 파이프라인 스모크 테스트 — 위 4개 테스트와 달리 아무것도 mock하지 않고 실제
+    틱 데이터를 build_ohlc_bars/resample_bars/build_trend_filter/build_key_level_filter/
     build_vwap_filter/build_confluence_signals 전체 실파이프라인으로 통과시킨다.
 
     45분(첫 15분봉 3개 완결 구간)짜리 실틱을 만들어 build_gated_confluence_signals를
-    직접 호출한다. 첫 15분봉(bucket_ts=0~840, 아직 마감 안 됨)의 구간에 속하는 모든 60s
-    버킷은 그 어떤 15분봉 신호도 참조할 수 없어야 하므로(마감된 봉이 하나도 없음)
-    signals가 전부 "HOLD"여야 한다 — 이게 깨지면 _broadcast_15m_to_60s가 형성 중인
-    봉 자신(또는 그보다 미래)의 신호를 과거 버킷에 흘려보내는 룩어헤드 버그가 재발한 것."""
+    직접 호출한다. 첫 15분봉(bucket_ts=0~840, 아직 마감 안 됨) 구간의 60s 버킷은 전부
+    "HOLD"여야 한다. 주의: build_trend_filter가 첫 15분봉에서 구조적으로 항상 HOLD를
+    반환하므로(스윙 히스토리 부족) 이 assertion 자체는 _broadcast_15m_to_60s의 룩어헤드
+    버그를 구분하지 못한다(버그가 있어도 통과함) — 그 정확한 회귀 가드는
+    test_broadcast_15m_to_60s_uses_previous_closed_bar_not_current_forming_bar가 맡는다.
+    이 테스트는 실데이터로 전체 조립 경로가 깨지지 않았는지 확인하는 용도."""
     ticks = []
     for minute in range(45):
         base = float(minute * 60)

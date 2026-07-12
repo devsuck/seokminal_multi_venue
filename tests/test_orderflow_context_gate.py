@@ -2,6 +2,7 @@ from research.hypotheses.orderflow_context_gate import (
     build_key_level_filter,
     build_ohlc_bars,
     build_trend_filter,
+    build_vwap_filter,
     resample_bars,
 )
 
@@ -80,3 +81,42 @@ def test_build_key_level_filter_proximity_in_and_out_of_range():
     ]
     out = build_key_level_filter(bars, proximity_pct=0.001)
     assert out == ["BUY", "HOLD", "BUY", "HOLD", "HOLD"]
+
+
+def test_build_vwap_filter_close_above_vwap_is_buy():
+    # bucket0: price=100,vol=10. bucket1: price=110,vol=10.
+    # idx0: window=[100](자기자신만) -> VWAP=100, close=100 -> HOLD(같음).
+    # idx1: window=[100,110],vol=[10,10] -> VWAP=105, close=110>105 -> BUY.
+    deltas = [
+        _fd(0.0, 100.0, "buy", 10.0),
+        _fd(60.0, 110.0, "buy", 10.0),
+    ]
+    out = build_vwap_filter(deltas, window_buckets=10)
+    assert out == ["HOLD", "BUY"]
+
+
+def test_build_vwap_filter_close_below_vwap_is_sell():
+    # bucket2 추가: price=90,vol=10. idx2 window=[100,110,90]vol=[10,10,10] ->
+    # VWAP=(100+110+90)/3=100, close=90<100 -> SELL.
+    deltas = [
+        _fd(0.0, 100.0, "buy", 10.0),
+        _fd(60.0, 110.0, "buy", 10.0),
+        _fd(120.0, 90.0, "sell", 10.0),
+    ]
+    out = build_vwap_filter(deltas, window_buckets=10)
+    assert out[2] == "SELL"
+
+
+def test_build_vwap_filter_window_excludes_older_buckets():
+    # bucket0: price=50,vol=100(거대 볼륨) bucket1: price=200,vol=1 bucket2: price=150,vol=1.
+    # 전체창(10): VWAP=(50*100+200+150)/102≈52.45 -> close=150 > VWAP -> BUY.
+    # 좁은창(2): idx2 기준 [bucket1,bucket2]만 -> VWAP=(200+150)/2=175 -> close=150 < VWAP -> SELL.
+    deltas = [
+        _fd(0.0, 50.0, "buy", 100.0),
+        _fd(60.0, 200.0, "buy", 1.0),
+        _fd(120.0, 150.0, "buy", 1.0),
+    ]
+    full = build_vwap_filter(deltas, window_buckets=10)
+    windowed = build_vwap_filter(deltas, window_buckets=2)
+    assert full[2] == "BUY"
+    assert windowed[2] == "SELL"

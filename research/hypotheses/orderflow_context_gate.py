@@ -91,3 +91,27 @@ def build_key_level_filter(bars_15m: list[dict], proximity_pct: float = KEY_LEVE
                 sig = level_sig
         out.append(sig)
     return out
+
+
+def build_vwap_filter(deltas: list[dict], window_buckets: int = VWAP_WINDOW_BUCKETS) -> list[str]:
+    """각 60s 버킷 시점 기준 직전 window_buckets 구간(그 버킷 포함) footprint_delta로
+    VWAP = sum(price*vol)/sum(vol) 계산. close > VWAP -> BUY, close < VWAP -> SELL."""
+    order, buy, sell, _open_price, last_price = _footprint_buckets(deltas)
+    closes = [last_price[b] for b in order]
+    vols = [buy.get(b, 0.0) + sell.get(b, 0.0) for b in order]
+
+    out = []
+    for i in range(len(order)):
+        start = max(0, i - window_buckets + 1)
+        window_closes = closes[start:i + 1]
+        window_vols = vols[start:i + 1]
+        total_vol = sum(window_vols)
+        sig = "HOLD"
+        if total_vol > 0:
+            vwap = sum(p * v for p, v in zip(window_closes, window_vols)) / total_vol
+            if closes[i] > vwap:
+                sig = "BUY"
+            elif closes[i] < vwap:
+                sig = "SELL"
+        out.append(sig)
+    return out

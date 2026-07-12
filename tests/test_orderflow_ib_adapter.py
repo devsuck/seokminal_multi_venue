@@ -106,6 +106,15 @@ class FakeContractDetails:
         self.contract = contract
 
 
+def test_contract_resolves_mnq_as_future_not_stock():
+    """MNQ가 _FUTURES_SYMBOLS에 없으면 Stock으로 fallback해 라이브 IB Gateway에서
+    깨진다(2026-07 발견) — Future(exchange=CME)로 resolve되는지 고정."""
+    client = IBOrderflowClient(ib=object(), client_id=1)
+    contract = client._contract("MNQ")
+    assert isinstance(contract, Future)
+    assert contract.exchange == "CME"
+
+
 async def test_stream_yields_trade_classified_by_bidask_then_book_snapshot():
     t = dt.datetime(2026, 7, 9, 12, 0, 0, tzinfo=dt.timezone.utc)
     ib = FakeMultiIB(

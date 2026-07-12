@@ -61,8 +61,25 @@ async def test_run_symbol_forever_converts_trade_and_book_events_to_deltas():
 
 
 async def test_run_symbol_forever_uses_symbol_specific_client_id_when_no_client_passed():
-    # client_factory 기본값이 CLIENT_IDS 매핑을 쓰는지는 run_forever 레벨에서 검증
-    assert runner.CLIENT_IDS == {"NQ": 20, "MNQ": 21}
+    """client=None일 때 run_symbol_forever가 IBOrderflowClient(client_id=CLIENT_IDS[symbol])를
+    실제로 생성하는지 검증 — fd1c755 client_id 충돌 회귀 방지."""
+    from unittest.mock import patch
+
+    captured_kwargs = []
+
+    class RecordingClient:
+        def __init__(self, **kwargs):
+            captured_kwargs.append(kwargs)
+
+        async def stream(self, symbol, connect_timeout=15.0):
+            if False:
+                yield  # noqa: pragma - 빈 async generator
+
+    with patch.object(runner, "IBOrderflowClient", RecordingClient):
+        await runner.run_symbol_forever("NQ", append_fn=lambda symbol, deltas: None, max_cycles=1)
+        await runner.run_symbol_forever("MNQ", append_fn=lambda symbol, deltas: None, max_cycles=1)
+
+    assert captured_kwargs == [{"client_id": 20}, {"client_id": 21}]
 
 
 async def test_run_symbol_forever_backs_off_and_doubles_delay_on_repeated_failure():
@@ -99,18 +116,31 @@ async def test_run_symbol_forever_backs_off_on_clean_close_without_events():
 
 
 async def test_run_forever_runs_all_symbols_concurrently_with_distinct_client_ids():
-    clients = {"NQ": FakeClient([[_trade()]]), "MNQ": FakeClient([[_trade(symbol="MNQ")]])}
-    seen_ids = []
+    """client_factory를 넘기지 않고 run_forever의 기본 팩토리(lambda symbol:
+    IBOrderflowClient(client_id=CLIENT_IDS[symbol]))가 실제로 심볼별 client_id로
+    IBOrderflowClient를 생성하는지 검증 — fd1c755 client_id 충돌 회귀 방지."""
+    from unittest.mock import patch
 
-    def factory(symbol):
-        seen_ids.append(symbol)
-        return clients[symbol]
+    fake_clients = {"NQ": FakeClient([[_trade()]]), "MNQ": FakeClient([[_trade(symbol="MNQ")]])}
+    captured_kwargs = []
+
+    class RecordingClient:
+        def __init__(self, **kwargs):
+            captured_kwargs.append(kwargs)
+            symbol = next(s for s, cid in runner.CLIENT_IDS.items() if cid == kwargs["client_id"])
+            self._delegate = fake_clients[symbol]
+
+        async def stream(self, symbol, connect_timeout=15.0):
+            async for event in self._delegate.stream(symbol):
+                yield event
 
     appended = []
-    await runner.run_forever(
-        symbols=["NQ", "MNQ"],
-        client_factory=factory,
-        append_fn=lambda symbol, deltas: appended.append((symbol, deltas)),
-        max_cycles=1,
-    )
+    with patch.object(runner, "IBOrderflowClient", RecordingClient):
+        await runner.run_forever(
+            symbols=["NQ", "MNQ"],
+            append_fn=lambda symbol, deltas: appended.append((symbol, deltas)),
+            max_cycles=1,
+        )
+
     assert {s for s, _ in appended} == {"NQ", "MNQ"}
+    assert sorted(kwargs["client_id"] for kwargs in captured_kwargs) == [20, 21]

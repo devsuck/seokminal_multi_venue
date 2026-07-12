@@ -78,9 +78,9 @@ def test_run_all_hypotheses_applies_bh_fdr_across_all_symbol_signal_pairs(tmp_pa
     )
     assert "results" in result and "bh_fdr" in result
     assert result["bh_fdr"]["alpha"] == 0.1
-    # 5신호(footprint_imbalance/cvd_divergence/wall_proximity/iceberg_refill/stop_run) x 2심볼
-    assert len(result["results"]) == 10
+    # 6신호(footprint_imbalance/absorption/cvd_divergence/wall_proximity/iceberg_refill/stop_run) x 2심볼
+    assert len(result["results"]) == 12
     # heatmap_delta 없는 합성데이터라 wall_proximity/iceberg_refill/stop_run은 BLOCKED됨 ->
     # p-value 있는 항목만 BH-FDR 입력에 들어감. survivors는 그 항목 수와 정확히 일치해야 함.
     assert len(result["bh_fdr"]["survivors"]) == len(result["bh_fdr"]["keys"])
-    assert len(result["bh_fdr"]["keys"]) > 0  # footprint_imbalance/cvd_divergence는 데이터 충분 -> BLOCKED 아님
+    assert len(result["bh_fdr"]["keys"]) > 0  # footprint_imbalance/absorption/cvd_divergence는 데이터 충분 -> BLOCKED 아님

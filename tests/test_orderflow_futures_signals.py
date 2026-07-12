@@ -1,4 +1,5 @@
 from research.hypotheses.orderflow_futures import (
+    build_absorption_signals,
     build_cvd_divergence_signals,
     build_footprint_imbalance_signals,
     build_iceberg_refill_signals,
@@ -53,6 +54,36 @@ def test_footprint_imbalance_multi_price_bucket_uses_last_arrival_price():
     deltas = [_fd(0.0, 100.0, "buy", 5.0), _fd(0.0, 101.0, "buy", 5.0)]
     result = build_footprint_imbalance_signals(deltas, imbalance_ratio=0.7)
     assert result["closes"] == [101.0]
+
+
+def test_absorption_sell_dominant_but_price_holds_yields_buy():
+    # 매도 우세(80%)인데 가격이 안 밀리고 오히려 오름(100->101) -> 매도 흡수 -> BUY
+    deltas = [_fd(0.0, 100.0, "sell", 8.0), _fd(0.0, 101.0, "buy", 2.0)]
+    result = build_absorption_signals(deltas, dominance_ratio=0.7)
+    assert result["signals"][0] == "BUY"
+    assert result["eligible"] == [0]
+
+
+def test_absorption_buy_dominant_but_price_holds_yields_sell():
+    # 매수 우세(80%)인데 가격이 안 오르고 오히려 밀림(100->99) -> 매수 흡수 -> SELL
+    deltas = [_fd(0.0, 100.0, "buy", 8.0), _fd(0.0, 99.0, "sell", 2.0)]
+    result = build_absorption_signals(deltas, dominance_ratio=0.7)
+    assert result["signals"][0] == "SELL"
+
+
+def test_absorption_sell_dominant_and_price_drops_is_hold_but_eligible():
+    # 매도 우세인데 실제로 가격도 밀림(100->98) -> 흡수 아님(그냥 매도 우위) -> HOLD
+    deltas = [_fd(0.0, 100.0, "sell", 8.0), _fd(0.0, 98.0, "buy", 2.0)]
+    result = build_absorption_signals(deltas, dominance_ratio=0.7)
+    assert result["signals"][0] == "HOLD"
+    assert result["eligible"] == [0]
+
+
+def test_absorption_no_dominance_is_hold():
+    deltas = [_fd(0.0, 100.0, "buy", 5.0), _fd(0.0, 100.0, "sell", 5.0)]
+    result = build_absorption_signals(deltas, dominance_ratio=0.7)
+    assert result["signals"][0] == "HOLD"
+    assert result["eligible"] == [0]
 
 
 def test_cvd_divergence_price_down_cvd_up_yields_buy():

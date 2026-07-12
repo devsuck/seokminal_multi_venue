@@ -1,5 +1,5 @@
-"""가설: NQ/MNQ 오더플로우 시그널 5종 — footprint 불균형, CVD 다이버전스,
-stop-run 패턴, heatmap 유동성벽 근접, iceberg refill.
+"""가설: NQ/MNQ 오더플로우 시그널 6종 — footprint 불균형, absorption(흡수),
+CVD 다이버전스, stop-run 패턴, heatmap 유동성벽 근접, iceberg refill.
 
 ⚠️ DORMANT 모듈 — 검증된 알파 아님. 임계값은 프론트(`lib/orderflow-data.ts`)와
 동일 고정값 원칙(백테스트용으로 재최적화하지 않음). 입력은
@@ -7,9 +7,15 @@ stop-run 패턴, heatmap 유동성벽 근접, iceberg refill.
 heatmap_delta jsonl — 라이브 대시보드와 동일한 OrderflowAggregator 버킷팅을
 거친 값이므로 원시 틱과 1:1은 아니다(footprint 60s 버킷, heatmap 2s 버킷).
 
-footprint 불균형 + CVD 다이버전스 + heatmap 유동성벽 근접 + iceberg refill +
-stop-run(이벤트 레벨) 까지 구현하고, 5신호 x 심볼 전체를 BH-FDR로 종합 판정하는
-검증 오케스트레이션(run_signal_hypothesis/run_stop_run_hypothesis/run_all_hypotheses)까지 포함한다.
+absorption은 `research/strategies/orderflow_absorption.py`(HL BTC/ETH, REJECT)의
+동일 판정식을 이식한 것 — 원본의 large-trade/large-trade-event 가설은 개별 체결
+사이즈(rolling p95)가 필요한데 이 수집기는 버킷 합산 볼륨만 저장해 이식 불가,
+그래서 스콥에서 제외했다(수집기 스키마 변경 없이 재현 가능한 것만 이식).
+
+footprint 불균형 + absorption + CVD 다이버전스 + heatmap 유동성벽 근접 + iceberg
+refill + stop-run(이벤트 레벨) 까지 구현하고, 6신호 x 심볼 전체를 BH-FDR로 종합
+판정하는 검증 오케스트레이션(run_signal_hypothesis/run_stop_run_hypothesis/
+run_all_hypotheses)까지 포함한다.
 """
 from __future__ import annotations
 
@@ -22,6 +28,7 @@ from research.validation.engine import simulate_long_short
 from research.validation.metrics import trade_metrics
 
 FOOTPRINT_IMBALANCE_RATIO = 0.7  # lib/orderflow-data.ts 흡수 판정 임계값과 동일 — 고정 파라미터, 최적화 금지
+ABSORPTION_DOMINANCE_RATIO = 0.7  # research/strategies/orderflow_absorption.py와 동일값 — 고정 파라미터, 최적화 금지
 CVD_LOOKBACK_BUCKETS = 5  # 고정 파라미터, 최적화 금지
 
 DEFAULTS = {"trade_size": 1.0}  # 계약수(contracts) — futures는 notional이 multiplier로 이미 반영됨
@@ -41,12 +48,13 @@ def load_deltas(paths: list[str]) -> list[dict]:
     return deltas
 
 
-def _footprint_buckets(deltas: list[dict]) -> tuple[list[float], dict[float, float], dict[float, float], dict[float, float]]:
-    """footprint_delta만 골라 버킷 순서 + 버킷별 buy_vol/sell_vol 누적."""
+def _footprint_buckets(deltas: list[dict]) -> tuple[list[float], dict[float, float], dict[float, float], dict[float, float], dict[float, float]]:
+    """footprint_delta만 골라 버킷 순서 + 버킷별 buy_vol/sell_vol 누적 + open/close price."""
     order: list[float] = []
     seen: set[float] = set()
     buy: dict[float, float] = {}
     sell: dict[float, float] = {}
+    open_price: dict[float, float] = {}
     last_price: dict[float, float] = {}
     for d in deltas:
         if d.get("type") != "footprint_delta":
@@ -55,17 +63,18 @@ def _footprint_buckets(deltas: list[dict]) -> tuple[list[float], dict[float, flo
         if b not in seen:
             seen.add(b)
             order.append(b)
+            open_price[b] = d["price"]
         if d["side"] == "buy":
             buy[b] = buy.get(b, 0.0) + d["delta_vol"]
         else:
             sell[b] = sell.get(b, 0.0) + d["delta_vol"]
         last_price[b] = d["price"]
-    return order, buy, sell, last_price
+    return order, buy, sell, open_price, last_price
 
 
 def build_footprint_imbalance_signals(deltas: list[dict], imbalance_ratio: float = FOOTPRINT_IMBALANCE_RATIO) -> dict:
     """버킷별 buy/sell 볼륨 비율이 imbalance_ratio 넘으면 그 방향으로 BUY/SELL."""
-    order, buy, sell, last_price = _footprint_buckets(deltas)
+    order, buy, sell, _open_price, last_price = _footprint_buckets(deltas)
 
     closes: list[float] = []
     signals: list[str] = []
@@ -85,6 +94,37 @@ def build_footprint_imbalance_signals(deltas: list[dict], imbalance_ratio: float
     return {"closes": closes, "signals": signals, "eligible": eligible}
 
 
+def build_absorption_signals(deltas: list[dict], dominance_ratio: float = ABSORPTION_DOMINANCE_RATIO) -> dict:
+    """버킷별 buy/sell 우세인데 가격이 그 방향으로 안 밀리면 흡수(반대방향 강세) 신호.
+    매도 우세(>=dominance_ratio)인데 close>=open -> BUY(매도 흡수).
+    매수 우세인데 close<=open -> SELL(매수 흡수). `research/strategies/orderflow_absorption.py`
+    (HL BTC/ETH, REJECT됨)와 같은 판정식이지만, 그 원본은 개별 체결 사이즈의 rolling
+    median으로 노이즈 플로어(거래량이 그 median의 10배 이상)를 걸러 판정 자격을 줬다.
+    이 수집기는 개별 체결이 아니라 footprint_delta(버킷 합산 볼륨)만 저장하므로 그 플로어를
+    재현할 데이터가 없음 — build_footprint_imbalance_signals와 동일하게 "그 버킷에 볼륨이
+    있었나"(total>0)를 eligible 기준으로 쓴다."""
+    order, buy, sell, open_price, last_price = _footprint_buckets(deltas)
+
+    closes: list[float] = []
+    signals: list[str] = []
+    eligible: list[int] = []
+    for i, b in enumerate(order):
+        bv, sv = buy.get(b, 0.0), sell.get(b, 0.0)
+        total = bv + sv
+        closes.append(last_price[b])
+        sig = "HOLD"
+        if total > 0:
+            eligible.append(i)
+            o, c = open_price[b], last_price[b]
+            sell_ratio, buy_ratio = sv / total, bv / total
+            if sell_ratio >= dominance_ratio and c >= o:
+                sig = "BUY"
+            elif buy_ratio >= dominance_ratio and c <= o:
+                sig = "SELL"
+        signals.append(sig)
+    return {"closes": closes, "signals": signals, "eligible": eligible}
+
+
 def build_cvd_divergence_signals(deltas: list[dict], lookback_buckets: int = CVD_LOOKBACK_BUCKETS) -> dict:
     """누적 delta(CVD)가 lookback 구간 동안 가격과 반대 방향이면 다이버전스 신호.
 
@@ -92,7 +132,7 @@ def build_cvd_divergence_signals(deltas: list[dict], lookback_buckets: int = CVD
     가격 상승+CVD 하락 -> SELL. lookback 미달 버킷은 HOLD/not eligible.
     eligible은 "다이버전스가 실제로 뜬 인덱스"가 아니라 build_footprint_imbalance_signals와
     동일하게 "판정 가능했던 버킷"(i >= lookback_buckets) 전체 — HOLD로 끝난 버킷도 포함."""
-    order, buy, sell, last_price = _footprint_buckets(deltas)
+    order, buy, sell, _open_price, last_price = _footprint_buckets(deltas)
 
     cvd = 0.0
     cvd_history: list[float] = []
@@ -240,7 +280,7 @@ def stop_run_events(
     다른 build_*_signals류(bar-index 방식, HOLD 포함 전체 길이 반환)와 다르게
     이벤트가 발생한 버킷만 담은 이벤트 리스트를 반환한다 —
     research/strategies/orderflow_absorption.py의 _large_trade_events와 동일 패턴."""
-    order, buy, sell, last_price = _footprint_buckets(deltas)
+    order, buy, sell, _open_price, last_price = _footprint_buckets(deltas)
     totals = [buy.get(b, 0.0) + sell.get(b, 0.0) for b in order]
 
     events: list[dict] = []
@@ -258,6 +298,7 @@ def stop_run_events(
 
 SIGNAL_BUILDERS = {
     "footprint_imbalance": build_footprint_imbalance_signals,
+    "absorption": build_absorption_signals,
     "cvd_divergence": build_cvd_divergence_signals,
     "wall_proximity": build_wall_proximity_signals,
     "iceberg_refill": build_iceberg_refill_signals,
@@ -265,6 +306,7 @@ SIGNAL_BUILDERS = {
 
 HYPOTHESIS_TEXT = {
     "footprint_imbalance": f"1분봉 footprint 매수/매도 비율 {FOOTPRINT_IMBALANCE_RATIO} 이상 우세 방향 추종",
+    "absorption": f"1분봉 footprint 매수/매도 비율 {ABSORPTION_DOMINANCE_RATIO} 이상 우세인데 가격 안 밀리면 반대방향(흡수) 진입",
     "cvd_divergence": f"누적델타(CVD) {CVD_LOOKBACK_BUCKETS}버킷 다이버전스 역추세 진입",
     "wall_proximity": f"heatmap 대형벽({WALL_SIZE_THRESHOLD} 이상) {WALL_PROXIMITY_TICKS}틱 근접 시 벽 방향 진입",
     "iceberg_refill": f"동일가 잔량 급감후 재충전({int(ICEBERG_REFILL_RATIO*100)}% 이상) 패턴 추종",
@@ -351,7 +393,7 @@ def run_stop_run_hypothesis(
     if len(events) < 10:
         return _blocked(symbol, "stop_run", f"스탑런 이벤트 {len(events)}건뿐 — 최소 표본 미달", write_report)
 
-    order, buy, sell, last_price = _footprint_buckets(deltas)
+    order, buy, sell, _open_price, last_price = _footprint_buckets(deltas)
     closes = [last_price[b] for b in order]
     notional = closes[-1] * NOTIONAL_MULTIPLIER.get(symbol, 20.0)
     cost_bps = ib_futures_effective_cost_bps(symbol, notional)

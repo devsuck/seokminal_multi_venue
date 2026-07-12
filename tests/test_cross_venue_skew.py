@@ -134,7 +134,9 @@ def test_build_price_series_uses_max_bid_min_ask_not_list_order():
     venue_a = pd.DataFrame({
         "ts": [1.0],
         "bids": [[{"price": 90.0, "size": 1.0}, {"price": 99.0, "size": 1.0}]],
-        "asks": [[{"price": 110.0, "size": 1.0}, {"price": 101.0, "size": 1.0}]],
+        "asks": [[{"price": 105.0, "size": 1.0}, {"price": 101.0, "size": 1.0}]],
     })
     price = build_price_series({"a": venue_a})
-    assert price.loc[1.0] == pytest.approx(100.0)  # (99+101)/2, 리스트상 첫 항목(90,110) 아님
+    # correct mid = (max(90,99)=99 + min(105,101)=101)/2 = 100.0
+    # naive first-element mid = (90+105)/2 = 97.5 (differs, so this discriminates)
+    assert price.loc[1.0] == pytest.approx(100.0)

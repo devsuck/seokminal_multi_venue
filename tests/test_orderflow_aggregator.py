@@ -65,6 +65,22 @@ def test_on_book_snapshot_skips_delta_when_level_size_unchanged():
     assert deltas == [{"type": "heatmap_delta", "ts": 10.0, "price": 101.0, "size": 4.0}]
 
 
+def test_snapshot_slices_heatmap_to_snapshot_window_while_retaining_more_internally():
+    agg = OrderflowAggregator(
+        tick_size=1.0, heatmap_bucket_sec=2.0,
+        heatmap_max_window_sec=100.0, heatmap_snapshot_window_sec=10.0,
+    )
+    for ts in (0.0, 50.0, 95.0):
+        agg.on_book_snapshot(OrderBookSnapshot(
+            symbol="BTC.HL", ts=ts, bids=[OrderBookLevel(price=99.0, size=ts)], asks=[],
+        ))
+    snap = agg.snapshot()
+    # 내부적으로는 세 버킷 다 살아있음(90s < 100s 보존 윈도우)
+    assert len(snap["heatmap"]) == 1
+    assert snap["heatmap"][0]["ts"] == 94.0  # 95.0 -> 2s 버킷 94.0, size=95.0
+    # snapshot_window(10s)는 최신 버킷(94.0) 기준 84.0 미만은 잘라냄 -> ts=0,50 버킷 제외
+
+
 def test_prunes_footprint_buckets_older_than_max_window():
     agg = OrderflowAggregator(tick_size=1.0, footprint_bucket_sec=60.0, max_window_sec=120.0)
     agg.on_trade(_trade(100.0, 1.0, "buy", ts=0.0))

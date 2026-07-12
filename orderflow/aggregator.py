@@ -13,19 +13,25 @@ class OrderflowAggregator:
         footprint_bucket_sec: float = 60.0,
         heatmap_bucket_sec: float = 2.0,
         max_window_sec: float = 7200.0,
-        # heatmap은 footprint(60s 버킷)보다 20~30배 촘촘한 2s 버킷이라 footprint와 같은
-        # 2시간 윈도우를 쓰면 스냅샷이 WS 메시지 크기 한도(1MB)를 넘어 연결이 끊긴다.
-        # 실측(2026-07-12, BTC.HL): 300s(150버킷×~125가격)=6152셀=스냅샷 페이로드 340KB.
-        # 600s로 올려도 페이로드가 선형으로 ~2배(약 680KB)에 그쳐 1MB 한도 내 안전마진 확보.
-        heatmap_max_window_sec: float = 600.0,
+        # 서버 내부 보존 윈도우(메모리 상한, on_book_snapshot마다 _prune)와 신규 접속자에게
+        # 보내는 초기 snapshot() 페이로드 크기는 별개 문제라 분리한다.
+        # - heatmap_max_window_sec: 얼마나 오래 들고 있을지. 이미 붙어있는 클라는 이 값과
+        #   무관하게 delta 스트림으로 계속 누적하므로, 길게 잡아도 스냅샷 크기엔 영향 없다.
+        # - heatmap_snapshot_window_sec: 신규 접속자 snapshot()에 실제로 담기는 최근 구간.
+        #   실측(2026-07-12, BTC.HL): 300s(150버킷×~125가격)=6152셀=페이로드 340KB,
+        #   600s는 선형 ~680KB. 1MB WS 메시지 한도 내 안전마진 확보 위해 600s 고정.
+        heatmap_max_window_sec: float = 5400.0,  # 90분 — 기본 차트 가시 범위만큼 실시간 누적
+        heatmap_snapshot_window_sec: float = 600.0,
     ) -> None:
         self._tick_size = tick_size
         self._footprint_bucket_sec = footprint_bucket_sec
         self._heatmap_bucket_sec = heatmap_bucket_sec
         self._max_window_sec = max_window_sec
         self._heatmap_max_window_sec = heatmap_max_window_sec
+        self._heatmap_snapshot_window_sec = heatmap_snapshot_window_sec
         self._footprint: dict[tuple[float, float], FootprintCell] = {}
         self._heatmap: dict[tuple[float, float], HeatmapCell] = {}
+        self._heatmap_latest_bucket_ts = 0.0
 
     def _round_price(self, price: float) -> float:
         return round(math.floor(price / self._tick_size + 1e-9) * self._tick_size, 8)
@@ -64,6 +70,7 @@ class OrderflowAggregator:
 
     def on_book_snapshot(self, book: OrderBookSnapshot) -> list[dict]:
         bucket_ts = self._bucket(book.ts, self._heatmap_bucket_sec)
+        self._heatmap_latest_bucket_ts = bucket_ts
         deltas = []
         # 거래소가 보내는 원장 뎁스가 얼마든 상관없이 스냅샷 크기를 예측 가능하게 유지 —
         # 히트맵은 터치 근처 유동성만 보면 되고, 먼 호가까지 다 저장할 이유 없다
@@ -90,7 +97,8 @@ class OrderflowAggregator:
         }
 
     def snapshot(self) -> dict:
+        heatmap_cutoff = self._heatmap_latest_bucket_ts - self._heatmap_snapshot_window_sec
         return {
             "footprint": [c.model_dump() for c in self._footprint.values()],
-            "heatmap": [c.model_dump() for c in self._heatmap.values()],
+            "heatmap": [c.model_dump() for c in self._heatmap.values() if c.ts >= heatmap_cutoff],
         }

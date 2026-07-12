@@ -20,12 +20,16 @@ class IBOrderflowClient:
         self,
         host: str | None = None,
         port: int = 7497,
-        client_id: int = 1,
+        client_id: int | None = None,
         ib: IB | None = None,
     ) -> None:
         self._host = host or os.environ.get("IB_HOST", "127.0.0.1")
         self._port = port
-        self._client_id = client_id
+        # live_engine/ib_broker.py가 client_id=1(데이터)/2(주문)을 이미 씀 — 기본값 1을 쓰면
+        # 라이브 봇 구동 중 오더플로우 스트림을 동시에 열 때 같은 IB Gateway에 충돌.
+        self._client_id = client_id if client_id is not None else int(
+            os.environ.get("IB_ORDERFLOW_CLIENT_ID", "20")
+        )
         self._ib = ib if ib is not None else IB()
 
     def _contract(self, symbol: str) -> Contract:

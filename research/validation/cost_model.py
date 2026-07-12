@@ -38,3 +38,21 @@ def hl_effective_cost_bps(
     slip = HL_SLIPPAGE_BUCKET.get(liquidity, HL_SLIPPAGE_BUCKET["alt"])
     spread = HL_SPREAD_BUCKET.get(liquidity, HL_SPREAD_BUCKET["alt"])
     return fee + slip + spread / 2.0
+
+
+# ── IB CME futures 전용 ──────────────────────────────────────────────────
+# ⚠️ 미검증 근사치 — IB 실제 요금표(계약당 왕복 커미션) 대조 안 됨.
+# 페이퍼 단계 진입 전 반드시 IB 계정 실요율로 재확인할 것.
+IB_FUTURES_COMMISSION_USD = {"NQ": 2.25, "MNQ": 0.55}  # 계약당 왕복 근사
+IB_FUTURES_TICK_VALUE_USD = {"NQ": 5.0, "MNQ": 0.5}    # CME 0.25pt당
+IB_FUTURES_SLIPPAGE_TICKS = {"NQ": 0.5, "MNQ": 1.0}    # MNQ 유동성 낮아 더 보수적
+
+
+def ib_futures_effective_cost_bps(symbol: str, notional: float) -> float:
+    """IB 선물 체결 1회당 유효 비용(bps) = (커미션 + 슬리피지) / notional * 10000.
+
+    notional은 호출부에서 계약가치(price * multiplier)로 넘겨야 한다.
+    ⚠️ 커미션/슬리피지 상수는 미검증 근사치."""
+    commission = IB_FUTURES_COMMISSION_USD[symbol]
+    slippage = IB_FUTURES_SLIPPAGE_TICKS[symbol] * IB_FUTURES_TICK_VALUE_USD[symbol]
+    return round((commission + slippage) / notional * 10_000.0, 6)

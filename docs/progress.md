@@ -446,3 +446,28 @@
 ### 막힌 부분/결정사항
 - KIS 어댑터는 코드만 존재, CME 유료시세 미신청으로 라이브 검증 불가 상태 — 신청은 KIS포털에서 사용자가 직접 해야 함(계좌 설정, 대행 불가)
 - 사용자 승인: "IB가 지금은 최선"으로 명시적 확정, 이 트랙은 여기서 종료
+
+---
+
+## 2026-07-12: IB 시장데이터 구독 정리 + absorption 신호 스콥 추가
+
+### 완료된 작업
+- IB Client Portal 요금표 대조: NQ/MNQ 페이퍼/검증에 필요한 건 `CME Real-Time (NP,L2)` $12.10/월 하나뿐(top+depth 포함, 페이퍼계좌는 라이브계좌에 링크돼있어 구독 그대로 흘러들어감 — 사용자 확인함). 나머지 번들(US Securities Snapshot, US Futures Value Bundle PLUS 등)은 이 스콥에 불필요. `project_kis_futures_data_shelved` 메모리에 실요금 반영해 KIS Lv2($30~45) 대비 IB가 훨씬 쌈을 기록
+- OPRA(옵션 flow, 주식 leverage 트레이딩 검토용)와 CME futures 데이터는 완전 별개 트랙임을 정리 — OPRA L1 $1.50/월이 옵션 flow 최소 요건, 주식 자체 orderflow(NQ/MNQ 하네스류)는 또 별도로 거래소별 Level II 필요(NASDAQ TotalView $16.50, NYSE OpenBook $25 등) — 지금은 미착수, 필요해지면 그때 결정
+- 페이퍼 봇(실시간 신호+주문) vs 지금 하네스(오프라인 통계검증)는 다른 것임을 정리 — 순서상 통계검증 먼저, 신호가 살아남아야 실시간 봇 착수 정당화됨(이 프로젝트 기존 방법론과 동일)
+- **absorption 신호를 오더플로우 futures 하네스 스콥에 추가**: `research/strategies/orderflow_absorption.py`(HL BTC/ETH, REJECT됨)의 판정식을 `research/hypotheses/orderflow_futures.py`에 이식(`build_absorption_signals`) — footprint_delta 버킷의 buy/sell 우세 비율 + open/close 가격으로 판정, 원본의 large-trade류 노이즈플로어(개별 체결사이즈 rolling median)는 이 수집기가 버킷 합산볼륨만 저장해 재현 불가라 제외. large-trade/large-trade-event 가설 자체도 같은 이유로 스콥 제외(수집기 스키마 변경 없인 이식 불가 — 사용자가 "설계작업 늘리지 말고 기존 것 최대한 활용"으로 명시 확정한 방향과 일치)
+- `_footprint_buckets` 헬퍼가 이제 bucket_open도 반환하도록 확장(기존 3개 호출부 전부 수정), SIGNAL_BUILDERS/HYPOTHESIS_TEXT에 absorption 등록 → BH-FDR 검정 5신호→6신호(x2심볼=12) 확장
+- 테스트: `test_orderflow_futures_signals.py`에 absorption 4개 케이스(흡수 BUY/SELL, 흡수아님 HOLD, 무우세 HOLD) 추가, `test_orderflow_futures_run.py`의 하드코딩 카운트(10→12) 갱신. 전체 스위트 929 passed / 4 failed(문서화된 pre-existing만: test_auth.py×3, test_backtest_happy_path) — 리그레션 없음
+
+### 변경된 파일
+- `research/hypotheses/orderflow_futures.py` — `build_absorption_signals` 추가, `_footprint_buckets` 반환값에 open price 추가, 모듈 docstring 갱신
+- `tests/test_orderflow_futures_signals.py`, `tests/test_orderflow_futures_run.py`
+- 커밋: `6391d58`
+
+### 다음 할 일
+- IB Client Portal에서 `CME Real-Time (NP,L2)` 구독 신청(사용자가 직접 — 계좌 설정 변경은 대행 불가) → 반영 후 `research/run_ib_orderflow_tick_collect.py` 실행해 depth 틱 들어오는지 확인
+- 이전 섹션과 동일: 실데이터 수집(tmux 상시, 신호당 100~200개+ eligible instance 쌓일 때까지 — 캘린더 기간 미리 고정 안 함, 인스턴스 카운트가 stopping rule) 후 `run_all_hypotheses` 실행
+- IB futures 커미션/틱밸류 상수 미검증(코드 주석 명시) — 페이퍼 단계 진입 전 재확인 필요
+
+### 막힌 부분/결정사항
+- 없음 — absorption 이식은 스콥 작아 SDD 풀파이프라인 없이 직접 구현(TDD, 기존 5신호 패턴 그대로 재사용), 세션 내 완결

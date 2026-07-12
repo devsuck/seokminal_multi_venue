@@ -47,6 +47,24 @@ def test_on_book_snapshot_creates_heatmap_cells_for_each_level():
     assert len(snap["heatmap"]) == 2
 
 
+def test_on_book_snapshot_skips_delta_when_level_size_unchanged():
+    agg = OrderflowAggregator(tick_size=1.0, heatmap_bucket_sec=2.0)
+    book_a = OrderBookSnapshot(
+        symbol="BTC.HL", ts=10.0,
+        bids=[OrderBookLevel(price=99.4, size=5.0)],
+        asks=[OrderBookLevel(price=101.4, size=3.0)],
+    )
+    agg.on_book_snapshot(book_a)
+    # 같은 버킷(ts=11.0도 2s 버킷상 10.0), 값 그대로인 레벨 재전송
+    book_b = OrderBookSnapshot(
+        symbol="BTC.HL", ts=11.0,
+        bids=[OrderBookLevel(price=99.4, size=5.0)],
+        asks=[OrderBookLevel(price=101.4, size=4.0)],  # ask만 변경
+    )
+    deltas = agg.on_book_snapshot(book_b)
+    assert deltas == [{"type": "heatmap_delta", "ts": 10.0, "price": 101.0, "size": 4.0}]
+
+
 def test_prunes_footprint_buckets_older_than_max_window():
     agg = OrderflowAggregator(tick_size=1.0, footprint_bucket_sec=60.0, max_window_sec=120.0)
     agg.on_trade(_trade(100.0, 1.0, "buy", ts=0.0))

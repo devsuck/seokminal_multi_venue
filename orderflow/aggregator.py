@@ -71,6 +71,9 @@ class OrderflowAggregator:
         for level in near_touch:
             price = self._round_price(level.price)
             key = (bucket_ts, price)
+            existing = self._heatmap.get(key)
+            if existing is not None and existing.size == level.size:
+                continue
             self._heatmap[key] = HeatmapCell(ts=bucket_ts, price=price, size=level.size)
             deltas.append({"type": "heatmap_delta", "ts": bucket_ts, "price": price, "size": level.size})
         self._prune(self._heatmap, bucket_ts, self._heatmap_max_window_sec)

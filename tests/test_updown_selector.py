@@ -65,7 +65,7 @@ def test_rejects_inactive_or_closed_or_not_accepting():
 
 def test_sorts_by_liquidity_descending():
     markets = [
-        _market(condition_id="low", liquidity=600.0),
+        _market(condition_id="low", liquidity=1500.0),
         _market(condition_id="high", liquidity=5000.0),
     ]
     picked = sel.select_updown_markets(markets, now=_NOW)

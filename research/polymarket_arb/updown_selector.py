@@ -13,10 +13,10 @@ import re
 
 _SLUG_RE = re.compile(r"^[a-z0-9]+-updown-\d+(m|h)-\d+$")
 
-# 일반 MIN_LIQUIDITY=5000(collector.py)와 다른 값 — 개설 초기 up/down 마켓은
-# 유동성이 훨씬 낮게 관측됨(24h 전 시점 ~1000 수준). 표본 더 쌓이면 조정할
-# 미검증 근사치.
-MIN_LIQUIDITY = 500.0
+# 일반 MIN_LIQUIDITY=5000(collector.py)와 다른 값 — 마감임박 up/down 마켓은
+# 관측유동성 2000~15000대로 낮게 형성됨(2026-07-13 라이브 확인). 표본 더 쌓이면
+# 조정할 미검증 근사치.
+MIN_LIQUIDITY = 1000.0
 MAX_MINUTES_TO_RESOLVE = 15.0
 
 

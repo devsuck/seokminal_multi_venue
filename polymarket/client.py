@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 import time
 
@@ -91,14 +92,18 @@ def get_markets(limit: int = 200, active: bool = True, closed: bool = False) -> 
 
 
 def get_updown_markets(limit: int = 100) -> list[dict]:
-    """5분/15분 주기로 새로 열리는 크립토 up/down 마켓(슬러그: `{coin}-updown-{5m|15m}-{ts}`).
+    """마감임박순 크립토 up/down 마켓(슬러그: `{coin}-updown-{5m|15m}-{ts}`).
 
-    최신 개설순(startDate desc)이라 endDate(마감시각)는 마켓마다 제각각 —
-    마감임박 필터링은 research/polymarket_arb/updown_selector.py에서 한다.
+    up/down 마켓은 실제 5분/15분 판정 구간보다 ~24시간 먼저 개설되므로
+    최신개설순(startDate desc)으로는 지금 막 열린(마감 한참 남은) 마켓만 잡힌다.
+    end_date_min=now + order=endDate asc로 정렬해 마감이 임박한 마켓부터 받는다.
+    슬러그 패턴/유동성 임계값 필터링은 research/polymarket_arb/updown_selector.py에서 한다.
     """
+    now_iso = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     raw = _get("/markets", {
         "limit": limit, "active": "true", "closed": "false",
-        "tag_slug": "crypto", "order": "startDate", "ascending": "false",
+        "tag_slug": "crypto", "order": "endDate", "ascending": "true",
+        "end_date_min": now_iso,
     })
     if not isinstance(raw, list):
         return []

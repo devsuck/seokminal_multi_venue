@@ -1,4 +1,12 @@
-from research.validation.cost_model import ib_futures_effective_cost_bps, IB_FUTURES_COMMISSION_USD, IB_FUTURES_TICK_VALUE_USD, IB_FUTURES_SLIPPAGE_TICKS
+from research.validation.cost_model import (
+    ib_futures_effective_cost_bps,
+    IB_FUTURES_COMMISSION_USD,
+    IB_FUTURES_TICK_VALUE_USD,
+    IB_FUTURES_SLIPPAGE_TICKS,
+    POLYMARKET_SPREAD_BPS,
+    POLYMARKET_TAKER_BPS,
+    polymarket_effective_cost_bps,
+)
 
 
 def test_ib_futures_effective_cost_bps_nq():
@@ -18,3 +26,17 @@ def test_ib_futures_effective_cost_bps_unknown_symbol_raises():
     import pytest
     with pytest.raises(KeyError):
         ib_futures_effective_cost_bps("ES", notional=100_000.0)
+
+
+def test_polymarket_effective_cost_bps_default():
+    # taker(0.0) + spread/2(200/2=100) = 100.0
+    assert polymarket_effective_cost_bps() == 100.0
+
+
+def test_polymarket_effective_cost_bps_custom_spread():
+    assert polymarket_effective_cost_bps(spread_bps=50.0) == 25.0
+
+
+def test_polymarket_constants_values():
+    assert POLYMARKET_TAKER_BPS == 0.0
+    assert POLYMARKET_SPREAD_BPS == 200.0

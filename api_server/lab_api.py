@@ -242,6 +242,7 @@ def lab_status() -> dict:
             "polymarket_tick": _tmux_process_status("polymarket-tick", "research/data/polymarket_tick"),
             "polymarket_arb": _tmux_process_status("polymarket-arb", "research/data/polymarket_arb"),
             "hl_orderflow_tick": _tmux_process_status("hl-orderflow-tick", "research/data/hl_orderflow_tick"),
+            "cross_venue_skew_tick": _tmux_process_status("cross-venue-skew-tick", "research/data/cross_venue_skew"),
         }
     except Exception as exc:  # noqa: BLE001
         out["processes"] = {"error": str(exc)[:60]}

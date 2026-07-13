@@ -39,6 +39,7 @@ class ResearchService:
         self.last_autoresearch: str | None = None
         self.autoresearch_candidates = 0
         self.autoresearch_reconciled = 0
+        self.jarvis_bridged_total = 0
         self._last_edge_ts = 0.0
         self.last_edge_warm: str | None = None
         self.edge_status_cache: str | None = None
@@ -128,8 +129,41 @@ class ResearchService:
                 self.autoresearch_reconciled = ENGINE.reconcile_from_batch(s).get("reconciled", 0)
             except Exception:  # noqa: BLE001
                 pass
+            # AI LAB CANDIDATE를 jarvis 감사 레지스트리로 전달 — 여기 안 거치면
+            # audit trail·redteam·permission 게이트 없이는 paper_active 승격 불가.
+            try:
+                self.jarvis_bridged_total += self._bridge_to_jarvis(s)
+            except Exception:  # noqa: BLE001
+                pass
         except Exception:  # noqa: BLE001
             pass
+
+    def _bridge_to_jarvis(self, status: dict) -> int:
+        """autoresearch CANDIDATE를 jarvis.research_queue에 제출(idempotent).
+
+        id는 research/autoresearch/engine.py의 hypothesis_id 컨벤션(f"auto_{cid}")과
+        일치시켜야 jarvis backtest.run의 already_tested() 리플레이가 실제 결과를 찾는다."""
+        from jarvis.registry import StrategyRegistry
+        from jarvis.research_queue import submit
+
+        reg = StrategyRegistry()
+        n = 0
+        for row in status.get("leaderboard", []):
+            if row.get("verdict") != "CANDIDATE":
+                continue
+            sid = f"auto_{row['cid']}"
+            if reg.state(sid) is not None:
+                continue
+            spec = {
+                "id": sid, "name": row.get("thesis", row["cid"])[:60],
+                "family": row.get("category", "factor"), "market": "KR",
+                "thesis": row.get("thesis", ""),
+                "required_data": ["daily_ohlcv", "market_cap"],
+                "keywords": [row.get("category", "factor"), "autoresearch"],
+            }
+            if submit(spec, source="autoresearch_bridge").get("accepted"):
+                n += 1
+        return n
 
     def _warm_edge(self) -> None:
         """6시간 스로틀 buyback 엣지 생존 캐시 워밍 — 프론트 /execution/edge가 즉시
@@ -223,12 +257,13 @@ class ResearchService:
             "last_buyback_refresh": self.last_refresh, "buyback_added_total": self.refresh_added_total,
             "last_autoresearch": self.last_autoresearch, "autoresearch_candidates": self.autoresearch_candidates,
             "autoresearch_reconciled": self.autoresearch_reconciled,
+            "jarvis_bridged_total": self.jarvis_bridged_total,
             "last_edge_warm": self.last_edge_warm, "edge_status": self.edge_status_cache,
             "arm_decision": self.arm_decision,
             "tsmom_last_month": self.tsmom_last_month, "tsmom_in_envelope": self.tsmom_in_envelope,
             "watchdog": self._watchdog_summary(),
             "pull_queue": self._pull_queue_summary(),
-            "note": "pending 큐 + buyback 24h 갱신 + Auto-Research 24h 배치 + lab 되먹임 + 엣지 6h 워밍 + 감시견. live 불가. $0.",
+            "note": "pending 큐 + buyback 24h 갱신 + Auto-Research 24h 배치 + lab 되먹임 + jarvis 감사큐 브릿지 + 엣지 6h 워밍 + 감시견. live 불가. $0.",
         }
 
     def _watchdog_summary(self) -> dict:

@@ -58,7 +58,9 @@ def _map_market(m: dict) -> dict | None:
         "question": m.get("question", ""),
         "event_id": event.get("id", ""),
         "event_title": event.get("title", ""),
+        "slug": m.get("slug") or event.get("slug") or "",
         "end_date": m.get("endDateIso") or (m.get("endDate") or "")[:10],
+        "end_datetime": m.get("endDate") or m.get("endDateIso") or "",
         "volume": float(m.get("volumeNum") or m.get("volume") or 0),
         "liquidity": float(m.get("liquidityNum") or m.get("liquidity") or 0),
         "yes_price": yes_price,
@@ -77,6 +79,26 @@ def get_markets(limit: int = 200, active: bool = True, closed: bool = False) -> 
     raw = _get("/markets", {
         "limit": limit, "active": str(active).lower(), "closed": str(closed).lower(),
         "order": "volume", "ascending": "false",
+    })
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for m in raw:
+        mapped = _map_market(m)
+        if mapped:
+            out.append(mapped)
+    return out
+
+
+def get_updown_markets(limit: int = 100) -> list[dict]:
+    """5분/15분 주기로 새로 열리는 크립토 up/down 마켓(슬러그: `{coin}-updown-{5m|15m}-{ts}`).
+
+    최신 개설순(startDate desc)이라 endDate(마감시각)는 마켓마다 제각각 —
+    마감임박 필터링은 research/polymarket_arb/updown_selector.py에서 한다.
+    """
+    raw = _get("/markets", {
+        "limit": limit, "active": "true", "closed": "false",
+        "tag_slug": "crypto", "order": "startDate", "ascending": "false",
     })
     if not isinstance(raw, list):
         return []

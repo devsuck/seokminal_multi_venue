@@ -45,3 +45,22 @@ def test_map_market_defaults_sports_fields_to_none():
     mapped = _map_market(_raw_market())
     assert mapped["sports_market_type"] is None
     assert mapped["game_start_time"] is None
+
+
+def test_map_market_extracts_slug_and_full_precision_end_datetime():
+    # 실제 API: endDate가 전체정밀도(ISO datetime), endDateIso는 날짜만 truncate됨.
+    mapped = _map_market(_raw_market(
+        slug="btc-updown-5m-1783991400",
+        endDateIso="2026-07-13",
+        endDate="2026-07-13T21:15:00Z",
+    ))
+    assert mapped["slug"] == "btc-updown-5m-1783991400"
+    assert mapped["end_datetime"] == "2026-07-13T21:15:00Z"
+    assert mapped["end_date"] == "2026-07-13"
+
+
+def test_map_market_slug_and_end_datetime_default_to_empty_string():
+    mapped = _map_market(_raw_market(endDateIso="", endDate=""))
+    assert mapped["slug"] == ""
+    assert mapped["end_datetime"] == ""
+    assert mapped["end_date"] == ""

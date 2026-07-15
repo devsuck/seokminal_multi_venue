@@ -27,7 +27,9 @@ def load_cursor(path: str = _CURSOR_PATH) -> str | None:
 
 
 def save_cursor(published: str, path: str = _CURSOR_PATH) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    dirname = os.path.dirname(path)
+    if dirname:
+        os.makedirs(dirname, exist_ok=True)
     with open(path, "w") as f:
         json.dump({"last_seen_published": published}, f)
 
@@ -61,14 +63,14 @@ def fetch_papers(max_results: int = 50, categories: list[str] | None = None) -> 
         "max_results": max_results,
     }
     last_err: Exception | None = None
-    for attempt in range(_MAX_RETRIES):
+    for attempt in range(_MAX_RETRIES + 1):
         try:
             resp = requests.get(_ARXIV_API, params=params, timeout=30)
             resp.raise_for_status()
             return _parse_atom(resp.text)
         except requests.RequestException as e:
             last_err = e
-            if attempt < _MAX_RETRIES - 1:
+            if attempt < _MAX_RETRIES:
                 time.sleep(2 ** attempt)
     raise RuntimeError(f"arXiv fetch 최대 재시도 초과: {last_err}")
 

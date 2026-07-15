@@ -1,5 +1,5 @@
 import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, call
 
 import pytest
 import requests
@@ -62,10 +62,30 @@ def test_fetch_papers_retries_on_failure_then_succeeds():
 
 
 def test_fetch_papers_raises_after_max_retries():
-    with patch("requests.get", side_effect=requests.ConnectionError("boom")), \
-         patch("time.sleep"):
+    with patch("requests.get", side_effect=requests.ConnectionError("boom")) as mock_get, \
+         patch("time.sleep") as mock_sleep:
         with pytest.raises(RuntimeError):
             fetch_papers(max_results=10)
+    assert mock_get.call_count == 4
+    assert mock_sleep.call_args_list == [call(1), call(2), call(4)]
+
+
+def test_download_pdf_text_extracts_and_joins_pages():
+    resp = MagicMock(content=b"fake-pdf-bytes")
+    resp.raise_for_status = MagicMock()
+    page1 = MagicMock()
+    page1.extract_text.return_value = "Page one text"
+    page2 = MagicMock()
+    page2.extract_text.return_value = "Page two text"
+    mock_pdf = MagicMock()
+    mock_pdf.pages = [page1, page2]
+    mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+    mock_pdf.__exit__ = MagicMock(return_value=False)
+    with patch("requests.get", return_value=resp), \
+         patch("pdfplumber.open", return_value=mock_pdf):
+        from research.papers.arxiv_fetcher import download_pdf_text
+        text = download_pdf_text("http://arxiv.org/pdf/2601.00001v1")
+    assert text == "Page one text\nPage two text"
 
 
 def test_filter_new_papers_keeps_only_after_cursor():

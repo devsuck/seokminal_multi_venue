@@ -44,3 +44,23 @@ def test_extract_spec_truncates_long_paper_text():
     with patch("research.papers.extract_spec.call_claude", side_effect=fake_call):
         extract_spec("x" * 100_000)
     assert len(captured["prompt"]) < 100_000
+
+
+def test_extract_spec_strips_json_language_tagged_fence():
+    fenced = "```json\n" + json.dumps(_VALID_SPEC) + "\n```"
+    with patch("research.papers.extract_spec.call_claude", return_value=fenced):
+        spec = extract_spec("some paper text")
+    assert spec == _VALID_SPEC
+
+
+def test_extract_spec_strips_plain_fence():
+    fenced = "```\n" + json.dumps(_VALID_SPEC) + "\n```"
+    with patch("research.papers.extract_spec.call_claude", return_value=fenced):
+        spec = extract_spec("some paper text")
+    assert spec == _VALID_SPEC
+
+
+def test_extract_spec_raises_on_non_dict_json():
+    with patch("research.papers.extract_spec.call_claude", return_value="[1, 2, 3]"):
+        with pytest.raises(ValueError):
+            extract_spec("some paper text")

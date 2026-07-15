@@ -18,7 +18,7 @@ def call_claude(prompt: str, timeout: int = 300) -> str:
             ["claude", "-p", prompt, "--output-format", "json", "--allowedTools", ""],
             capture_output=True, text=True, timeout=timeout, check=True,
         )
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
         raise LLMCallError(f"claude CLI 호출 실패: {e}") from e
 
     try:

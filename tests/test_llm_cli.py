@@ -63,3 +63,9 @@ def test_call_claude_raises_on_nonzero_exit():
     with patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, "claude")):
         with pytest.raises(LLMCallError):
             call_claude("say hi")
+
+
+def test_call_claude_raises_on_missing_binary():
+    with patch("subprocess.run", side_effect=FileNotFoundError("claude: command not found")):
+        with pytest.raises(LLMCallError):
+            call_claude("say hi")

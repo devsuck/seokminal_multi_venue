@@ -64,9 +64,7 @@ def signal_fn(ohlc, feat, aux, params):
     n = len(ohlc["close"])
     entry = [False] * n
     entry[0] = True
-    eligible = list(range(n))
-    eligible.append(n + 5)
-    return {"entry": entry, "eligible": eligible}
+    return {"entry": entry, "eligible": [0, 5, n + 5]}
 '''
 
 _ELIGIBLE_SUBSET_CODE = '''
@@ -166,9 +164,12 @@ def test_check_rejects_none_entry_without_raising():
 
 
 def test_check_rejects_eligible_out_of_range_index():
+    # 길이(3)는 n_expected(200) 이내라 length 체크는 통과하고,
+    # 인덱스 범위 체크(0 <= e < n_expected)에서 걸려야 한다.
     ok, reason = check(_ELIGIBLE_OUT_OF_RANGE_CODE)
     assert ok is False
     assert "eligible" in reason
+    assert "길이" not in reason
 
 
 def test_check_passes_eligible_subset_of_bars():

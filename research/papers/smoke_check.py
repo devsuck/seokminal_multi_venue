@@ -50,14 +50,26 @@ def check(code: str) -> tuple[bool, str]:
     if not isinstance(result, dict) or "entry" not in result or "eligible" not in result:
         return False, "signal_fn 반환값에 entry/eligible 키 없음"
 
-    entry = result["entry"]
-    if len(entry) != len(ohlc["close"]):
-        return False, f"entry 길이 불일치: {len(entry)} != {len(ohlc['close'])}"
-    if any(e is None for e in entry):
-        return False, "entry에 None 포함(bool이어야 함)"
-    if any(isinstance(e, float) and math.isnan(e) for e in entry):
-        return False, "entry에 NaN 포함"
-    if not any(entry):
-        return False, "entry 전부 False — 시그널 없음"
+    try:
+        n_expected = len(ohlc["close"])
+        entry = result["entry"]
+        if len(entry) != n_expected:
+            return False, f"entry 길이 불일치: {len(entry)} != {n_expected}"
+        if any(e is None for e in entry):
+            return False, "entry에 None 포함(bool이어야 함)"
+        if any(isinstance(e, float) and math.isnan(e) for e in entry):
+            return False, "entry에 NaN 포함"
+        if not any(entry):
+            return False, "entry 전부 False — 시그널 없음"
+        if all(entry):
+            return False, "entry 전부 True — 상수 시그널"
+
+        eligible = result["eligible"]
+        if len(eligible) != n_expected:
+            return False, f"eligible 길이 불일치: {len(eligible)} != {n_expected}"
+        if any(not isinstance(e, int) for e in eligible):
+            return False, "eligible 타입 오류: int가 아닌 원소 포함"
+    except Exception as e:
+        return False, f"반환값 검증 실패: {e}"
 
     return True, ""

@@ -47,6 +47,48 @@ _MISSING_SYMBOLS_CODE = '''
 X = 1
 '''
 
+_NONE_ENTRY_CODE = '''
+NAME = "none_entry"
+DESCRIPTION = "d"
+
+def signal_fn(ohlc, feat, aux, params):
+    n = len(ohlc["close"])
+    return {"entry": None, "eligible": list(range(n))}
+'''
+
+_ELIGIBLE_WRONG_LENGTH_CODE = '''
+NAME = "elig_len"
+DESCRIPTION = "d"
+
+def signal_fn(ohlc, feat, aux, params):
+    n = len(ohlc["close"])
+    entry = [False] * n
+    entry[0] = True
+    return {"entry": entry, "eligible": list(range(n - 1))}
+'''
+
+_ELIGIBLE_BAD_TYPE_CODE = '''
+NAME = "elig_type"
+DESCRIPTION = "d"
+
+def signal_fn(ohlc, feat, aux, params):
+    n = len(ohlc["close"])
+    entry = [False] * n
+    entry[0] = True
+    eligible = list(range(n))
+    eligible[0] = "not_an_int"
+    return {"entry": entry, "eligible": eligible}
+'''
+
+_ALL_TRUE_CODE = '''
+NAME = "always_on"
+DESCRIPTION = "d"
+
+def signal_fn(ohlc, feat, aux, params):
+    n = len(ohlc["close"])
+    return {"entry": [True] * n, "eligible": list(range(n))}
+'''
+
 
 def test_check_passes_valid_signal_fn():
     ok, reason = check(_GOOD_CODE)
@@ -82,3 +124,27 @@ def test_check_rejects_nan_entry():
     ok, reason = check(_NAN_CODE)
     assert ok is False
     assert "NaN" in reason
+
+
+def test_check_rejects_none_entry_without_raising():
+    ok, reason = check(_NONE_ENTRY_CODE)
+    assert ok is False
+    assert reason
+
+
+def test_check_rejects_eligible_wrong_length():
+    ok, reason = check(_ELIGIBLE_WRONG_LENGTH_CODE)
+    assert ok is False
+    assert "eligible" in reason
+
+
+def test_check_rejects_eligible_bad_type():
+    ok, reason = check(_ELIGIBLE_BAD_TYPE_CODE)
+    assert ok is False
+    assert "eligible" in reason
+
+
+def test_check_rejects_all_true_entry():
+    ok, reason = check(_ALL_TRUE_CODE)
+    assert ok is False
+    assert "True" in reason

@@ -20,10 +20,16 @@ def _fixture_ohlc(n: int = 200) -> dict:
 
 def _fixture_feat(ohlc: dict) -> dict:
     n = len(ohlc["close"])
+    close = ohlc["close"]
+    # vwap을 close와 동일하게 두면 dev=(c-vwap)/vwap이 항상 0이 되어 VWAP
+    # 이탈 기반 시그널(예: vwap_mean_reversion)이 절대 트리거되지 않는다.
+    # close 대비 소폭(±1%) 주기적 오프셋을 줘서 dev_k=0.004 같은 임계값을
+    # 실제로 넘나드는 바가 섞이도록 한다.
+    vwap = [close[i] * (1 + 0.01 * math.sin(i * 0.9)) for i in range(n)]
     return {
         "sids": [0] * n,
         "mso": [float(i % 390) for i in range(n)],
-        "vwap": list(ohlc["close"]),
+        "vwap": vwap,
         "atr_abs": [1.0] * n,
     }
 
@@ -64,11 +70,17 @@ def check(code: str) -> tuple[bool, str]:
         if all(entry):
             return False, "entry 전부 True — 상수 시그널"
 
+        # eligible = opportunity set(전체 바 중 전제조건이 성립한 바의 인덱스
+        # 목록) — n_expected와 길이가 같아야 하는 게 아니라 그 부분집합이면
+        # 됨(runner.py/strategies.py 실제 가설들이 다 이런 형태). 그래도
+        # 전체 바 수를 넘을 수는 없고, 각 원소는 유효한 바 인덱스여야 한다.
         eligible = result["eligible"]
-        if len(eligible) != n_expected:
-            return False, f"eligible 길이 불일치: {len(eligible)} != {n_expected}"
+        if len(eligible) > n_expected:
+            return False, f"eligible 길이 초과: {len(eligible)} > {n_expected} (opportunity set이 전체 바 수를 넘을 수 없음)"
         if any(not isinstance(e, int) for e in eligible):
             return False, "eligible 타입 오류: int가 아닌 원소 포함"
+        if any(not (0 <= e < n_expected) for e in eligible):
+            return False, f"eligible 인덱스 범위 오류: 0 <= e < {n_expected} 벗어난 원소 포함"
     except Exception as e:
         return False, f"반환값 검증 실패: {e}"
 

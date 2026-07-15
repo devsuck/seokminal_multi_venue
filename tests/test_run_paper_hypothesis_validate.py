@@ -57,3 +57,30 @@ def test_main_skips_none_pvalue_when_pooling():
         result = v.main()
     assert result["bh_fdr"]["names"] == []
     assert result["bh_fdr"]["n_survivors"] == 0
+
+
+def test_discover_hypotheses_skips_module_that_raises_on_load(tmp_path):
+    good = tmp_path / "good.py"
+    good.write_text(
+        'NAME = "good"\nDESCRIPTION = "d"\n'
+        'def signal_fn(ohlc, feat, aux, params):\n    return {"entry": [], "eligible": []}\n'
+    )
+    bad = tmp_path / "bad.py"
+    bad.write_text('raise ValueError("boom")\n')
+    with patch.object(v, "_HYPOTHESES_DIR", str(tmp_path)):
+        found = v.discover_hypotheses()
+    assert [h["name"] for h in found] == ["good"]
+
+
+def test_main_skips_hypothesis_whose_run_universe_raises_but_pools_the_rest():
+    fake_hyps = [
+        {"path": "a.py", "name": "paper_a", "desc": "d", "signal_fn": lambda *a: None},
+        {"path": "b.py", "name": "paper_b", "desc": "d", "signal_fn": lambda *a: None},
+    ]
+    fake_results = [RuntimeError("boom"), _fake_result("paper_b", 0.02)]
+    with patch.object(v, "discover_hypotheses", return_value=fake_hyps), \
+         patch.object(v, "run_universe", side_effect=fake_results):
+        result = v.main()
+    assert [r["name"] for r in result["results"]] == ["paper_b"]
+    assert result["bh_fdr"]["names"] == ["paper_b"]
+    assert result["bh_fdr"]["n_survivors"] == 1

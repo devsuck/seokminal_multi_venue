@@ -31,7 +31,11 @@ def _load_module(path: str):
 def discover_hypotheses() -> list[dict]:
     out = []
     for path in sorted(glob.glob(os.path.join(_HYPOTHESES_DIR, "*.py"))):
-        module = _load_module(path)
+        try:
+            module = _load_module(path)
+        except Exception as e:
+            print(f"[discover_hypotheses] {path} 로딩 실패, 건너뜀: {e}")
+            continue
         if all(hasattr(module, s) for s in ("NAME", "DESCRIPTION", "signal_fn")):
             out.append({"path": path, "name": module.NAME, "desc": module.DESCRIPTION, "signal_fn": module.signal_fn})
     return out
@@ -44,7 +48,11 @@ def main() -> dict:
     names: list[str] = []
 
     for h in hypotheses:
-        r = run_universe(h["name"], h["desc"], h["signal_fn"])
+        try:
+            r = run_universe(h["name"], h["desc"], h["signal_fn"])
+        except Exception as e:
+            print(f"[main] {h['name']} 실행 실패, 건너뜀: {e}")
+            continue
         results.append(r)
         pval = r["pooled"]["empirical_p_value"]
         if pval is not None:

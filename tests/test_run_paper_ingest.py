@@ -100,6 +100,19 @@ def test_main_advances_cursor_to_max_published_among_new_papers():
     assert result["n_new"] == 2
 
 
+def test_main_holds_cursor_at_pdf_error_paper_for_retry_next_cycle():
+    papers = [_paper(id="1", published="2026-07-10T00:00:00Z"),
+              _paper(id="2", published="2026-07-12T00:00:00Z")]
+    with patch.object(ingest, "load_cursor", return_value=None), \
+         patch.object(ingest, "fetch_papers", return_value=papers), \
+         patch.object(ingest, "filter_new_papers", return_value=papers), \
+         patch.object(ingest, "process_paper", side_effect=["accepted", "pdf_error"]), \
+         patch.object(ingest, "save_cursor") as mock_save:
+        result = ingest.main()
+    mock_save.assert_called_once_with("2026-07-10T00:00:00Z")
+    assert result["counts"] == {"accepted": 1, "pdf_error": 1}
+
+
 def test_main_does_not_advance_cursor_when_no_new_papers():
     with patch.object(ingest, "load_cursor", return_value="2026-07-12T00:00:00Z"), \
          patch.object(ingest, "fetch_papers", return_value=[]), \

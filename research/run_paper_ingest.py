@@ -99,6 +99,12 @@ def main(max_results: int = 50) -> dict:
     for paper in new_papers:
         status = process_paper(paper)
         counts[status] = counts.get(status, 0) + 1
+        # pdf_error는 대부분 방금 제출돼 arXiv가 아직 PDF를 생성 못한 경우(타이밍
+        # 문제, 내용 문제 아님) — 커서를 이 논문 너머로 전진시키지 않아 다음
+        # 사이클에 재시도되게 한다. 나머지 상태(accepted/spec_error/coverage_reject/
+        # codegen_error/smoke_reject)는 내용 기반 최종 판정이라 그대로 전진.
+        if status == "pdf_error":
+            continue
         if max_published is None or paper["published"] > max_published:
             max_published = paper["published"]
 

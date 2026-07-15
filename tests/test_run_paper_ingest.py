@@ -24,6 +24,28 @@ def test_process_paper_accepted_writes_module_file(tmp_path):
     assert "1234.5678" in files[0].read_text()
 
 
+def test_process_paper_strips_markdown_fence_before_smoke_check_and_write(tmp_path):
+    fenced_code = (
+        "```python\n"
+        "NAME = 'x'\n"
+        "DESCRIPTION = 'd'\n"
+        "def signal_fn(o,f,a,p):\n"
+        "    return {'entry': [], 'eligible': []}\n"
+        "```"
+    )
+    with patch.object(ingest, "_HYPOTHESES_DIR", tmp_path), \
+         patch.object(ingest, "download_pdf_text", return_value="paper text"), \
+         patch.object(ingest, "extract_spec", return_value={"asset_class": "equity_intraday", "signal_description": "d"}), \
+         patch.object(ingest, "rejection_reason", return_value=None), \
+         patch.object(ingest, "generate_signal_code", return_value=fenced_code), \
+         patch.object(ingest, "smoke_check", return_value=(True, "")):
+        status = ingest.process_paper(_paper())
+    assert status == "accepted"
+    files = list(tmp_path.glob("*.py"))
+    assert len(files) == 1
+    assert "```" not in files[0].read_text()
+
+
 def test_process_paper_coverage_reject_logs_and_skips_codegen(tmp_path):
     rejected_path = tmp_path / "rejected.jsonl"
     with patch.object(ingest, "_REJECTED_PATH", rejected_path), \

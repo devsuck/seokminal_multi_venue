@@ -40,6 +40,15 @@ def _slug(title: str) -> str:
     return s[:40]
 
 
+def _strip_code_fence(text: str) -> str:
+    """LLM이 프롬프트 지시를 무시하고 마크다운 코드펜스(```python 등)로 감싼 응답을 벗겨낸다."""
+    stripped = text.strip()
+    match = re.match(r"^```(?:\w+)?\s*\n?(.*?)\n?```$", stripped, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return stripped
+
+
 def process_paper(paper: dict) -> str:
     arxiv_id, title = paper["id"], paper["title"]
 
@@ -61,7 +70,7 @@ def process_paper(paper: dict) -> str:
         return "coverage_reject"
 
     try:
-        code = generate_signal_code(spec)
+        code = _strip_code_fence(generate_signal_code(spec))
     except Exception as e:
         _log_rejected(arxiv_id, title, "codegen", str(e))
         return "codegen_error"

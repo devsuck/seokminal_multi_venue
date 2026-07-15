@@ -471,3 +471,114 @@
 
 ### 막힌 부분/결정사항
 - 없음 — absorption 이식은 스콥 작아 SDD 풀파이프라인 없이 직접 구현(TDD, 기존 5신호 패턴 그대로 재사용), 세션 내 완결
+
+---
+
+## 2026-07-12: BTC/ETH 오더플로우 전부 REJECT → 컨텍스트 게이트 신규 검증 → 여전히 REJECT (결론)
+
+### 완료된 작업
+- 기존 `orderflow_futures.py` 6신호(footprint_imbalance/absorption/cvd_divergence/confluence/stop_run 3horizon)를 NQ/MNQ용이 아니라 이미 수집돼있던 BTC/ETH 틱데이터(HL, 2026-07-10~12)에 일회성 재적용(`research/run_orderflow_futures_on_btc.py`) → **14개 전부 REJECT**(BH-FDR survivors 전부 False)
+- "오더플로우만 보고 매매하는 트레이더 없다"는 논의 후, 실전 트레이더가 쓰는 컨텍스트 필터(상위TF트렌드/키레벨/VWAP)를 게이트로 얹어 재검증하기로 함 — 브레인스토밍→스펙(`docs/superpowers/specs/2026-07-12-orderflow-context-gate-btc-design.md`)→플랜(`docs/superpowers/plans/2026-07-12-orderflow-context-gate-btc.md`, 사용자 변경요청 없이 그대로 승인)→subagent-driven 5태스크 구현
+- 게이트 모델: 트렌드+키레벨+VWAP **3/3 만장일치**(2/3 다수결 아님)라야 bias 성립, killzone(NY오픈) 안이고 기존 confluence가 같은 방향일 때만 진입. 신규지표 발명 없이 기존 `market_structure`/`swings`/`killzone_indices`(ICT primitives)만 재사용
+- 신규 모듈 `research/hypotheses/orderflow_context_gate.py`: `build_ohlc_bars`/`resample_bars`(바 빌더) → `build_trend_filter`/`build_key_level_filter`(15분봉) + `build_vwap_filter`(60초버킷) → `build_gated_confluence_signals`(전체조립, 15분봉신호를 60초버킷에 broadcast)
+- 태스크 1~5 전부 태스크리뷰 클린(Minor만, Critical/Important 0) → **최종 브랜치리뷰(opus)에서 Critical 발견**: `resample_bars`가 15분봉을 구간시작 타임스탬프로 찍는데, `_broadcast_15m_to_60s`가 그 신호(구간종가로 계산됨)를 같은 구간시작부터 바로 적용 — 봉이 마감되기 전에 그 봉의(아직 알 수 없는) 신호가 새어들어가는 룩어헤드. p-value를 부풀리는 방향이라 이 DORMANT 스크립트의 존재이유(통계적 유의미성 검증) 자체를 무효화하는 결함
+- 수정: `_broadcast_15m_to_60s`가 `signal_15m[j]`(형성중인 현재봉) 대신 `signal_15m[j-1]`(직전에 마감된 봉)을 쓰도록 — 경계케이스 직접 트레이스로 검증. 스펙 문서에도 "룩어헤드 금지" 조항 명시적으로 추가. 화이트박스 회귀테스트 신규 추가(`test_broadcast_15m_to_60s_uses_previous_closed_bar_not_current_forming_bar`) — 버그 있는 코드로 되돌리면 fail, 고친 코드면 pass 직접 확인. 재리뷰(opus) READY TO MERGE 확정
+- **최종 결과: 게이트를 얹어도 여전히 에지 없음** — BTC:gated_confluence 0트레이드, ETH:gated_confluence 1트레이드(p=0.2834, BH-FDR survivor 아님). 수정 전엔 룩어헤드 덕에 ETH가 survivor로 잘못 표시됐었는데, 버그 제거 후 사라짐 — "컨텍스트 필터가 오더플로우 신호를 구할 것"이라는 가설 자체가 REJECT
+- 전체 스위트: 944 passed / 4 failed(문서화된 pre-existing만: test_auth.py×3, test_backtest_happy_path)
+
+### 변경된 파일
+- `research/run_orderflow_futures_on_btc.py`(신규 이후 수정) — BTC/ETH 재적용 + gated_confluence 실행 + 신규 BH-FDR 풀(기존 14개 배치와 안 섞음, 사후 가설풀 오염 방지) 별도 출력
+- `research/hypotheses/orderflow_context_gate.py`(신규) — 바빌더/트렌드/키레벨/VWAP필터/게이트조립
+- `tests/test_orderflow_context_gate.py`(신규, 15개)
+- 커밋: `2d0dc79..1a3bc2d`(main 직접, 11커밋 — BTC재적용 1 + 게이트구현 5 + 룩어헤드수정 3 + 문서 2)
+
+### 다음 할 일
+- 이 트랙 결론 남: BTC/ETH 오더플로우(원시 + 컨텍스트게이트 둘 다) REJECT 확정. 재시도하려면 새로운 근본적으로 다른 아이디어 필요 — 같은 신호군 파라미터 튜닝은 금지(이미 여러 세션에 걸쳐 반복 확인된 방법론)
+- 스코프 밖으로 명시적으로 남겨둔 것: NQ/MNQ 이식(원시틱 미저장 구조라 별개 결정 필요), POC/value area 필터(VWAP 단독 검증 우선), ICT 프리셋(OTE/Unicorn/iFVG/CISD/SMT) 재투입(이미 주식에서 사망 확정)
+- IB Client Portal `CME Real-Time (NP,L2)` 구독 신청은 여전히 미완(사용자 직접) — NQ/MNQ 하네스는 이 구독 없이는 depth 틱 검증 불가, 별도 트랙으로 계속 대기중
+
+### 막힌 부분/결정사항
+- 없음. 룩어헤드 버그 발견 시 "결과 보고 튜닝 금지" 원칙과 별개로(이건 버그 수정이지 파라미터 조정이 아님) 스펙 문서 먼저 명확화한 뒤 코드 수정 → 재검증 → 재리뷰까지 사용자 확인 없이 진행(세션 시작 시 위임된 continuous-execution 권한 범위 내)
+
+---
+
+## 2026-07-12: 골드 데이터소스 탐색(HL xyz:GOLD vs IB 1OZ/SI) — 결론 안 남, 다음 세션 재확인 필요
+
+### 완료된 작업
+- 위 컨텍스트게이트 REJECT 논의 중 사용자가 "하이퍼리퀴드 gold로 오더플로우 작업 가능한가?" 질문 → `xyz:GOLD`(HL 빌더퍼프, BTC/ETH 같은 네이티브 메이저와 다른 서브dex) 라이브 프로브(45초, scratchpad `probe_hl_gold.py`, 커밋 안 함): 구독 자체는 됨, 체결빈도 BTC(175건/45초) 대비 xyz:GOLD는 30건/45초로 ~6배 낮음. 진행하려면 `cost_model.py`의 `HL_SLIPPAGE_BUCKET`/`HL_SPREAD_BUCKET`을 `"major"`가 아니라 `"alt"`로 써야 함(현재는 아무 코드도 안 건드림, 조사만)
+- 사용자가 IB 구독목록 제공 — "ICE Futures US Gold and Silver (L2)"가 Fee Waived로 이미 구독돼있음 확인. IB Gateway 포트 확인(기본 7496/7497/4001/4002 전부 거부 → 사용자가 7498 알려줌)
+- `reqMatchingSymbols`/`reqContractDetails`로 실제 심볼 조사(scratchpad `probe_ib_gold.py`): 골드는 심볼 `1OZ`(1온스 데일리), 실버는 `SI` — 둘 다 `exchange="COMEX"`로 등록돼있음(구독 번들 이름은 "ICE"인데 실제 라우팅은 COMEX라는 점 발견). 최초 추측했던 `exchange="NYBOT"`/`"ICEUS"`는 전부 에러 200(No security definition)
+- 근월물 conId 확보: `1OZQ6`(만기 2026-07-29, multiplier=1, conId=753716613), `SIN6`(만기 2026-07-29, multiplier=1000, conId=505405746)
+- `1OZ`/`SI` 라이브 견적 요청(`probe_ib_gold2.py`) → 전부 `nan`, 뎁스도 빈값, 에러이벤트도 0개
+- 이미 유료구독(CME Real-Time NP,L2, 사용자 미보유) 필요한 것으로 알려진 `GC`(정식 COMEX 골드)와 `1OZ`를 나란히 비교(`probe_ib_gold3.py`→`probe_ib_gold4.py`, conId로 특정: GC=`GCN6` conId=760200536)해서 "권한없음 에러가 뜨는 쪽 vs 안 뜨는 쪽"으로 구분 시도 → **GC/1OZ 둘 다 완전히 조용함(에러 0, 견적 0)** — 오늘(2026-07-12)이 일요일이라 CME/COMEX Globex 자체가 닫혀있어서 구독권한 체크 자체가 안 일어나는 것으로 보임. 이 방법으론 "1OZ가 무료번들에 포함되는지" 결론 못 냄
+
+### 변경된 파일
+- 없음(전부 scratchpad 조사 스크립트, 커밋 안 함 — `probe_hl_gold.py`, `probe_ib_gold.py`~`probe_ib_gold4.py`)
+
+### 다음 할 일
+- **평일 마켓 열린 시간에 재확인 필요**: `probe_ib_gold4.py` 패턴(GC vs 1OZ 나란히 reqMktData/reqMktDepth, errorEvent 리스너)을 그대로 재실행 — GC만 에러(구독필요) 뜨고 1OZ는 조용하면 무료번들 확인됨, 둘 다 에러 뜨면 1OZ도 별도구독 필요, 둘 다 조용하고 견적도 나오면 둘 다 무료로 확정
+- 위 확인 끝나면 사용자와 HL `xyz:GOLD`(체결빈도 낮음, cost model alt티어 필요) vs IB `1OZ`/`SI`(무료여부 미확정) 중 어느 쪽으로 갈지 결정 — 아직 코드 변경 없음, 순수 조사단계
+- IB로 갈 경우 `orderflow/ib_adapter.py`의 `_FUTURES_SYMBOLS` 매핑에 `1OZ`/`SI` 추가 필요(미착수)
+- HL로 갈 경우 `research/run_hl_orderflow_tick_collect.py`의 `COINS`에 `"xyz:GOLD"` 추가해서 tmux 상시수집 필요(미착수)
+
+### 막힌 부분/결정사항
+- 일요일 마켓휴장이 "구독권한 없음"과 구분 안 돼서 결론 보류. 다음 세션 평일에 `probe_ib_gold4.py` 재실행이 최우선
+
+### 추가: IBKR 스팟골드(XAUUSD, CMDTY) 발견 — COMEX선물과 별개 옵션
+- 사용자가 "IBKR 런던 스팟골드"를 물어봐서 확인(`probe_ib_spotgold.py`, `probe_ib_spotgold2.py`, scratchpad, 커밋 안 함) — COMEX선물(`GC`/`1OZ`)과 완전히 별개인 IB 자체상품 확인됨
+  - `XAUUSD`(secType=`CMDTY`, exchange=`SMART`, conId=69067924), `XAGUSD`(conId=77124483) 둘 다 존재
+  - `reqMktDepthExchanges()`로 `SMART/CMDTY`가 `serviceDataType='Deep'`(L2뎁스 지원 목록)에 있음 확인 — 상품 구조상 뎁스 미지원이라 빈값 나온 게 아니라 순전히 휴장 때문(오늘 결과 bid/ask=-1, 뎁스 빈값 — COMEX FUT/FOP도 지원목록엔 있지만 지금 다 휴장이라 빈값인 것과 동일 패턴)
+  - 무료여부/실견적 미확인 — 평일 재확인 필요
+
+### 다음 할 일(추가)
+- 평일 재확인 시 `probe_ib_gold4.py`(COMEX GC vs 1OZ)뿐 아니라 `probe_ib_spotgold.py`(XAUUSD/XAGUSD)도 같이 재실행 — 셋 다 견적/뎁스 살아있는지, 에러이벤트로 구독필요 여부 뜨는지 한번에 비교
+
+---
+
+## 2026-07-12: 크로스벤뉴 오더북 스큐 가설 — SDD 6태스크 전부 완료, 머지레디
+
+### 완료된 작업
+- 브레인스토밍→스펙(`docs/superpowers/specs/2026-07-12-cross-venue-skew-design.md`, 11c33bf) 승인 후 플랜 작성, subagent-driven-development로 6태스크 전부 실행
+- Task1 수집기 → Task2 스냅샷로딩/임밸런스 → Task3 벤뉴간그리드정렬/가격시계열 → Task4 스큐괴리/z-score스파이크 → Task5 다중호라이즌라벨링 → Task6 검증러너(신규 독립 BH-FDR 풀)
+- Task3/4/5는 각 1회 fix-and-re-review(전부 "non-discriminating test" 패턴 — 잘못된 구현에서도 통과하는 테스트, mutation testing으로 검증 후 수정)
+- 최종 브랜치 리뷰(opus, 11c33bf..4e7fac5, 9커밋): Critical/Important 0건, 머지레디 확정. 전체 스위트 974 passed / 4 pre-existing 실패만(test_auth.py×3-4, test_backtest_happy_path — 무관)
+- main 직접커밋 컨벤션이라 별도 브랜치 없음 — 9커밋 전부 이미 main에 랜딩. 플랜 문서(`docs/superpowers/plans/2026-07-12-cross-venue-skew.md`)는 태스크 스코프 밖이라 뒤늦게 별도커밋(50fbff7)
+
+### 변경된 파일
+- `research/run_cross_venue_skew_collect.py` (신규, da35014) — 벤뉴×코인 6개 독립 재연결루프 수집기
+- `research/hypotheses/cross_venue_skew.py` (신규, 92fabb6~854ea9c) — load_venue_snapshots/build_imbalance/align_venues/build_price_series/build_skew_divergence/build_spike_signal/build_labels_multi_horizon
+- `research/run_cross_venue_skew_validate.py` (신규, 4e7fac5) — run_stop_run 패턴 검증러너, BTC×ETH×3호라이즌 최대 6개 p-value 신규 BH-FDR 풀
+- `tests/test_run_cross_venue_skew_collect.py`(7), `tests/test_cross_venue_skew.py`(23) — 30개 전부 통과
+- `docs/superpowers/plans/2026-07-12-cross-venue-skew.md` (신규, 50fbff7)
+
+### 다음 할 일
+- **실데이터 축적 필요** — 검증러너는 아직 BLOCKED 상태(3벤뉴 실데이터 없음). `tmux new -s cross-venue-skew-tick`으로 `research/run_cross_venue_skew_collect.py` 상시 실행 시작해야 `research/run_cross_venue_skew_validate.py`가 의미있는 결과 냄(polymarket-tick/hl-orderflow-tick과 동일 패턴)
+- 플랜 문서의 Task6 검증커맨드 오타(`python3 research/run_cross_venue_skew_validate.py` → `python3 -m research.run_cross_venue_skew_validate`가 맞음, repo-wide sys.path 컨벤션) — 사소, 필요시 정정
+
+### 막힌 부분/결정사항
+- 없음. 코드/테스트/리뷰 전부 클린 완료. 유일한 남은 게이트는 데이터 축적(시간 문제일 뿐 결정사항 아님)
+- 작업 중 발견한 무관한 pre-existing uncommitted 변경(`jarvis/_state/*`, `research/agents/experiment_registry.jsonl`, `research/autoresearch/*`, 위 골드조사 섹션 포함 이 파일 자체의 기존 62줄)은 다른 세션/백그라운드 tmux 에이전트(seokminal-agent-*, polymarket-tick, hl-orderflow-tick) 소유로 판단, 손대지 않음
+
+## 2026-07-15: 논문 기반 알파 마이닝 파이프라인 (Phase 133) — SDD 9태스크 전부 완료
+
+### 완료된 작업
+- 브레인스토밍→스펙(`docs/superpowers/specs/2026-07-15-paper-alpha-mining-design.md`) 승인 후 플랜 작성(`docs/superpowers/plans/2026-07-15-paper-alpha-mining.md`, e18921b), subagent-driven-development로 9태스크 전부 실행
+- arXiv q-fin(PM/TR/ST/CP) 논문 자동 폴링(커서dedup, 재시도/백오프) → PDF텍스트추출 → LLM스펙추출(Claude CLI 서브프로세스 재사용, 신규 API키 불필요) → 자산커버리지필터(equity_intraday만 통과) → LLM코드생성(few-shot: 기존 strategies.py) → 스모크체크(exec+fixture OHLC, 크래시/전부-False·True/NaN/타입 차단) → `research/hypotheses/papers/`에 저장. 통과 못한 논문은 사유와 함께 `research/data/paper_pipeline/rejected.jsonl`에 기록
+- 별도 러너(`run_paper_hypothesis_validate.py`)가 통과분을 기존 `runner.py` 제네릭 검증엔진에 태우고, 논문가설 전용 신규 격리 BH-FDR 풀(alpha=0.1)로 correction — 기존 수동가설 풀과 절대 안 섞음. CANDIDATE 나와도 라이브 집행은 기존 `arm_criteria` 게이트 그대로 통과해야 함
+- Task 1/2/4/5/7/8은 각 1회 fix-and-re-review(마크다운 코드펜스 미제거, retry off-by-one, shape-validation 미처리 TypeError, 파일단위 exception 미격리 등 — 전부 plan 코드 자체의 robustness gap, 의도충돌 아님으로 판단 후 직접 수정). Task 3/6은 첫 리뷰 클린
+- 전체 스위트 1074 passed / 4 pre-existing 실패만(test_auth.py×3, test_backtest_happy_path — 무관), main 직접커밋 컨벤션이라 별도 브랜치 없음
+
+### 변경된 파일
+- `research/papers/{__init__,llm_cli,arxiv_fetcher,coverage_filter,extract_spec,codegen_signal,smoke_check}.py` (신규)
+- `research/run_paper_ingest.py`, `research/run_paper_hypothesis_validate.py` (신규)
+- `pyproject.toml` (pdfplumber 의존성 + packages.find에 `research*` 추가)
+- `tests/test_{llm_cli,arxiv_fetcher,coverage_filter,extract_spec,smoke_check,codegen_signal,run_paper_ingest,run_paper_hypothesis_validate}.py` (신규)
+
+### 다음 할 일
+- `python -m research.run_paper_ingest` 실제 1회 실행해서 라이브 arXiv 논문으로 파이프라인 end-to-end 검증(코드생성 품질/스모크체크 통과율 확인)
+- 통과 가설 쌓이면 `python -m research.run_paper_hypothesis_validate`로 검증
+
+### 막힌 부분/결정사항
+- v1은 equity_intraday만(크립토/선물 코드생성 범위 밖), OS-level cron 자동화는 범위 밖(수동 트리거만)
+- 최종 whole-branch 리뷰는 아직 미실행 — 다음 세션에서 `scripts/review-package e18921b <HEAD>`로 진행
+- 스팟골드가 무료+뎁스 나오면 COMEX선물 경로(1OZ 무료여부 불확실)보다 더 확실한 대안일 수 있음 — 평일 데이터로 최종 결정

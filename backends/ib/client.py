@@ -1,5 +1,6 @@
 # backends/ib/client.py
 import asyncio
+import datetime as dt
 import os
 from collections.abc import AsyncIterator
 
@@ -16,13 +17,13 @@ class IBClient:
     def __init__(
         self,
         host: str | None = None,
-        port: int = 7497,
+        port: int | None = None,
         client_id: int = 1,
         ib: IB | None = None,
     ) -> None:
         # WSL 등에서 TWS가 다른 호스트에 있을 때 IB_HOST로 지정 (기본 로컬)
         self._host = host or os.environ.get("IB_HOST", "127.0.0.1")
-        self._port = port
+        self._port = port if port is not None else int(os.environ.get("IB_PORT", "7497"))
         self._client_id = client_id
         self._ib = ib if ib is not None else IB()
 
@@ -127,6 +128,17 @@ class IBClient:
         await self._ib.connectAsync(self._host, self._port, self._client_id, timeout=15)
         contract = Future(symbol, expiry, exchange)
         await self._ib.qualifyContractsAsync(contract)
+        if not contract.conId:
+            # 만기월 미지정 시 qualify가 ambiguous로 실패(conId=0) — 최근월물을 직접 골라온다.
+            details = await self._ib.reqContractDetailsAsync(contract)
+            if not details:
+                raise ValueError(f"IB: no contract details resolved for {symbol!r} future ({exchange!r})")
+            today = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d")
+            candidates = sorted(details, key=lambda d: d.contract.lastTradeDateOrContractMonth)
+            contract = next(
+                (d.contract for d in candidates if d.contract.lastTradeDateOrContractMonth >= today),
+                candidates[-1].contract,
+            )
         bars = await self._ib.reqHistoricalDataAsync(
             contract,
             endDateTime=end_date,

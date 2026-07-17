@@ -2,6 +2,7 @@
 import datetime as dt
 
 import pytest
+from ib_async.contract import Future
 from ib_async.objects import BarData
 
 from backends.ib.client import IBClient
@@ -35,19 +36,27 @@ class FakeTicker:
 
 
 class FakeIB:
-    def __init__(self, batches=None, historical_bars=None):
+    def __init__(self, batches=None, historical_bars=None, contract_details=None):
         self.connect_calls: list[tuple] = []
         self.qualify_calls: list[tuple] = []
+        self.contract_details_calls: list[str] = []
         self.req_calls: list[tuple] = []
         self.historical_calls: list[tuple] = []
         self._ticker = FakeTicker(batches if batches is not None else [])
         self._historical_bars = historical_bars if historical_bars is not None else []
+        self._contract_details = contract_details or {}
 
     async def connectAsync(self, host, port, client_id, timeout=4):
         self.connect_calls.append((host, port, client_id))
 
     async def qualifyContractsAsync(self, contract):
         self.qualify_calls.append((contract.symbol, contract.exchange, contract.currency))
+        if contract.symbol not in self._contract_details:
+            contract.conId = 1  # 정상 qualify 시뮬레이션(단일 매치)
+
+    async def reqContractDetailsAsync(self, contract):
+        self.contract_details_calls.append(contract.symbol)
+        return self._contract_details.get(contract.symbol, [])
 
     def reqTickByTickData(self, contract, tick_type):
         self.req_calls.append((contract.symbol, contract.exchange, contract.currency, tick_type))
@@ -152,6 +161,37 @@ async def test_get_daily_bars_future_raises_on_empty():
     client = IBClient(ib=fake_ib)
     with pytest.raises(ValueError, match="ES"):
         await client.get_daily_bars_future("ES", "CME", "202509", end_date="", duration="1 Y")
+
+
+async def test_get_daily_bars_future_resolves_front_month_when_expiry_omitted():
+    """만기월 미지정(expiry="")이면 qualify가 ambiguous로 실패(conId=0) —
+    reqContractDetailsAsync 후보 중 만기 지나지 않은 최근월물을 골라 조회해야 한다."""
+    bar = BarData(date=dt.date(2025, 1, 2), open=5900.0, high=5920.0, low=5880.0, close=5910.0, volume=12345.0)
+
+    near_expiry = Future(symbol="NQ", exchange="CME", currency="USD")
+    near_expiry.conId = 111
+    near_expiry.lastTradeDateOrContractMonth = "20260918"
+
+    expired = Future(symbol="NQ", exchange="CME", currency="USD")
+    expired.conId = 222
+    expired.lastTradeDateOrContractMonth = "20260315"  # 이미 만기 지남 -> 제외돼야 함
+
+    fake_ib = FakeIB(
+        historical_bars=[bar],
+        contract_details={"NQ": [FakeContractDetails(expired), FakeContractDetails(near_expiry)]},
+    )
+    client = IBClient(ib=fake_ib)
+
+    bars = await client.get_daily_bars_future("NQ", "CME", "", end_date="", duration="1 Y")
+
+    assert bars == [bar]
+    assert fake_ib.contract_details_calls == ["NQ"]
+    assert fake_ib.historical_calls[0][0:2] == ("NQ", "CME")
+
+
+class FakeContractDetails:
+    def __init__(self, contract):
+        self.contract = contract
 
 
 async def test_get_daily_bars_option_returns_bars():

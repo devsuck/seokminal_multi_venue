@@ -1,4 +1,5 @@
 """KIS broker adapter. Routes XKRX instruments to KIS REST + WebSocket."""
+import asyncio
 import time
 from collections.abc import AsyncIterator
 
@@ -6,7 +7,7 @@ from backends.kis.auth import KISAuth
 from backends.kis.order_client import KISOrderClient
 from backends.kis.ws_auth import get_approval_key
 from backends.kis.ws_client import KISWebSocketClient
-from live_engine.broker_interface import BrokerInterface, OrderResult, PriceTick
+from live_engine.broker_interface import BrokerInterface, OrderResult, Position, PriceTick
 
 _TRADE_FIELD_MAP = {
     "stck_prpr": "price",   # 주식현재가
@@ -85,6 +86,20 @@ class KISBroker(BrokerInterface):
             price=int(limit_price) if limit_price else None,
         )
         return OrderResult(**result)
+
+    async def get_position(self, instrument_id: str) -> Position | None:
+        """Look up the held KIS position for reconciliation (None if flat/unknown)."""
+        code = _instrument_to_code(instrument_id)
+        holdings = await asyncio.to_thread(self._order_client.get_holdings)
+        for h in holdings:
+            if h["code"] == code and h["qty"]:
+                return Position(
+                    instrument_id=instrument_id,
+                    qty=h["qty"],
+                    avg_price=h["avg_price"],
+                    side="LONG",  # KR 현물 계좌는 공매도 불가 — 보유 잔고는 항상 LONG
+                )
+        return None
 
     async def cancel_order(self, order_id: str) -> OrderResult:
         result = self._order_client.cancel_order(order_no=order_id, code="", quantity=0)

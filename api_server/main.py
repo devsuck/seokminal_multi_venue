@@ -1,4 +1,5 @@
 import asyncio
+import dataclasses
 import datetime as dt
 import json
 import os
@@ -72,6 +73,7 @@ from condition_engine.evaluator import ConditionEvaluator
 from condition_engine.indicator_registry import IndicatorRegistry, _BUILDERS as _INDICATOR_BUILDERS
 from api_server import idempotency
 from api_server import oms
+from api_server import order_pnl
 
 CATALOG_PATH = "./catalog"
 BOTS_FILE = Path("./bots.json")
@@ -3127,6 +3129,19 @@ def get_orders_oms(venue: str | None = None, status: str | None = None, limit: i
     return {"orders": oms.list_orders(venue=venue, status=status, limit=limit)}
 
 
+@app.get("/pnl/realized")
+def get_realized_pnl() -> dict:
+    """Cross-venue realized PnL, FIFO-matched from OMS-tracked fills (not the
+    audit log — see order_pnl.py for why). KR fills have no broker-reported
+    price, so those fall back to the originally requested price and come
+    back tagged price_source="estimated" rather than shown as a confirmed
+    fill. fees is a configured bps estimate (fee_model.py), not a
+    broker-reported commission."""
+    fallback = order_pnl.price_fallback_from_audit(read_order_audit(limit=5000))
+    results = order_pnl.compute_realized_pnl(oms.list_orders(limit=5000), fallback)
+    return {"venues": [dataclasses.asdict(r) for r in results]}
+
+
 @app.post("/orders/kr", response_model=KROrderResponse)
 def place_kr_order(req: KROrderRequest) -> KROrderResponse:
     # Route to 모의(KIS_MOCK) or 실전(KIS) creds + server by the paper flag.
@@ -3158,7 +3173,7 @@ def place_kr_order(req: KROrderRequest) -> KROrderResponse:
         )
         record_order(venue="KR", request=req.model_dump(), result=result, status="submitted")
         idempotency.store("KR", req.client_order_id, result)
-        oms.record_event("KR", result)
+        oms.record_event("KR", result, symbol=req.code, side=req.side)
         return KROrderResponse(**result)
     except (requests.ConnectionError, requests.Timeout) as exc:
         record_order(venue="KR", request=req.model_dump(), result=None, status="error")
@@ -3254,7 +3269,11 @@ async def place_us_order(req: USOrderRequest) -> USOrderResponse:
             idempotency.store("US", req.client_order_id, resp)
             # resp.order_id is a 0 placeholder (Alpaca id는 UUID, USOrderResponse.order_id는 int) —
             # OMS엔 실제 Alpaca id로 기록해야 서로 다른 주문이 같은 키("US", 0)로 뭉개지지 않음.
-            oms.record_event("US", {**resp, "order_id": r["id"]})
+            # filled_avg_price는 resp에 없고 raw Alpaca 응답 r에만 있음 — PnL 매칭용으로 같이 전달.
+            oms.record_event(
+                "US", {**resp, "order_id": r["id"], "filled_avg_price": r.get("filled_avg_price")},
+                symbol=req.symbol, side=req.side,
+            )
             return USOrderResponse(**resp)
         except HTTPException:
             raise
@@ -3273,7 +3292,7 @@ async def place_us_order(req: USOrderRequest) -> USOrderResponse:
         )
         record_order(venue="US", request=req.model_dump(), result=result, status="submitted")
         idempotency.store("US", req.client_order_id, result)
-        oms.record_event("US", result)
+        oms.record_event("US", result, symbol=req.symbol, side=req.side)
         return USOrderResponse(**result)
     except (ConnectionRefusedError, OSError) as exc:
         record_order(venue="US", request=req.model_dump(), result=None, status="error")
@@ -3349,7 +3368,8 @@ async def place_option_order(req: OptionOrderRequest) -> OptionOrderResponse:
         )
         record_order(venue="US_OPTIONS", request=req.model_dump(), result=result, status="submitted")
         idempotency.store("US_OPTIONS", req.client_order_id, result)
-        oms.record_event("US_OPTIONS", result)
+        opt_symbol = f"{req.symbol} {req.expiry} {req.strike}{req.right}"
+        oms.record_event("US_OPTIONS", result, symbol=opt_symbol, side=req.side)
         return OptionOrderResponse(**result)
     except (ConnectionRefusedError, OSError) as exc:
         record_order(venue="US_OPTIONS", request=req.model_dump(), result=None, status="error")

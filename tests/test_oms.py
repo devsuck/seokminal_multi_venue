@@ -60,3 +60,43 @@ def test_list_orders_respects_limit():
     for i in range(5):
         oms.record_event("KR", {"order_id": str(i), "status": "SUBMITTED", "filled": 0.0, "remaining": 1.0})
     assert len(oms.list_orders(limit=2)) == 2
+
+
+def test_symbol_and_side_are_captured_at_placement_and_stick():
+    oms.record_event("KR", {"order_id": "1", "status": "SUBMITTED", "filled": 0.0, "remaining": 1.0},
+                      symbol="005930", side="BUY")
+    order = oms.get_order("KR", "1")
+    assert order["symbol"] == "005930"
+    assert order["side"] == "BUY"
+
+    # 상태 조회 콜은 symbol/side 없이 오지만 기존 값이 유지되어야 함.
+    oms.record_event("KR", {"order_id": "1", "status": "FILLED", "filled": 1.0, "remaining": 0.0})
+    order = oms.get_order("KR", "1")
+    assert order["symbol"] == "005930"
+    assert order["side"] == "BUY"
+
+
+def test_price_captured_from_avg_fill_price():
+    oms.record_event("US", {"order_id": "1", "status": "SUBMITTED", "filled": 0.0, "remaining": 1.0})
+    assert oms.get_order("US", "1")["price"] is None
+
+    oms.record_event("US", {"order_id": "1", "status": "FILLED", "filled": 1.0, "remaining": 0.0,
+                             "avg_fill_price": 190.5})
+    assert oms.get_order("US", "1")["price"] == 190.5
+
+
+def test_price_captured_from_filled_avg_price_alpaca_field():
+    oms.record_event("US", {"order_id": "1", "status": "FILLED", "filled": 1.0, "remaining": 0.0,
+                             "filled_avg_price": 42.0})
+    assert oms.get_order("US", "1")["price"] == 42.0
+
+
+def test_price_still_refines_after_terminal_state():
+    # IB는 Filled 상태가 avg_fill_price보다 먼저 찍힐 수 있음 — 종결 후에도
+    # price는 갱신돼야 늦게 온 실 체결가를 놓치지 않음(status/filled는 잠김).
+    oms.record_event("US", {"order_id": "1", "status": "FILLED", "filled": 1.0, "remaining": 0.0})
+    oms.record_event("US", {"order_id": "1", "status": "FILLED", "filled": 1.0, "remaining": 0.0,
+                             "avg_fill_price": 101.25})
+    order = oms.get_order("US", "1")
+    assert order["price"] == 101.25
+    assert order["status"] == "FILLED"

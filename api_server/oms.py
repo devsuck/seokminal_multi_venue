@@ -32,9 +32,20 @@ def _derive_status(raw_status: str | None, filled: float, remaining: float) -> s
     return "OPEN"
 
 
-def record_event(venue: str, result: dict) -> None:
+def record_event(venue: str, result: dict, *, symbol: str | None = None, side: str | None = None) -> None:
     """Feed a broker response (place/cancel/status result) through the state
-    machine. No-op if there's no order_id (order never reached the broker)."""
+    machine. No-op if there's no order_id (order never reached the broker).
+
+    ``symbol``/``side`` are only known at placement time (the request, not
+    the broker response) — callers pass them on the place call and omit them
+    on cancel/status calls; once set they stick. ``price`` is pulled from
+    ``avg_fill_price``/``filled_avg_price`` when the broker response carries
+    one (IB, Alpaca) — KIS never does, so KR orders stay priceless here and
+    the PnL layer falls back to the originally requested price for those.
+    Price/symbol/side are metadata, not state, so — unlike status/filled/
+    remaining — they keep refining even after the order reaches a terminal
+    state (a late status poll can be the first call that finally reports the
+    real fill price)."""
     order_id = result.get("order_id")
     if not order_id:
         return
@@ -43,14 +54,13 @@ def record_event(venue: str, result: dict) -> None:
     filled = float(result.get("filled") or 0.0)
     remaining = float(result.get("remaining") or 0.0)
     status = _derive_status(result.get("status"), filled, remaining)
+    price = result.get("avg_fill_price")
+    if price is None:
+        price = result.get("filled_avg_price")
     now = _dt.datetime.now(_dt.UTC).isoformat()
 
     entry = _orders.get(key)
-    if entry is not None and entry["status"] in _TERMINAL:
-        # 종결 상태 이후 들어오는 업데이트는 상태를 덮어쓰지 않음(브로커 쪽 지연/
-        # 모순 응답 방어) — history에만 남겨서 무슨 일이 있었는지는 보이게 한다.
-        entry["history"].append({"ts": now, "status": status, "filled": filled, "remaining": remaining})
-        return
+    already_terminal = entry is not None and entry["status"] in _TERMINAL
 
     if entry is None:
         entry = {
@@ -59,11 +69,27 @@ def record_event(venue: str, result: dict) -> None:
             "status": status,
             "filled": filled,
             "remaining": remaining,
+            "symbol": symbol,
+            "side": side,
+            "price": price,
             "created_ts": now,
             "updated_ts": now,
             "history": [],
         }
         _orders[key] = entry
+    else:
+        if symbol is not None:
+            entry["symbol"] = symbol
+        if side is not None:
+            entry["side"] = side
+        if price is not None:
+            entry["price"] = price
+
+    if already_terminal:
+        # 종결 상태 이후 들어오는 업데이트는 상태/체결량을 덮어쓰지 않음(브로커 쪽
+        # 지연/모순 응답 방어) — history에만 남겨서 무슨 일이 있었는지는 보이게 한다.
+        entry["history"].append({"ts": now, "status": status, "filled": filled, "remaining": remaining})
+        return
 
     entry["status"] = status
     entry["filled"] = filled

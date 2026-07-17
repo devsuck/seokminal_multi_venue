@@ -70,6 +70,8 @@ from kr_universe.client import search_universe, get_universe as _get_kr_universe
 from condition_engine.parser import ConditionParser
 from condition_engine.evaluator import ConditionEvaluator
 from condition_engine.indicator_registry import IndicatorRegistry, _BUILDERS as _INDICATOR_BUILDERS
+from api_server import idempotency
+from api_server import oms
 
 CATALOG_PATH = "./catalog"
 BOTS_FILE = Path("./bots.json")
@@ -2977,6 +2979,7 @@ class KROrderRequest(BaseModel):
     order_type: str     # "MARKET" | "LIMIT"
     price: int | None = None  # required for LIMIT
     paper: bool = True  # True=모의(KIS_MOCK), False=실전(KIS)
+    client_order_id: str | None = None  # 재시도 시 중복 주문 방지 키(선택)
 
 
 class KROrderResponse(BaseModel):
@@ -2998,6 +3001,7 @@ class USOrderRequest(BaseModel):
     order_type: str       # "MARKET" | "LIMIT"
     limit_price: float | None = None  # required for LIMIT
     paper: bool = True    # True=Alpaca 페이퍼, False=IB(TWS) 실계좌
+    client_order_id: str | None = None  # 재시도 시 중복 주문 방지 키(선택)
 
 
 class USOrderResponse(BaseModel):
@@ -3017,6 +3021,7 @@ class OptionOrderRequest(BaseModel):
     order_type: str        # "MARKET" | "LIMIT"
     limit_price: float | None = None  # required for LIMIT
     paper: bool = True     # True=IB paper(7497), False=IB live(7496) — 옵션은 항상 IB
+    client_order_id: str | None = None  # 재시도 시 중복 주문 방지 키(선택)
 
 
 class OptionOrderResponse(BaseModel):
@@ -3115,6 +3120,13 @@ def get_orders_audit(limit: int = 100) -> dict:
     return {"entries": read_order_audit(limit=limit)}
 
 
+@app.get("/orders/oms")
+def get_orders_oms(venue: str | None = None, status: str | None = None, limit: int = 200) -> dict:
+    """Return live order-state-machine view (newest-updated first). In-process
+    only — resets on server restart, unlike the durable /orders/audit trail."""
+    return {"orders": oms.list_orders(venue=venue, status=status, limit=limit)}
+
+
 @app.post("/orders/kr", response_model=KROrderResponse)
 def place_kr_order(req: KROrderRequest) -> KROrderResponse:
     # Route to 모의(KIS_MOCK) or 실전(KIS) creds + server by the paper flag.
@@ -3135,6 +3147,9 @@ def place_kr_order(req: KROrderRequest) -> KROrderResponse:
         raise HTTPException(status_code=400, detail=f"invalid order_type: {req.order_type!r}")
     if req.order_type == "LIMIT" and req.price is None:
         raise HTTPException(status_code=400, detail="price required for LIMIT order")
+    cached = idempotency.get_cached("KR", req.client_order_id)
+    if cached is not None:
+        return KROrderResponse(**cached)
     _check_risk(side=req.side, quantity=req.quantity, price_estimate=req.price)
     try:
         order_client = KISOrderClient(app_key, app_secret, cano, acnt_prdt_cd, mock=req.paper)
@@ -3142,6 +3157,8 @@ def place_kr_order(req: KROrderRequest) -> KROrderResponse:
             req.code, req.side, req.quantity, req.order_type, req.price
         )
         record_order(venue="KR", request=req.model_dump(), result=result, status="submitted")
+        idempotency.store("KR", req.client_order_id, result)
+        oms.record_event("KR", result)
         return KROrderResponse(**result)
     except (requests.ConnectionError, requests.Timeout) as exc:
         record_order(venue="KR", request=req.model_dump(), result=None, status="error")
@@ -3162,6 +3179,7 @@ def cancel_kr_order(order_no: str, req: KRCancelRequest) -> KROrderResponse:
     try:
         order_client = KISOrderClient(app_key, app_secret, cano, acnt_prdt_cd)
         result = order_client.cancel_order(order_no, req.code, req.quantity)
+        oms.record_event("KR", result)
         return KROrderResponse(**result)
     except (requests.ConnectionError, requests.Timeout) as exc:
         raise HTTPException(status_code=503, detail="KIS unreachable") from exc
@@ -3189,7 +3207,23 @@ def get_kr_order_status(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if result is None:
         raise HTTPException(status_code=404, detail=f"order {order_no!r} not found for date {date!r}")
+    oms.record_event("KR", result)
     return KROrderResponse(**result)
+
+
+_ib_order_clients: dict[tuple[str, int, int], IBOrderClient] = {}
+
+
+def _get_ib_order_client(host: str, port: int, client_id: int) -> IBOrderClient:
+    """(host, port, client_id)별 풀링된 IBOrderClient. TWS 핸드셰이크는 최초
+    1회만 — 이후 요청은 기존 연결 재사용(`_ensure_connected`가 이미 연결돼
+    있으면 no-op). 매 요청 connect/disconnect 제거."""
+    key = (host, port, client_id)
+    client = _ib_order_clients.get(key)
+    if client is None:
+        client = IBOrderClient(host=host, port=port, client_id=client_id)
+        _ib_order_clients[key] = client
+    return client
 
 
 @app.post("/orders/us", response_model=USOrderResponse)
@@ -3200,6 +3234,9 @@ async def place_us_order(req: USOrderRequest) -> USOrderResponse:
         raise HTTPException(status_code=400, detail=f"invalid order_type: {req.order_type!r}")
     if req.order_type == "LIMIT" and req.limit_price is None:
         raise HTTPException(status_code=400, detail="limit_price required for LIMIT order")
+    cached = idempotency.get_cached("US", req.client_order_id)
+    if cached is not None:
+        return USOrderResponse(**cached)
     _check_risk(side=req.side, quantity=req.quantity, price_estimate=req.limit_price)
 
     # US 라우팅: 페이퍼=Alpaca(무제한·무TWS), 실계좌=IB(TWS 7496).
@@ -3211,16 +3248,21 @@ async def place_us_order(req: USOrderRequest) -> USOrderResponse:
                                         limit_price=req.limit_price, paper=True))
             record_order(venue="US", request=req.model_dump(), result=r, status="submitted")
             # Alpaca order id is a UUID (str); USOrderResponse.order_id is int → 0 placeholder.
-            return USOrderResponse(order_id=0, status=r["status"],
-                                   filled=float(r.get("filled_qty", 0.0)),
-                                   remaining=float(req.quantity - r.get("filled_qty", 0.0)))
+            resp = {"order_id": 0, "status": r["status"],
+                    "filled": float(r.get("filled_qty", 0.0)),
+                    "remaining": float(req.quantity - r.get("filled_qty", 0.0))}
+            idempotency.store("US", req.client_order_id, resp)
+            # resp.order_id is a 0 placeholder (Alpaca id는 UUID, USOrderResponse.order_id는 int) —
+            # OMS엔 실제 Alpaca id로 기록해야 서로 다른 주문이 같은 키("US", 0)로 뭉개지지 않음.
+            oms.record_event("US", {**resp, "order_id": r["id"]})
+            return USOrderResponse(**resp)
         except HTTPException:
             raise
         except Exception as exc:
             record_order(venue="US", request=req.model_dump(), result=None, status="error")
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    ib_client = IBOrderClient(
+    ib_client = _get_ib_order_client(
         host=os.environ.get("IB_HOST", "127.0.0.1"),
         port=7496,  # live TWS
         client_id=int(os.environ.get("IB_MANUAL_ORDER_CLIENT_ID", "10")),
@@ -3230,6 +3272,8 @@ async def place_us_order(req: USOrderRequest) -> USOrderResponse:
             req.symbol, req.side, req.quantity, req.order_type, req.limit_price
         )
         record_order(venue="US", request=req.model_dump(), result=result, status="submitted")
+        idempotency.store("US", req.client_order_id, result)
+        oms.record_event("US", result)
         return USOrderResponse(**result)
     except (ConnectionRefusedError, OSError) as exc:
         record_order(venue="US", request=req.model_dump(), result=None, status="error")
@@ -3237,31 +3281,28 @@ async def place_us_order(req: USOrderRequest) -> USOrderResponse:
     except Exception as exc:
         record_order(venue="US", request=req.model_dump(), result=None, status="error")
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    finally:
-        await ib_client.close()
 
 
 @app.post("/orders/us/{order_id}/cancel", response_model=USOrderResponse)
 async def cancel_us_order(order_id: int) -> USOrderResponse:
-    ib_client = IBOrderClient(
+    ib_client = _get_ib_order_client(
         host=os.environ.get("IB_HOST", "127.0.0.1"),
         port=int(os.environ.get("IB_PORT", "7497")),
         client_id=int(os.environ.get("IB_MANUAL_ORDER_CLIENT_ID", "10")),
     )
     try:
         result = await ib_client.cancel_order(order_id)
+        oms.record_event("US", result)
         return USOrderResponse(**result)
     except (ConnectionRefusedError, OSError) as exc:
         raise HTTPException(status_code=503, detail="IB TWS not reachable") from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    finally:
-        await ib_client.close()
 
 
 @app.get("/orders/us/{order_id}/status", response_model=USOrderResponse)
 async def get_us_order_status(order_id: int) -> USOrderResponse:
-    ib_client = IBOrderClient(
+    ib_client = _get_ib_order_client(
         host=os.environ.get("IB_HOST", "127.0.0.1"),
         port=int(os.environ.get("IB_PORT", "7497")),
         client_id=int(os.environ.get("IB_MANUAL_ORDER_CLIENT_ID", "10")),
@@ -3270,6 +3311,7 @@ async def get_us_order_status(order_id: int) -> USOrderResponse:
         result = await ib_client.get_order_status(order_id)
         if result is None:
             raise HTTPException(status_code=404, detail=f"IB order {order_id!r} not found")
+        oms.record_event("US", result)
         return USOrderResponse(**result)
     except HTTPException:
         raise
@@ -3277,8 +3319,6 @@ async def get_us_order_status(order_id: int) -> USOrderResponse:
         raise HTTPException(status_code=503, detail="IB TWS not reachable") from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    finally:
-        await ib_client.close()
 
 
 @app.post("/orders/options", response_model=OptionOrderResponse)
@@ -3289,12 +3329,15 @@ async def place_option_order(req: OptionOrderRequest) -> OptionOrderResponse:
         raise HTTPException(status_code=400, detail=f"invalid order_type: {req.order_type!r}")
     if req.order_type == "LIMIT" and req.limit_price is None:
         raise HTTPException(status_code=400, detail="limit_price required for LIMIT order")
+    cached = idempotency.get_cached("US_OPTIONS", req.client_order_id)
+    if cached is not None:
+        return OptionOrderResponse(**cached)
     # 1계약=기초자산 100주 → 리스크 한도(달러 기준)는 계약당 프리미엄*100으로 환산.
     price_estimate = req.limit_price * 100 if req.limit_price is not None else None
     _check_risk(side=req.side, quantity=req.quantity, price_estimate=price_estimate,
                 option_expiry=req.expiry)
 
-    ib_client = IBOrderClient(
+    ib_client = _get_ib_order_client(
         host=os.environ.get("IB_HOST", "127.0.0.1"),
         port=7497 if req.paper else 7496,
         client_id=int(os.environ.get("IB_OPTION_ORDER_CLIENT_ID", "12")),
@@ -3305,6 +3348,8 @@ async def place_option_order(req: OptionOrderRequest) -> OptionOrderResponse:
             req.side, req.quantity, req.order_type, req.limit_price,
         )
         record_order(venue="US_OPTIONS", request=req.model_dump(), result=result, status="submitted")
+        idempotency.store("US_OPTIONS", req.client_order_id, result)
+        oms.record_event("US_OPTIONS", result)
         return OptionOrderResponse(**result)
     except (ConnectionRefusedError, OSError) as exc:
         record_order(venue="US_OPTIONS", request=req.model_dump(), result=None, status="error")
@@ -3312,31 +3357,28 @@ async def place_option_order(req: OptionOrderRequest) -> OptionOrderResponse:
     except Exception as exc:
         record_order(venue="US_OPTIONS", request=req.model_dump(), result=None, status="error")
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    finally:
-        await ib_client.close()
 
 
 @app.post("/orders/options/{order_id}/cancel", response_model=OptionOrderResponse)
 async def cancel_option_order(order_id: int) -> OptionOrderResponse:
-    ib_client = IBOrderClient(
+    ib_client = _get_ib_order_client(
         host=os.environ.get("IB_HOST", "127.0.0.1"),
         port=int(os.environ.get("IB_PORT", "7497")),
         client_id=int(os.environ.get("IB_OPTION_ORDER_CLIENT_ID", "12")),
     )
     try:
         result = await ib_client.cancel_order(order_id)
+        oms.record_event("US_OPTIONS", result)
         return OptionOrderResponse(**result)
     except (ConnectionRefusedError, OSError) as exc:
         raise HTTPException(status_code=503, detail="IB TWS not reachable") from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    finally:
-        await ib_client.close()
 
 
 @app.get("/orders/options/{order_id}/status", response_model=OptionOrderResponse)
 async def get_option_order_status(order_id: int) -> OptionOrderResponse:
-    ib_client = IBOrderClient(
+    ib_client = _get_ib_order_client(
         host=os.environ.get("IB_HOST", "127.0.0.1"),
         port=int(os.environ.get("IB_PORT", "7497")),
         client_id=int(os.environ.get("IB_OPTION_ORDER_CLIENT_ID", "12")),
@@ -3345,6 +3387,7 @@ async def get_option_order_status(order_id: int) -> OptionOrderResponse:
         result = await ib_client.get_order_status(order_id)
         if result is None:
             raise HTTPException(status_code=404, detail=f"IB order {order_id!r} not found")
+        oms.record_event("US_OPTIONS", result)
         return OptionOrderResponse(**result)
     except HTTPException:
         raise
@@ -3352,8 +3395,6 @@ async def get_option_order_status(order_id: int) -> OptionOrderResponse:
         raise HTTPException(status_code=503, detail="IB TWS not reachable") from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    finally:
-        await ib_client.close()
 
 
 # Note: /bots/all-live-status works because all dynamic bot GET routes are

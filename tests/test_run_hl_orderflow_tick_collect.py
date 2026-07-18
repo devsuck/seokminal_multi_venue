@@ -59,7 +59,7 @@ async def test_run_coin_forever_appends_only_trade_events_not_book_snapshots():
 async def test_run_coin_forever_converts_book_snapshots_to_heatmap_deltas():
     from orderflow.models import OrderBookLevel
 
-    book = _book(bids=[OrderBookLevel(price=99.0, size=1.5)], asks=[OrderBookLevel(price=101.0, size=2.0)])
+    book = _book(bids=[OrderBookLevel(price=90.0, size=1.5)], asks=[OrderBookLevel(price=110.0, size=2.0)])
     client = FakeClient([[book]])
     depth_appended = []
     await runner.run_coin_forever(
@@ -69,7 +69,7 @@ async def test_run_coin_forever_converts_book_snapshots_to_heatmap_deltas():
         max_cycles=1,
     )
     assert len(depth_appended) == 2
-    assert {d["price"] for d in depth_appended} == {99.0, 101.0}
+    assert {d["price"] for d in depth_appended} == {90.0, 110.0}
     assert all(d["type"] == "heatmap_delta" for d in depth_appended)
 
 

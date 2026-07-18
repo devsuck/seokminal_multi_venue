@@ -9,7 +9,11 @@ def _cfg(**over):
 
 
 def _market(condition_id="c1", event_id="e1", yes=0.5, no=0.5, liquidity=10000.0,
-            end_date="2099-01-01", active=True, closed=False, accepting=True):
+            end_date="2099-01-01", active=True, closed=False, accepting=True,
+            days_out=None):
+    if days_out is not None:
+        import datetime as _dt
+        end_date = (_dt.date.today() + _dt.timedelta(days=days_out)).isoformat()
     return {
         "condition_id": condition_id, "question": f"q-{condition_id}", "event_id": event_id,
         "event_title": "", "end_date": end_date, "volume": 1000.0, "liquidity": liquidity,
@@ -20,7 +24,7 @@ def _market(condition_id="c1", event_id="e1", yes=0.5, no=0.5, liquidity=10000.0
 
 def test_scan_and_enter_picks_favorite_side():
     cfg = _cfg(per_market_usd=10.0, budget=100.0)
-    with patch.object(bot, "get_markets", return_value=[_market(yes=0.7, no=0.3)]), \
+    with patch.object(bot, "get_markets", return_value=[_market(yes=0.7, no=0.3, days_out=10)]), \
          patch.object(bot, "_log_event"):
         entered = bot._scan_and_enter(cfg)
     assert entered == 1
@@ -29,6 +33,14 @@ def test_scan_and_enter_picks_favorite_side():
     assert pos["entry_price"] == 0.7
     assert pos["usd"] == 10.0
     assert cfg["spent"] == 10.0
+
+
+def test_scan_and_enter_skips_too_far_maturity():
+    cfg = _cfg(max_days_to_resolution=30)
+    with patch.object(bot, "get_markets", return_value=[_market(days_out=90)]):
+        entered = bot._scan_and_enter(cfg)
+    assert entered == 0
+    assert cfg["positions"] == []
 
 
 def test_scan_and_enter_skips_extreme_price():

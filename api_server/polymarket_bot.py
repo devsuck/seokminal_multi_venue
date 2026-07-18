@@ -32,7 +32,7 @@ _DEFAULT = {
     "enabled": False, "interval_sec": 3600,
     "budget": 500.0, "per_market_usd": 20.0, "max_positions": 15,
     "min_liquidity": 5000.0, "min_price": 0.10, "max_price": 0.90,
-    "min_days_to_resolution": 3,
+    "min_days_to_resolution": 3, "max_days_to_resolution": 30,
     "side": "favorite",  # "favorite" | "underdog" | "random" — 무엣지, 다각화 전용
     "spent": 0.0, "realized_pnl": 0.0,
     "positions": [],  # [{condition_id, question, event_id, side, entry_price, usd, shares, end_date, entry_ts}]
@@ -102,7 +102,7 @@ def _scan_and_enter(cfg: dict) -> int:
         return 0
 
     try:
-        markets = get_markets(limit=300)
+        markets = get_markets(limit=500)
     except Exception as e:  # noqa: BLE001
         _log_event({"kind": "scan_fail", "msg": str(e)[:100]})
         return 0
@@ -124,8 +124,11 @@ def _scan_and_enter(cfg: dict) -> int:
             end = _dt.date.fromisoformat(m["end_date"])
         except ValueError:
             continue
-        if (end - today).days < cfg["min_days_to_resolution"]:
+        days_left = (end - today).days
+        if days_left < cfg["min_days_to_resolution"]:
             continue
+        if days_left > cfg["max_days_to_resolution"]:
+            continue  # 만기 너무 먼 시장 제외 — 자본 오래 묶이는 것 방지
 
         side_pref = cfg.get("side", "favorite")
         if side_pref == "underdog":
@@ -207,6 +210,7 @@ class BotConfig(BaseModel):
     min_price: float | None = None
     max_price: float | None = None
     min_days_to_resolution: int | None = None
+    max_days_to_resolution: int | None = None
     side: str | None = None
     reset_spent: bool | None = None
 
@@ -219,7 +223,8 @@ def status() -> dict:
         "budget": cfg["budget"], "per_market_usd": cfg["per_market_usd"],
         "max_positions": cfg["max_positions"], "min_liquidity": cfg["min_liquidity"],
         "min_price": cfg["min_price"], "max_price": cfg["max_price"],
-        "min_days_to_resolution": cfg["min_days_to_resolution"], "side": cfg["side"],
+        "min_days_to_resolution": cfg["min_days_to_resolution"],
+        "max_days_to_resolution": cfg["max_days_to_resolution"], "side": cfg["side"],
         "spent": cfg.get("spent", 0.0), "realized_pnl": cfg.get("realized_pnl", 0.0),
         "remaining": max(cfg["budget"] - cfg.get("spent", 0.0), 0.0),
         "positions": cfg.get("positions", []), "last_run": cfg.get("last_run"),
@@ -249,6 +254,8 @@ def set_config(body: BotConfig) -> dict:
         cfg["max_price"] = min(max(float(body.max_price), 0.51), 0.99)
     if body.min_days_to_resolution is not None:
         cfg["min_days_to_resolution"] = max(int(body.min_days_to_resolution), 0)
+    if body.max_days_to_resolution is not None:
+        cfg["max_days_to_resolution"] = max(int(body.max_days_to_resolution), 1)
     if body.side is not None and body.side in ("favorite", "underdog", "random"):
         cfg["side"] = body.side
     if body.reset_spent:
@@ -257,7 +264,8 @@ def set_config(body: BotConfig) -> dict:
     _log_event({"kind": "config", "enabled": cfg["enabled"], "budget": cfg["budget"]})
     return {"ok": True, **{k: cfg[k] for k in (
         "enabled", "interval_sec", "budget", "per_market_usd", "max_positions",
-        "min_liquidity", "min_price", "max_price", "min_days_to_resolution", "side")}}
+        "min_liquidity", "min_price", "max_price", "min_days_to_resolution",
+        "max_days_to_resolution", "side")}}
 
 
 @router.post("/run-now")

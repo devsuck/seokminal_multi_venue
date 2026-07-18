@@ -116,7 +116,11 @@ def get_updown_markets(limit: int = 100) -> list[dict]:
 
 
 def get_market(condition_id: str) -> dict | None:
-    raw = _get("/markets", {"condition_ids": condition_id, "limit": 1})
-    if isinstance(raw, list) and raw:
-        return _map_market(raw[0])
+    """단일 마켓 조회 — Gamma API는 condition_ids 필터 시 closed 여부가 쿼리의
+    암묵적 기본값(=False)과 안 맞으면 빈 리스트를 반환한다. 정산 여부를 모르는
+    채로 부르므로(포지션이 아직 열려있는지 만기됐는지) open→closed 순으로 재시도."""
+    for closed in ("false", "true"):
+        raw = _get("/markets", {"condition_ids": condition_id, "limit": 1, "closed": closed})
+        if isinstance(raw, list) and raw:
+            return _map_market(raw[0])
     return None

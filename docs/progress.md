@@ -582,3 +582,168 @@
 - v1은 equity_intraday만(크립토/선물 코드생성 범위 밖), OS-level cron 자동화는 범위 밖(수동 트리거만)
 - 최종 whole-branch 리뷰는 아직 미실행 — 다음 세션에서 `scripts/review-package e18921b <HEAD>`로 진행
 - 스팟골드가 무료+뎁스 나오면 COMEX선물 경로(1OZ 무료여부 불확실)보다 더 확실한 대안일 수 있음 — 평일 데이터로 최종 결정
+
+---
+
+## 2026-07-16~17: KR turn-of-month 포트폴리오 paper_active 승격 + buyback v2 shadow forward 재확인 + US 내부자매수 재검 UNDERPOWERED 확정
+
+### 완료된 작업
+- `kr_turn_of_month_v1_PORTFOLIO` 재검증: data_gate PASS(real KRX PIT) → 포트레벨(월별 EW, 상관보정) 백테스트 재실행(n=84개월, net_mean=0.622%, random_pct=100%, p=0.002, WF전반 1.170%/후반 0.074% — 16배 감쇠 재확인) → `watchlist` → `paper_candidate`(config 동결, hash `a21e2aa...`) 전이. `jarvis/paper/deploy.py`의 `RUNNER_REGISTRY`에 등록된 `research.paper.tom_forward:generate`(monthly, hold=4일, envelope 비교)로 자동 forward 배선 완료 → `paper_active`(2026-07-16T17:26:33Z). `research/paper/tom_config.py`/`tom_forward.py`는 기존 코드 그대로 사용, 신규 작성 없음
+- `kr_buyback_v2_regime_shadow`(레짐필터: 상승장 이벤트 제외) forward 재확인 — in-sample 개선 유지(net 1.575%→2.405%, 승률 50.7%→54.7%, n_v2=1170, v2_improves=true). forward(등록일 2026-07-03 이후)는 여전히 0건(buyback 공시 자체가 희소 이벤트라 14일로는 안 쌓임) — 승격 판단 보류. 스크립트가 FROZEN_DATE 기준 self-contained라 추가 wiring 불필요, 이벤트 쌓일 때까지 대기만 하면 됨
+- US 내부자매수(Form4) buyback엣지 교차검증 재확인: 27개 대형주 유니버스 기준 총이벤트 24건/유효진입 13건 — **VERDICT UNDERPOWERED 확정**. 넓은 유니버스 없이는 재시도 무의미
+- registry에서 buyback v2 shadow 중복 draft 항목 발견(`kr_buyback_x_regime_v2shadow` vs `kr_buyback_v2_regime_shadow`, 둘 다 2026-07-03 등록, config_hash 다름) — 실제 스크립트(`buyback_v2_forward.py`)가 참조하는 hypothesis_id는 후자, 전자는 죽은 중복. append-only 로그라 정리 안 함(위험 대비 이득 없음)
+
+### 변경된 파일
+- 없음(전부 registry 상태전이 + 기존 forward 스크립트 실행/확인 — 신규 코드 작성 없음)
+
+### 다음 할 일
+- tom forward: 매월 말 4일 보유 코호트 자동 누적 — 3개월(최소)~12개월(권장) 관찰 후 WF 후반 감쇠가 forward에서도 재현되는지가 KILL/유지 판단 기준
+- buyback v2 shadow: 신규 buyback 공시 쌓일 때까지 대기, forward 이벤트 생기면 `research/paper/buyback_v2_forward.py` 재실행해 in-sample 개선 재현 여부 확인
+- CB/BW 발행 = negative-drift 리스크필터(공시 후 하위5% 확인됨, 2026-07 초 검증) — 아직 아무 전략에도 안 묶임. buyback이나 다른 전략의 진입회피 필터로 붙이려면 v1은 동결이라 새 v3 shadow로 등록해야 함 — 미착수, 다음 세션 후보
+- US 내부자매수 UNDERPOWERED — 유니버스 확장(현재 27개 대형주) 시 재시도 가능, 미착수
+- `kr_buyback_size_decomp`, `tsmom_x_regime_v2shadow` — 스크립트 자체가 없음, 새로 설계 필요(가벼운 트랙 아님)
+
+### 막힌 부분/결정사항
+- 없음. buyback v2/CB-BW필터/내부자매수 유니버스확장/신규 분해가설 셋 다 "결정 대기"가 아니라 "데이터 축적 또는 설계작업 미착수"라 지금 할 게 없는 상태
+
+## 2026-07-17: `/orderflow` 대시보드 신규 지표(체결속도+VWAP밴드) 조합 가설 1차 검증 — REJECT
+
+### 완료된 작업
+- 이번 세션 앞서 대시보드에 새로 붙인 두 라이브 지표(체결속도 패널 `tape_trades_per_sec`, day/week/month VWAP ±1σ/±2σ 밴드)를 처음으로 결합한 조합 가설 작성: `research/strategies/orderflow_tape_vwap.py`. 신호 = 체결속도가 rolling median(60봉) 대비 2.5배 이상 튀는 "버스트" 구간에서 가격이 day-VWAP ±1σ 밴드 밖이면 그 극단을 페이드(밴드위 버스트=SELL, 밴드아래 버스트=BUY). 체결속도는 `orderflow/aggregator.py`의 `TAPE_WINDOW_SEC`(10초 슬라이딩)를 그대로 import해 라이브 백엔드와 정의 일치, VWAP은 프론트(`computeVwapBands`)와 같은 ±1σ 개념이나 typical price를 봉 h/l/c 평균 대신 틱 price 자체로 계산(의도적 차이, 주석 명시)
+- `research/validation/*`(engine/baselines/metrics/multiple_testing) 기존 하네스 그대로 재사용, 신규 검증 인프라 없음. `walk_forward.py`(closes만 받아 구간별 signal_fn 재계산)는 day-VWAP의 구간간 causal 누적과 안 맞아 미사용 — 대신 전체 이력 기준 계산된 거래를 진입시점 5구간으로 나누는 `_windowed_consistency()`로 대체(문서화된 의도적 이탈)
+- 실행 러너 `research/run_orderflow_tape_vwap.py` 작성, HL 틱 8일치(2026-07-10~17, `research/data/hl_orderflow_tick/{BTC,ETH}_*.jsonl`)로 BTC.HL/ETH.HL 실행. 결과: BTC.HL 38거래 total_pnl=-26.42 p=0.3593(64.2%ile) → **INDISTINGUISHABLE**, ETH.HL 26거래(<30) → **UNDERPOWERED**(그마저 방향성 음수, p=0.982). 이 가설 전용 BH-FDR 풀(alpha=0.1)에서도 둘 다 생존 실패(0/2). 리포트: `research/reports/alpha/orderflow_tape_vwap_{BTC,ETH}.HL.{json,md}`
+- 판정: **REJECT**(1차 생존조차 실패) — 기존 오더플로우 가설군(footprint/absorption/cvd/stop-run/wall/iceberg/confluence/gated_confluence, 전부 REJECT)과 동일 결론에 합류. "체결속도+VWAP 조합" 자체가 특별할 이유 없었다는 사전 예상대로
+
+### 변경된 파일
+- 신규: `research/strategies/orderflow_tape_vwap.py`, `research/run_orderflow_tape_vwap.py`
+- 신규 리포트: `research/reports/alpha/orderflow_tape_vwap_BTC.HL.{json,md}`, `research/reports/alpha/orderflow_tape_vwap_ETH.HL.{json,md}`
+
+### 다음 할 일
+- TPO 마켓프로파일 / 스푸핑 휴리스틱 조합 가설은 보류 — L2 depth 수집(`research/data/hl_orderflow_depth/`)이 2026-07-17 하루치뿐이라 표본 부족, 1~2주 더 쌓일 때까지 대기(수집기는 이미 tmux 상시 실행 중, 추가 작업 불필요)
+- ETH.HL은 UNDERPOWERED라 데이터만 더 쌓이면(현재 컬렉터가 계속 도는 중) 재실행 가치 있음 — 단, 파라미터(2.5배/60봉/±1σ)는 튜닝하지 않고 그대로 재실행만
+- 이 결과로 오더플로우 트랙(HL 틱 기반) 가설이 사실상 모두 소진됨 — 다음 알파 탐색은 오더플로우 바깥 트랙(TSMOM/KR 포트폴리오 계열)이 우선순위 높음, 오더플로우는 depth 데이터 쌓일 때까지 휴면
+
+### 막힌 부분/결정사항
+- 없음. REJECT는 명확한 결과이지 막힘이 아님 — depth 데이터 부족만 "대기" 상태
+
+## 2026-07-17: 오더플로우 트랙 전체 종합 — 배치 5개 합산 BH-FDR 감사(retrospective)
+
+### 완료된 작업
+- 지금까지 별도 풀로 돌렸던 오더플로우 배치 5개(①`run_orderflow_futures_on_btc.py` 14개: footprint_imbalance/absorption/cvd_divergence/confluence/stop_run×3horizon × BTC·ETH, ②같은 스크립트의 context-gate `gated_confluence` 2개, ③`orderflow_absorption.py`의 1분봉 dominance-ratio absorption 2개, ④같은 파일 `large_trade`(rolling p95 1분봉) 2개, ⑤`large_trade_event`(10/30/60s 고정청산) 6개, ⑥오늘 만든 `tape_vwap_fade` 2개) — 총 28개 p-value를 하나의 풀로 합쳐 `benjamini_hochberg(alpha=0.1)` 재실행(원래는 "새 가설은 별도 풀"이 기본 원칙이라 지금까지 안 섞었음, 이번엔 유저 요청으로 트랙 전체 조망 목적의 1회성 감사)
+- IB(NQ/MNQ) `orderflow_futures_*` 리포트는 풀에서 제외 — IB 오더플로우 수집기가 실제로 가동된 적이 없어(수집 데이터 0) n_bars=20/n_trades=0~1짜리 사실상 더미값이라 HL 8일치 실데이터와 같은 풀에 넣으면 왜곡만 됨
+- **결과: 28개 중 7개 생존**(threshold p<=0.01): `ETH:footprint_imbalance`(p=0.0100) + `large_trade_event` 6개 전부(BTC/ETH × 10s/30s/60s, 전부 p=0.002=하한선, 500회 랜덤런 전부를 이김)
+- **그러나 7개 생존 전부 net PnL<=0** — `ETH:footprint_imbalance`는 총손익 -3,194.56(방향예측력은 유의하나 역시 비용 못 이김), `large_trade_event` 6개는 이미 개별 리포트에서 `SIGNAL-BUT-SUBCOST` 판정 확정돼 있었음(방향예측력 유의 + net PnL<=0). 즉 다중검정 보정을 통과한 신호가 있긴 하지만 **거래 가능한 알파는 여전히 0개** — `_verdict()` 스케일의 "EDGE CANDIDATE"(percentile>=95 and PnL>0) 기준을 만족하는 항목 없음
+- 통계적 주의사항 기록: `large_trade_event`의 6개 생존은 같은 이벤트셋(대량체결 발생시점)에 대한 10s/30s/60s 3개 청산호라이즌 × 2심볼일 뿐 — 독립검정이 아니라 유사반복(pseudo-replication)이라 "실질 독립발견"은 사실상 2건(BTC 이벤트방향성, ETH 이벤트방향성)으로 봐야 함. BH-FDR은 완전독립을 가정하지 않지만(PRDS 조건에서도 유효) 해석 시 과대평가 주의
+- 트랙 결론: HL 틱 데이터로 시도 가능한 오더플로우 방향예측 신호(footprint/absorption/cvd/stop-run/large-trade/confluence/context-gate/tape-vwap) 전부 REJECT 또는 SIGNAL-BUT-SUBCOST — **거래비용(HL taker 6bps)을 이기는 오더플로우 알파는 이번 세대의 데이터·신호 설계로는 없음**. 방향예측력 자체는 대량체결 이벤트 주변에서 재현성 있게 나타나지만(p=0.002 반복), HL taker 수수료+슬리피지 구조에서 그 정도 방향우위로는 net positive가 안 나옴
+
+### 변경된 파일
+- 없음(기존 리포트 재집계 + `run_orderflow_futures_on_btc.py` 1회 재실행뿐, 신규 코드 없음)
+
+### 다음 할 일
+- SIGNAL-BUT-SUBCOST 신호(large_trade_event, footprint_imbalance)를 살리려면 taker 대신 maker 체결(비용 6bps→1.5bps)로 재검증하는 경로가 있음 — 단 이벤트 반응형 신호라 maker로 제때 체결될지 자체가 의문이라 미착수(체결모델 재설계 필요, 가벼운 작업 아님)
+- TPO/스푸핑은 여전히 depth 데이터 부족으로 보류(Phase 위 항목과 동일)
+- 이걸로 오더플로우 트랙(HL 틱 기반) 1차 스크리닝은 사실상 마무리 — 추가 신호 아이디어보다는 TSMOM/KR 포트폴리오 등 이미 생존 신호 있는 트랙에 시간 쓰는 게 기대값 높음
+
+### 막힌 부분/결정사항
+- 없음. 감사 결과가 명확(REJECT/SUBCOST뿐, EDGE CANDIDATE 0개) — 막힌 게 아니라 결론이 난 것
+
+## 2026-07-17: 오더플로우 프리미티브 8개 전조합 스윕(72개) — 수익률/승률 중심, 0/70 생존
+
+### 완료된 작업
+- 유저 지시("기존 조합까지 다 포함해서 너가 주도적으로 조합 만들어봐, 몇 개든 상관없어, 수익률/승률 중심")로 개별 검증됐던 8개 프리미티브(footprint_imbalance, absorption[노이즈플로어], cvd_divergence, large_trade[1분봉 p95], tape_vwap_fade, vwap_window[240봉 롤링], trend_15m, key_level_15m)를 하나의 60s bar 피처행렬 위에 통합하는 신규 모듈 `research/strategies/orderflow_signal_matrix.py` 작성. 기존 4개 구현이 버킷 키 방식이 서로 달라(`OrderflowAggregator`는 float `floor(ts/60)*60`, absorption/tape_vwap/context_gate는 int `ts//60`) 조합 시 정렬오류 위험 있어, 원시 틱을 단일 causal 패스로 한 번만 훑어 전부 같은 bar 인덱스에 얹는 방식 채택. 모든 임계값은 재조정 없이 기존 파일에서 그대로 import(`FOOTPRINT_IMBALANCE_RATIO=0.7`, `ABSORPTION_DOMINANCE_RATIO=0.7`, `TAPE_BURST_MULTIPLIER=2.5`, `VWAP_BAND_SIGMA=1.0` 등)
+- 조합 생성 2종: ①페어와이즈 AND(둘 다 판정 가능+방향 일치할 때만 신호, `C(8,2)=28`개) ②killzone(13:30-15:00 UTC) 컨텍스트 게이트(단일 프리미티브 8개 각각). 심볼당 36개 × BTC/ETH = 72개. stop_run/large_trade_event/wall_proximity/iceberg_refill은 이벤트형이거나 depth 필요라 bar 행렬 스코프에서 제외(기존 모듈에서 이미 별도 검증됨)
+- 러너 `research/run_orderflow_signal_matrix.py`로 8일치 HL 틱 전체 실행(BTC 2,047,637틱/10,259봉, ETH 1,169,738틱/10,260봉), 이 스윕 전용 BH-FDR 풀(다른 배치와 안 섞음)
+- **결과: 70개 유효표본 중 BH-FDR 생존 0개.** 수익률 1위는 `BTC.HL:tape_vwap+trend_15m`(+87.88, 승률81.8%, p=0.014)이나 거래 11건뿐 → underpowered, 신뢰불가. PnL 양수인 조합은 전부 거래수<30(underpowered). **표본이 충분한 조합(n≥30) 전부 net PnL 음수** — 최고 승률조차 39.6%(`ETH.HL:cvd+killzone`, PnL -100.82), 최악은 `ETH.HL:footprint+large_trade` 1562건 PnL -1,722.84
+- 판정: 조합을 8개→72개로 넓혀도 결론 불변. "표본 충분하면서 수익 나는 조합"이 하나도 없다는 건 검색 범위 문제가 아니라 이 8개 프리미티브 자체(1분봉/HL taker 6bps 비용구조)에 방향성 우위가 부족하다는 뜻으로 해석. 오더플로우 트랙(HL 틱 기반) 결론이 이전 두 배치(REJECT/SUBCOST뿐)와 완전히 합류 — 조합 차원에서도 재확인됨
+
+### 변경된 파일
+- 신규: `research/strategies/orderflow_signal_matrix.py`, `research/run_orderflow_signal_matrix.py`
+- 리포트 파일 없음(스크리닝 전용 스크립트, stdout만 — 개별 확정 가설이 아니라 탐색이라 `build_report()` 미호출. 필요시 위 stdout 로그가 유일 기록)
+
+### 다음 할 일
+- 오더플로우 트랙(HL 틱 기반)은 프리미티브 단위·조합 단위 둘 다 소진 판단 — 추가 조합 탐색보다 depth 데이터(TPO/스푸핑)가 쌓이거나 새로운 데이터 소스(L2, 펀딩레이트 외 다른 축)가 생기기 전까진 이 트랙에 더 시간 안 씀
+- TSMOM/KR 포트폴리오처럼 이미 생존 신호 있는 트랙 우선순위 유지(변경 없음)
+
+### 막힌 부분/결정사항
+- 없음. 72개 조합 스윕도 명확히 REJECT — "더 조합해봐야 하나 안 나온다"가 결론
+
+## 2026-07-17: 3-way/4-way AND + 다수결 조합 스윕, 메이커비용 재검증, TPO 신규 가설 — 전부 REJECT
+
+### 완료된 작업
+- 유저가 72개(2-way) 스윕 결론("없다")을 재차 거부("그럴 리 없어, 3,4개로 조합해서 나올만한 거는?") → `combine_and_n()`(k-way 일반화 AND)을 `orderflow_signal_matrix.py`에 추가해 3-way(`C(8,3)=56`/심볼, 러너 `run_orderflow_signal_matrix_k3.py`) 실행. **결과: 112개 중 유효 99개, BH-FDR 0/99 생존.** n≥30 최고 승률도 54.0%(`BTC.HL:absorption+cvd+key_level_15m`, 37건, PnL -4.34)
+- k가 커질수록 AND 교집합(공동 eligible)이 기하급수로 줄어 표본이 죽는 패턴이 3-way부터 뚜렷 — "AND가 너무 빡빡해 신호를 못 본 것" 가설과 "애초에 신호가 없는 것" 가설을 가르기 위해 4-way AND(`C(8,4)=70`/심볼) + 합의기준 낮춘 다수결(`combine_majority_vote`, 3/4/5/6-of-8, 4/심볼)을 같이 실행(`run_orderflow_signal_matrix_k4_majority.py`). **결과: 148개 중 유효 103개, BH-FDR 0/103 생존.** 다수결로 합의기준 낮추자 표본은 커졌으나(3-of-8: BTC 1365건/ETH 1449건) 승률이 8.7%/11.7%로 폭락, PnL도 -1580/-1628로 급격히 악화 — **"AND가 빡빡해서 숨겨진 신호를 놓쳤다" 가설은 기각**(기준 완화하니 오히려 더 나빠짐, 신호 자체가 없다는 쪽이 맞음)
+- 유저 지시("비용모델 바꿔보기 / 다른 신호축 전환, 1,2 둘 다") 수행: ①이전 감사에서 BH-FDR 생존했던 7개(전부 net PnL<=0, SIGNAL-BUT-SUBCOST) — `ETH:footprint_imbalance` + `large_trade_event` 6개 — 를 taker(6.0bps) 대신 maker(3.0bps, `hl_effective_cost_bps(taker=False)`) 가정으로 재실행(`run_orderflow_maker_cost_retest.py`, `orderflow_absorption.py`의 `run_large_trade_event_hypothesis`에 `taker: bool` 파라미터 추가해 비용만 스위치 가능하게 함). **결과: 비용 절반으로 줄여도 전부 여전히 net PnL 음수** — 손실폭만 대략 절반(예: ETH footprint -3217→-1521, BTC large_trade 60s -135112→-65546), 부호는 하나도 안 바뀜. 비용이 병목이 아니라 신호 자체의 방향우위가 taker든 maker든 손실을 못 이길 만큼 약하다는 뜻(maker 체결은 이상화 가정 — 반응형 신호라 그 타이밍에 리밋오더가 실제 체결됐을지는 별개 문제, 결과는 "비용만 낮아지면 얼마나 회복되는지"의 상한치로만 해석)
+- ②TPO/스푸핑(다른 신호축) 착수 전, 이전 세션들에서 반복해온 "TPO는 depth 데이터 부족으로 보류" 판단이 **틀렸음을 발견**해 정정 — `lib/orderflow-data.ts`의 `computeTpoProfile`을 직접 읽어보니 TPO는 체결틱(`FootprintCell`, 가격×60s버킷)만으로 계산되고 잔량/호가창(depth)은 전혀 안 씀. 즉 8일치 틱 데이터로 바로 백테스트 가능했던 걸 depth 부족 핑계로 계속 미뤄온 것 — 이번에 정정하고 실제 백테스트 진행
+- TPO 프론트 로직(`TPO_PERIOD_SEC=1800`, `VALUE_AREA_PCT=0.7`, POC 탐욕확장 알고리즘)을 그대로 이식한 신규 가설 모듈 `research/strategies/orderflow_tpo.py` 작성 — 종가가 Value Area 밖(VAH 위/VAL 아래)이면 페이드(day-VWAP 밴드 페이드와 동일 직관, 다른 지표축). `MIN_WARMUP_PERIODS=4`(2시간)만 이 파일에서 새로 정한 사전값. 러너 `run_orderflow_tpo.py`로 BTC.HL/ETH.HL 8일치 실행. **결과: 승률은 68.2%/75.0%로 높지만 eligible 9587/9598건 중 실제 거래는 22/16건뿐 — VA 밖 이탈 자체가 드묾. underpowered, PnL도 음수(-45.28/-49.49), p=0.71/0.79로 랜덤과 무구분. BH-FDR 0/2 생존** → REJECT(승률 숫자만 보면 낚이지만 표본 붕괴로 무의미)
+- 스푸핑: `research/data/hl_orderflow_depth/{BTC,ETH}_2026-07-17.jsonl`에 `grep -c "spoof_alert"` 재확인 — 여전히 하루치뿐(신규 파일 미생성), **spoof_alert 0건 그대로**. "데이터 더 쌓일 때까지 대기"가 아니라 "현재 휴리스틱(SPOOF_SIZE_MULTIPLIER=5.0배)이 하루 종일 라이브로 돌면서 단 한 번도 안 뜸"이 실제 결과 — 임계값이 너무 빡빡하거나(관찰 안 됨) 이 시장/사이즈대에서 해당 패턴 자체가 희귀할 가능성
+
+### 변경된 파일
+- 신규: `research/run_orderflow_signal_matrix_k3.py`, `research/run_orderflow_signal_matrix_k4_majority.py`, `research/run_orderflow_maker_cost_retest.py`, `research/strategies/orderflow_tpo.py`, `research/run_orderflow_tpo.py`
+- 수정: `research/strategies/orderflow_signal_matrix.py`(`combine_and_n`/`combine_majority_vote`/`run_matrix_k`/`run_majority_matrix` 추가), `research/strategies/orderflow_absorption.py`(`run_large_trade_event_hypothesis`에 `taker: bool = True` 파라미터 추가, 하위호환)
+- 신규 리포트: `research/reports/alpha/orderflow_tpo_{BTC,ETH}.HL.{json,md}`
+
+### 다음 할 일
+- 오더플로우 트랙(HL 틱): 2-way/3-way/4-way/다수결/메이커비용/TPO/스푸핑까지 전부 REJECT 또는 SIGNAL-BUT-SUBCOST — **탐색 범위·비용모델·신호축 세 방향 다 막다른 길 확인 완료**. 이 트랙에 더 시간 쓰는 건 기대값 낮음, TSMOM/KR 포트폴리오 트랙에 집중 권장
+- 스푸핑은 임계값(5.0배) 완화나 다른 depth 신호(불균형, 유동성벽 두께 변화 등) 시도 여지는 있으나 이번 세션 스코프 밖 — 유저가 원하면 별도 트랙으로 새로 시작
+- TPO는 30분 구간 대신 더 짧은 구간(예: 15분)으로 시도하면 eligible→실거래 전환율이 오를 수 있으나 이건 파라미터 튜닝이라(프론트 값 1800s에서 이탈) 임의로 하지 않음, 유저 승인 필요
+
+### 막힌 부분/결정사항
+- 없음. 세 방향(범위확장/비용모델/신호축전환) 다 명확히 REJECT — 오더플로우 트랙 1차 스크리닝은 사실상 완전히 마무리된 상태로 판단
+
+## 2026-07-17: TSMOM 월간 forward-test 재실행 (15일 만에 갱신)
+
+### 완료된 작업
+- 마지막 실행이 07-02(15일 전)라 캐시 데이터 정체 확인 → `futures_loader.py`(TWS IB_PORT=7498로 재확인, 기본 7496 아님) 재실행해 32시장 일봉 07-17까지 pull → `research/paper/tsmom_forward.py --since 2026-06` 재실행
+- config 미변경 확인(동결 그대로). **결과: 2026-06 -1.46%, 2026-07 -0.26%(월중) 둘 다 envelope 안(P10 -1.74%~P90 +2.94%), 이탈 없음.** Sharpe 0.557(직전 0.562와 거의 동일), regime_score 0.774→0.725로 소폭 하락(트렌드 강도 약간 약해짐 — TSMOM 본질상 reject 사유 아님, 관찰만). sleeve: softs 1위(0.818)로 순위 유지, rates 여전히 마이너스(-0.073)
+- 판정: 정상 관찰 중, envelope 이탈 없음. 튜닝/개입 없음(규율 유지)
+
+### 변경된 파일
+- `research/paper/tsmom_forward_report.md`, `tsmom_forward_ledger.jsonl` 갱신(코드 변경 없음, 데이터만)
+
+### 다음 할 일
+- IB_PORT은 이 환경에서 **7498**(코드 기본값 7496 아님) — 다음에도 `IB_PORT=7498`로 실행할 것
+- `tsmom_forward.py`는 로컬 캐시(`intraday_store`)만 읽음, IB 직접 연결 안 함 — 최신 데이터 반영하려면 `futures_loader.py`를 먼저 돌려야 함(순서: loader → forward)
+- 다음 재실행은 자연스러운 월간 체크포인트(8월 초) 또는 유저 요청 시
+
+### 막힌 부분/결정사항
+- 없음
+
+## 2026-07-18: AI 에이전트 잔고 안 움직임 + Polymarket 다각화 정산 멈춤 버그 2건
+
+### 완료된 작업
+- **유저 리포트**: "lv5 가상화폐 -42% 수익률인데 보유금액은 100 그대로" → `api_server/router_autopilot.py`의 `agent_performance()`/`agents_overview()` 둘 다 `cash = alloc - invested`로 계산해 realized_pnl을 아예 안 반영하고 있었음(143건 매매로 -42 USDC 손실 나도 cash는 그대로). `cash = alloc + realized_pnl - invested`로 수정. 브라우저로 재확인: 수익률 -41.79% / 현금 -41.69 USDC로 정상 반영.
+- 같은 조사 중 2차 버그 발견: 위 두 함수 포함 `router_autopilot.py` 6곳이 `agent_store.read_cycles(agent_id, limit=1000)`로 최근 1000 cycle만 읽어 FIFO 성과 계산 — lv5 가상화폐는 이미 cycle 2399건 누적(5분 간격 상시 tick), 1000 캡을 넘어서면서 오래된 체결이 창밖으로 밀려나 거래건수·realized_pnl이 시간 지날수록 조용히 줄어드는 중이었음(재시작과 무관, 143→120건도 이 창 슬라이딩 때문). `god_mode.py`가 이미 같은 문제를 `limit=100000`으로 우회해둔 전례가 있어 동일하게 6곳 전부 100000으로 상향.
+- **유저 리포트 2**: "폴리마켓 다각화 안 도는 것 같다, 만기 지난 게 결과 반영 안 됨" → 루프 자체(`polymarket_bot.py`의 `_loop`)는 매 tick(1시간)마다 정상 동작 중이었으나(`last_run` 계속 갱신), `polymarket/client.py`의 `get_market()`이 Gamma API `/markets?condition_ids=...` 호출 시 `closed` 파라미터를 안 넘겨서 — 이 API가 파라미터 미지정 시 암묵적으로 `closed=false`처럼 걸러버림 — 실제로 만기·정산된 마켓은 항상 빈 리스트로 응답받음. `_process_resolutions()`는 `None`을 "조회 실패, 다음 tick 재시도"로 처리해서 정산된 포지션이 영원히 큐에 남아있었음(15슬롯 중 6개가 최대 8일째 미정산 상태로 발견). `get_market()`이 `closed=false`→`closed=true` 순으로 재시도하도록 수정. 재시작(reload) 직후 자동 tick으로 즉시 검증: 7건 정산(realized_pnl 0→+31.36 USDC) + 빈 슬롯 7개 신규 배팅으로 자동 채움 확인.
+- 세 버그 다 pytest 전체(1145 passed / pre-existing 5 fail 그대로) + 브라우저 라이브 확인 완료.
+
+### 변경된 파일
+- `api_server/router_autopilot.py` — `cash` 계산식 2곳 수정, `read_cycles` limit 1000→100000 6곳
+- `polymarket/client.py` — `get_market()` open→closed 재시도 로직
+- (dashboard) `seokminal-dashboard/app/agents/page.tsx` — 에이전트 카드 "자본" 라벨 → "배정"(배정 자본이지 현재 잔고 아님, 오늘 유저가 헷갈린 지점)
+
+### 다음 할 일
+- 두 레포(`seokminal-multi-venue`, `seokminal-dashboard`) 전부 미커밋 상태 — 오늘 픽스 포함, 이전 Bloomberg UI 롤아웃(28파일)·사이드바 수정도 안 쌓여있음. 커밋 여부/단위 유저 확인 대기 중.
+- 포트폴리오 파이차트가 현금 음수일 때 0%로 클램프돼서 "계좌 거의 다 날림"이 시각적으로 안 보임 — UX 개선 여지 있음, 아직 미착수.
+
+### 막힌 부분/결정사항
+- 없음
+
+## 2026-07-18: buyback 월간 forward-test 재실행 (16일 만에 갱신)
+
+### 완료된 작업
+- 유저 확인 후("더 해야하는 부분 있음?" → buyback도 정체 발견) KRX 가격(07-07까지 캐시) + DART 이벤트(07-16까지 이미 최신, 안 건드림) 갱신 시도 → `KRX_API_KEY` 환경변수/`data/.env` 둘 다 없어서 `pull_range` 실패
+- 원인: `research/data/krx_api.py`의 `_cfg()` 폴백이 `data/.env`(=`seokminal-multi-venue/data/.env`)를 보는데, 실제 키는 프로젝트 루트 `seokminal-multi-venue/.env`에 있음 — 경로 불일치. 이번엔 셸에서 직접 export해서 우회(코드 수정 안 함, 버그 재현 확인만)
+- KOSPI/KOSDAQ 가격 07-08~18(6거래일) pull 완료 → `research/paper/buyback_forward.py --since 2026-07` 실행했더니 forward 코호트 비어있음(정상 — hold=20거래일 미완결이라 7월 이벤트는 아직 청산 전) → `--since 2026-06`으로 재실행
+- **결과: overall n=1603→1685(신규 이벤트 반영), 중앙값 -0.00086→+0.00011(제로 근방 유지, 팻테일이라 변동 큼, 예상 범위). 2026-06 코호트 n=90, 중앙값 +1.9% → envelope 안**(월코호트중앙값 P10 -3.0%~P90 +3.7%), 이탈 없음
+- 판정: 정상 관찰 중. 튜닝/개입 없음
+
+### 변경된 파일
+- `research/paper/buyback_forward_report.md`, `buyback_forward_ledger.jsonl` 갱신(코드 변경 없음)
+- `data/krx/{kospi,kosdaq}/*.parquet` 신규 6일치
+
+### 다음 할 일
+- **버그 아님이지만 불편**: `KRX_API_KEY` 쓰려면 매번 `export $(grep -E "^KRX_API_KEY=|^KRX_BASE_URL=" .env | xargs)` 수동 실행 필요(또는 `data/.env`에 키 복사해두면 `_cfg()` 폴백이 알아서 찾음) — 다음 세션에서도 이 이슈 반복될 것, 고치려면 `krx_api.py`의 폴백 경로를 프로젝트 루트 `.env`로 바꾸거나 `data/.env`에 심볼릭링크
+- congress_forward.py/form4_forward.py는 여전히 미실행(config/ledger 없음, exploratory 상태) — 필요시 유저 요청 시 착수
+
+### 막힌 부분/결정사항
+- 없음

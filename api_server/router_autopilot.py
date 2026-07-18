@@ -706,7 +706,7 @@ def agent_performance(agent_id: str) -> dict:
     if agent is None:
         raise HTTPException(status_code=404, detail="agent not found")
 
-    cycles = agent_store.read_cycles(agent_id, limit=1000)
+    cycles = agent_store.read_cycles(agent_id, limit=100000)
     perf = agent_perf.compute_performance(cycles)
 
     # Enrich open positions with current price → unrealized PnL.
@@ -728,7 +728,7 @@ def agent_performance(agent_id: str) -> dict:
     return {
         "agent_id": agent_id,
         "alloc": alloc,
-        "cash": round(alloc - perf.invested, 4),
+        "cash": round(alloc + perf.realized_pnl - perf.invested, 4),
         "invested": perf.invested,
         "realized_pnl": perf.realized_pnl,
         "unrealized_pnl": round(unrealized, 4),
@@ -939,7 +939,7 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
     # it already has deployed (its own ledger), NOT the shared account equity —
     # so multiple agents on one Alpaca/HL account each stay within their slice.
     alloc = float(agent["account_alloc"])
-    _cycles = agent_store.read_cycles(agent_id, limit=1000)
+    _cycles = agent_store.read_cycles(agent_id, limit=100000)
     budget = max(alloc - agent_perf.compute_performance(_cycles).invested, 0.0)
 
     # Lv3(구Lv5) 자가학습: 이력 분석 → threshold/position_pct 자동 조정
@@ -1258,7 +1258,7 @@ def condition_tick_endpoint(agent_id: str, cycle: int = 0) -> dict:
                 code = instrument_id.split(".")[0]
                 if action == "BUY":
                     alloc = float(agent["account_alloc"])
-                    _cycles = agent_store.read_cycles(agent_id, limit=1000)
+                    _cycles = agent_store.read_cycles(agent_id, limit=100000)
                     budget = max(alloc - agent_perf.compute_performance(_cycles).invested, 0.0)
                     qty = int(daytrade_logic.position_size(budget, position_pct, 1.0, result["price"]))
                     if qty > 0:
@@ -1278,7 +1278,7 @@ def condition_tick_endpoint(agent_id: str, cycle: int = 0) -> dict:
                 client = _trading_client(paper=True)
                 if action == "BUY":
                     alloc = float(agent["account_alloc"])
-                    _cycles = agent_store.read_cycles(agent_id, limit=1000)
+                    _cycles = agent_store.read_cycles(agent_id, limit=100000)
                     budget = max(alloc - agent_perf.compute_performance(_cycles).invested, 0.0)
                     qty = int(daytrade_logic.position_size(budget, position_pct, 1.0, result["price"]))
                     if qty > 0:
@@ -1396,7 +1396,7 @@ def distill_strategy(agent_id: str) -> dict:
     if agent is None:
         raise HTTPException(status_code=404, detail="agent not found")
 
-    cycles = agent_store.read_cycles(agent_id, limit=1000)
+    cycles = agent_store.read_cycles(agent_id, limit=100000)
     perf = agent_perf.compute_performance(cycles)
     trades = perf.trades
     if len(trades) < 3:
@@ -1484,7 +1484,7 @@ def agents_overview() -> dict:
     rows = []
     tot_alloc = tot_realized = 0.0
     for a in agent_store.list_agents():
-        perf = agent_perf.compute_performance(agent_store.read_cycles(a["id"], limit=1000))
+        perf = agent_perf.compute_performance(agent_store.read_cycles(a["id"], limit=100000))
         alloc = float(a["account_alloc"])
         realized = perf.realized_pnl
         tot_alloc += alloc
@@ -1494,7 +1494,7 @@ def agents_overview() -> dict:
             "paper": a["paper"], "status": a["status"], "autonomy": a.get("autonomy"),
             "alloc": alloc, "realized_pnl": realized,
             "return_pct": round(realized / alloc * 100, 3) if alloc else 0.0,
-            "invested": perf.invested, "cash": round(alloc - perf.invested, 2),
+            "invested": perf.invested, "cash": round(alloc + realized - perf.invested, 2),
             "open_positions": len(perf.open_positions), "trades": len(perf.trades),
         })
     return {

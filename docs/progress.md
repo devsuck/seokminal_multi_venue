@@ -722,11 +722,31 @@
 - (dashboard) `seokminal-dashboard/app/agents/page.tsx` — 에이전트 카드 "자본" 라벨 → "배정"(배정 자본이지 현재 잔고 아님, 오늘 유저가 헷갈린 지점)
 
 ### 다음 할 일
-- 두 레포(`seokminal-multi-venue`, `seokminal-dashboard`) 전부 미커밋 상태 — 오늘 픽스 포함, 이전 Bloomberg UI 롤아웃(28파일)·사이드바 수정도 안 쌓여있음. 커밋 여부/단위 유저 확인 대기 중.
 - 포트폴리오 파이차트가 현금 음수일 때 0%로 클램프돼서 "계좌 거의 다 날림"이 시각적으로 안 보임 — UX 개선 여지 있음, 아직 미착수.
 
 ### 막힌 부분/결정사항
 - 없음
+
+---
+
+## 2026-07-18: Polymarket 다각화 봇 — 만기 상한 필터 추가 + 커밋 정리
+
+### 완료된 작업
+- 위 정산 버그 고친 뒤 유저 확인: "지금도 30달러 이득이라매, 여기서 더 발전하면 되겠네 어차피 페이퍼인데" → 다각화 스코프는 이미 카테고리 무필터(전 종목 거래량순 스캔)였으나 만기 상한이 없어서(`min_days_to_resolution`만 있고 max 없음) 2027년 만기 같은 시장도 진입 대상이었음. `max_days_to_resolution`(기본 30일) 신규 필터 추가 + 스캔 후보 `get_markets(limit=300→500)`로 확대.
+- 두 레포 전부 미커밋 상태였던 것 정리해서 커밋함(오늘 세션 버그픽스 3건 + Bloomberg UI 롤아웃 28파일 + 사이드바 수정 + 이번 만기상한 필터, 총 5커밋). 커밋 중 `research/data/{cross_venue_skew,polymarket_tick 등}` 20GB+ 틱 원자재 디렉토리가 gitignore 안 걸려있던 걸 발견 — `git add -A` 전에 잡아서 `.gitignore`에 추가, 커밋 안 되게 막음.
+- pytest 전체(1146 passed / pre-existing 5 fail 그대로, 신규 `test_scan_and_enter_skips_too_far_maturity` 추가) + tsc 클린 + `--reload` 자동 반영 라이브 확인(`max_days_to_resolution: 30` status에 정상 노출).
+
+### 변경된 파일
+- `api_server/polymarket_bot.py` — `max_days_to_resolution` config 필드(기본 30) + `_scan_and_enter` 필터링, `get_markets` limit 300→500
+- `tests/test_polymarket_bot.py` — `_market()`에 `days_out` 헬퍼 인자 추가, 만기상한 스킵 테스트 신규
+- `.gitignore` — 20GB+ 틱/오더북 데이터 디렉토리 8개 추가
+- (dashboard) `lib/api.ts`, `app/polymarket/page.tsx` — `max_days_to_resolution` 타입/진입필터 UI 필드
+
+### 다음 할 일
+- 없음 (요청받은 항목 전부 완료)
+
+### 막힌 부분/결정사항
+- `max_days_to_resolution` 기본값 30일은 임의 선택 — 유저가 UI에서 직접 튜닝 가능("최대잔여일" 필드로 노출됨)
 
 ## 2026-07-18: buyback 월간 forward-test 재실행 (16일 만에 갱신)
 

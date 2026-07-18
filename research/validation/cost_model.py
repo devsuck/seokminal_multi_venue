@@ -43,9 +43,9 @@ def hl_effective_cost_bps(
 # ── IB CME futures 전용 ──────────────────────────────────────────────────
 # ⚠️ 미검증 근사치 — IB 실제 요금표(계약당 왕복 커미션) 대조 안 됨.
 # 페이퍼 단계 진입 전 반드시 IB 계정 실요율로 재확인할 것.
-IB_FUTURES_COMMISSION_USD = {"NQ": 2.25, "MNQ": 0.55}  # 계약당 왕복 근사
-IB_FUTURES_TICK_VALUE_USD = {"NQ": 5.0, "MNQ": 0.5}    # CME 0.25pt당
-IB_FUTURES_SLIPPAGE_TICKS = {"NQ": 0.5, "MNQ": 1.0}    # MNQ 유동성 낮아 더 보수적
+IB_FUTURES_COMMISSION_USD = {"NQ": 2.25, "MNQ": 0.55, "GC": 2.25}  # 계약당 왕복 근사
+IB_FUTURES_TICK_VALUE_USD = {"NQ": 5.0, "MNQ": 0.5, "GC": 10.0}    # NQ/MNQ: CME 0.25pt당, GC: COMEX 0.10pt당(100oz)
+IB_FUTURES_SLIPPAGE_TICKS = {"NQ": 0.5, "MNQ": 1.0, "GC": 0.5}     # MNQ 유동성 낮아 더 보수적
 
 
 def ib_futures_effective_cost_bps(symbol: str, notional: float) -> float:

@@ -28,7 +28,9 @@ from research.validation.metrics import trade_metrics
 from research.validation.multiple_testing import benjamini_hochberg
 
 DATA_DIR = "research/data/hl_orderflow_tick"
-TRADE_SIZE = 1.0
+# 2026-07-17: TRADE_SIZE=1.0 코인개수 고정 버그(orderflow_absorption.py와 동일 패턴) —
+# BTC(~$10만)/ETH(~$3천대) 노셔널이 안 맞아 비용 왜곡·풀링 비교 불공정. 달러노셔널 고정으로 수정.
+TARGET_NOTIONAL_USD = 1000.0
 N_RUNS = 500
 SEED = 42
 COST_BPS = hl_effective_cost_bps("major", taker=True)
@@ -71,12 +73,13 @@ def run_bar_signal(symbol: str, signal_name: str, deltas: list[dict]) -> dict:
         return {"symbol": symbol, "signal": signal_name, "blocked": True,
                 "reason": f"{len(closes)}봉뿐 — 최소 표본 미달"}
 
-    trades = simulate_long_short(closes, signals, TRADE_SIZE, COST_BPS)
+    trade_size = TARGET_NOTIONAL_USD / sorted(closes)[len(closes) // 2]
+    trades = simulate_long_short(closes, signals, trade_size, COST_BPS)
     strat = trade_metrics(trades)
     holds = [max(1, t["exit_idx"] - t["entry_idx"]) for t in trades] or [1]
     rnd = random_same_frequency(
         closes, n_trades=strat["num_trades"], holding_periods=holds,
-        trade_size=TRADE_SIZE, cost_bps=COST_BPS,
+        trade_size=trade_size, cost_bps=COST_BPS,
         eligible_indices=eligible, n_runs=N_RUNS, seed=SEED,
     )
     pval = empirical_p_value(strat["total_pnl"], rnd)
@@ -103,19 +106,20 @@ def run_stop_run(symbol: str, deltas: list[dict]) -> dict:
             idx = ev["idx"]
             exit_idx = min(idx + hold, len(closes) - 1)
             entry_px, exit_px = closes[idx], closes[exit_idx]
-            cost = (abs(entry_px) + abs(exit_px)) * TRADE_SIZE * COST_BPS / 10_000.0
+            size = TARGET_NOTIONAL_USD / entry_px
+            cost = (abs(entry_px) + abs(exit_px)) * size * COST_BPS / 10_000.0
             side_sign = 1.0 if ev["side"] == "buy" else -1.0
-            precomputed.append((side_sign, entry_px, exit_px, cost))
+            precomputed.append((side_sign, entry_px, exit_px, cost, size))
 
-        actual_pnls = [sign * (ex - en) * TRADE_SIZE - c for sign, en, ex, c in precomputed]
+        actual_pnls = [sign * (ex - en) * size - c for sign, en, ex, c, size in precomputed]
         strat = trade_metrics([{"pnl": pnl} for pnl in actual_pnls])
 
         random_totals = []
         for _ in range(N_RUNS):
             total = 0.0
-            for _sign, en, ex, c in precomputed:
+            for _sign, en, ex, c, size in precomputed:
                 rsign = rng.choice((1.0, -1.0))
-                total += rsign * (ex - en) * TRADE_SIZE - c
+                total += rsign * (ex - en) * size - c
             random_totals.append(round(total, 6))
         pval = empirical_p_value(strat["total_pnl"], random_totals)
         horizons[f"{hold}b"] = {"strategy": strat, "random": pval}
@@ -131,12 +135,13 @@ def run_gated_signal(symbol: str, deltas: list[dict], ticks: list[dict]) -> dict
         return {"symbol": symbol, "signal": "gated_confluence", "blocked": True,
                 "reason": f"{len(closes)}봉뿐 — 최소 표본 미달"}
 
-    trades = simulate_long_short(closes, signals, TRADE_SIZE, COST_BPS)
+    trade_size = TARGET_NOTIONAL_USD / sorted(closes)[len(closes) // 2]
+    trades = simulate_long_short(closes, signals, trade_size, COST_BPS)
     strat = trade_metrics(trades)
     holds = [max(1, t["exit_idx"] - t["entry_idx"]) for t in trades] or [1]
     rnd = random_same_frequency(
         closes, n_trades=strat["num_trades"], holding_periods=holds,
-        trade_size=TRADE_SIZE, cost_bps=COST_BPS,
+        trade_size=trade_size, cost_bps=COST_BPS,
         eligible_indices=eligible, n_runs=N_RUNS, seed=SEED,
     )
     pval = empirical_p_value(strat["total_pnl"], rnd)

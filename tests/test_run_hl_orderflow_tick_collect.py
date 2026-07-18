@@ -10,8 +10,8 @@ def _trade(price=100.0, size=1.0, side="buy", ts=1.0, symbol="BTC.HL"):
     return TradeEvent(symbol=symbol, ts=ts, price=price, size=size, side=side)
 
 
-def _book(symbol="BTC.HL", ts=1.0):
-    return OrderBookSnapshot(symbol=symbol, ts=ts, bids=[], asks=[])
+def _book(symbol="BTC.HL", ts=1.0, bids=None, asks=None):
+    return OrderBookSnapshot(symbol=symbol, ts=ts, bids=bids or [], asks=asks or [])
 
 
 class FakeClient:
@@ -54,6 +54,38 @@ async def test_run_coin_forever_appends_only_trade_events_not_book_snapshots():
     assert len(appended) == 2
     assert appended[0]["price"] == 100.0
     assert appended[1]["price"] == 102.0
+
+
+async def test_run_coin_forever_converts_book_snapshots_to_heatmap_deltas():
+    from orderflow.models import OrderBookLevel
+
+    book = _book(bids=[OrderBookLevel(price=99.0, size=1.5)], asks=[OrderBookLevel(price=101.0, size=2.0)])
+    client = FakeClient([[book]])
+    depth_appended = []
+    await runner.run_coin_forever(
+        "BTC", client=client,
+        append_fn=lambda coin, trades: None,
+        depth_append_fn=lambda coin, deltas: depth_appended.extend(deltas),
+        max_cycles=1,
+    )
+    assert len(depth_appended) == 2
+    assert {d["price"] for d in depth_appended} == {99.0, 101.0}
+    assert all(d["type"] == "heatmap_delta" for d in depth_appended)
+
+
+def test_append_depth_writes_jsonl_to_coin_dated_file(tmp_path):
+    with patch.object(runner, "_DEPTH_DATA_DIR", tmp_path):
+        runner.append_depth("BTC", [{"type": "heatmap_delta", "ts": 0.0, "price": 100.0, "size": 1.0}])
+        path = tmp_path / f"BTC_{dt.datetime.now(dt.timezone.utc).date().isoformat()}.jsonl"
+        lines = path.read_text().strip().splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["price"] == 100.0
+
+
+def test_append_depth_skips_write_when_empty(tmp_path):
+    with patch.object(runner, "_DEPTH_DATA_DIR", tmp_path):
+        runner.append_depth("BTC", [])
+    assert list(tmp_path.iterdir()) == []
 
 
 async def test_run_coin_forever_backs_off_and_doubles_delay_on_repeated_failure():

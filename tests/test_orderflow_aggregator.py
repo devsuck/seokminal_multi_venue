@@ -14,7 +14,10 @@ def test_on_trade_accumulates_buy_and_sell_volume_in_same_bucket():
     agg = OrderflowAggregator(tick_size=1.0, footprint_bucket_sec=60.0)
     d1 = agg.on_trade(_trade(65000.4, 1.0, "buy", ts=1000.0))
     d2 = agg.on_trade(_trade(65000.6, 0.5, "sell", ts=1010.0))
-    assert d1 == {"type": "footprint_delta", "bucket_ts": 960.0, "price": 65000.0, "side": "buy", "delta_vol": 1.0}
+    assert d1 == {
+        "type": "footprint_delta", "bucket_ts": 960.0, "price": 65000.0, "side": "buy",
+        "delta_vol": 1.0, "tape_trades_per_sec": 0.1,
+    }
     assert d2["side"] == "sell"
     assert d2["bucket_ts"] == 960.0
 
@@ -135,6 +138,22 @@ def test_latest_book_uses_raw_unrounded_prices():
     assert result["asks"][0]["price"] == 100.81
 
 
+def test_tape_speed_counts_trades_within_rolling_window():
+    agg = OrderflowAggregator(tick_size=1.0, footprint_bucket_sec=60.0)
+    for ts in (0.0, 1.0, 2.0, 3.0, 4.0):
+        d = agg.on_trade(_trade(100.0, 1.0, "buy", ts=ts))
+    # 창(10s) 안에 5건 -> 0.5건/초
+    assert d["tape_trades_per_sec"] == 0.5
+
+
+def test_tape_speed_evicts_trades_older_than_window():
+    agg = OrderflowAggregator(tick_size=1.0, footprint_bucket_sec=60.0)
+    agg.on_trade(_trade(100.0, 1.0, "buy", ts=0.0))
+    agg.on_trade(_trade(100.0, 1.0, "buy", ts=1.0))
+    d = agg.on_trade(_trade(100.0, 1.0, "buy", ts=15.0))  # ts=0,1은 15-10=5 cutoff 밖
+    assert d["tape_trades_per_sec"] == 0.1
+
+
 def test_latest_book_defaults_to_20_levels_per_side():
     agg = OrderflowAggregator()
     book = OrderBookSnapshot(
@@ -146,3 +165,82 @@ def test_latest_book_defaults_to_20_levels_per_side():
     result = agg.latest_book(book)
     assert len(result["bids"]) == 20
     assert len(result["asks"]) == 20
+
+
+def _background_bids(large_price=None, large_size=10.0):
+    # 배경 잔량 9개(size=1.0) + 옵션 큰 레벨 1개 -> 중앙값은 큰 레벨 유무와 무관하게 1.0 유지
+    levels = [_level(100 - i, 1.0) for i in range(9)]
+    if large_price is not None:
+        levels.append(_level(large_price, large_size))
+    return levels
+
+
+def _background_asks():
+    return [_level(200 + i, 1.0) for i in range(3)]
+
+
+def test_spoof_alert_fires_when_large_bid_vanishes_quickly_without_trade():
+    agg = OrderflowAggregator(tick_size=1.0)
+    agg.on_book_snapshot(OrderBookSnapshot(
+        symbol="BTC.HL", ts=0.0, bids=_background_bids(large_price=90.0, large_size=10.0), asks=_background_asks(),
+    ))
+    deltas = agg.on_book_snapshot(OrderBookSnapshot(
+        symbol="BTC.HL", ts=1.0, bids=_background_bids(), asks=_background_asks(),
+    ))
+    alerts = [d for d in deltas if d["type"] == "spoof_alert"]
+    assert len(alerts) == 1
+    assert alerts[0]["side"] == "bid"
+    assert alerts[0]["price"] == 90.0
+    assert alerts[0]["peak_size"] == 10.0
+    assert alerts[0]["lifetime_sec"] == 1.0
+    assert alerts[0]["confidence"] == "low"
+
+
+def test_spoof_alert_suppressed_when_trade_fills_the_level():
+    agg = OrderflowAggregator(tick_size=1.0)
+    agg.on_book_snapshot(OrderBookSnapshot(
+        symbol="BTC.HL", ts=0.0, bids=_background_bids(large_price=90.0, large_size=10.0), asks=_background_asks(),
+    ))
+    agg.on_trade(_trade(90.0, 5.0, "sell", ts=0.5))
+    deltas = agg.on_book_snapshot(OrderBookSnapshot(
+        symbol="BTC.HL", ts=1.0, bids=_background_bids(), asks=_background_asks(),
+    ))
+    assert [d for d in deltas if d["type"] == "spoof_alert"] == []
+
+
+def test_spoof_alert_suppressed_when_level_rests_too_long_before_vanishing():
+    agg = OrderflowAggregator(tick_size=1.0)
+    agg.on_book_snapshot(OrderBookSnapshot(
+        symbol="BTC.HL", ts=0.0, bids=_background_bids(large_price=90.0, large_size=10.0), asks=_background_asks(),
+    ))
+    agg.on_book_snapshot(OrderBookSnapshot(
+        symbol="BTC.HL", ts=5.0, bids=_background_bids(large_price=90.0, large_size=10.0), asks=_background_asks(),
+    ))
+    deltas = agg.on_book_snapshot(OrderBookSnapshot(
+        symbol="BTC.HL", ts=6.0, bids=_background_bids(), asks=_background_asks(),
+    ))
+    assert [d for d in deltas if d["type"] == "spoof_alert"] == []
+
+
+def test_spoof_alert_fires_when_large_bid_shrinks_back_down_quickly():
+    agg = OrderflowAggregator(tick_size=1.0)
+    agg.on_book_snapshot(OrderBookSnapshot(
+        symbol="BTC.HL", ts=0.0, bids=_background_bids(large_price=90.0, large_size=10.0), asks=_background_asks(),
+    ))
+    deltas = agg.on_book_snapshot(OrderBookSnapshot(
+        symbol="BTC.HL", ts=1.0, bids=_background_bids(large_price=90.0, large_size=1.0), asks=_background_asks(),
+    ))
+    alerts = [d for d in deltas if d["type"] == "spoof_alert"]
+    assert len(alerts) == 1
+    assert alerts[0]["price"] == 90.0
+
+
+def test_no_spoof_alert_when_no_level_ever_crosses_size_multiplier():
+    agg = OrderflowAggregator(tick_size=1.0)
+    agg.on_book_snapshot(OrderBookSnapshot(
+        symbol="BTC.HL", ts=0.0, bids=_background_bids(), asks=_background_asks(),
+    ))
+    deltas = agg.on_book_snapshot(OrderBookSnapshot(
+        symbol="BTC.HL", ts=1.0, bids=_background_bids(), asks=_background_asks(),
+    ))
+    assert [d for d in deltas if d["type"] == "spoof_alert"] == []

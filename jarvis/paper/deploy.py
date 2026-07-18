@@ -30,6 +30,10 @@ RUNNER_REGISTRY: dict[str, dict] = {
     "kr_dart_buyback_drift_v1": {"runner": "research.paper.buyback_forward:generate",
                                  "rules": {"cadence": "per_event", "hold_days": 20,
                                            "compare": ["cohort_mean", "cohort_median", "right_tail"]}},
+    "kr_turn_of_month_v1_PORTFOLIO": {"runner": "research.paper.tom_forward:generate",
+                                      "rules": {"cadence": "monthly", "hold_days": 4,
+                                                "envelope": "backtest_envelope",
+                                                "compare": ["cohort_mean", "win_rate"]}},
 }
 _GENERIC = {"runner": "generic", "rules": {"cadence": "manual", "ledger": "internal"}}
 

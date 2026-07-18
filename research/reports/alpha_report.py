@@ -20,8 +20,12 @@ def _verdict(strategy_pnl: float, pval: dict, wf: dict, underpowered: bool) -> s
         return "UNDERPOWERED — 거래 수 부족, 판정 보류"
     if p is None:
         return "NO DATA"
+    # 2026-07-17 버그 수정: percentile만 보고 EDGE CANDIDATE 판정하면 순손실
+    # 전략도(랜덤보다만 덜 나쁘면) 통과해버림 — net PnL 부호를 반드시 같이 봄.
     if p >= 95:
-        return "EDGE CANDIDATE — 랜덤 95퍼센타일 초과"
+        if strategy_pnl is not None and strategy_pnl <= 0:
+            return "SIGNAL-BUT-SUBCOST — 방향예측력 유의하나 net PnL<=0(비용이 갉아먹음), 거래대상 아님"
+        return "EDGE CANDIDATE — 랜덤 95퍼센타일 초과 · net PnL>0"
     if p >= 70:
         return "WEAK — 랜덤 상위권이나 유의 미달"
     if p >= 50:

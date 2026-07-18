@@ -31,7 +31,13 @@ ABSORPTION_DOMINANCE_RATIO = 0.7
 ABSORPTION_NOISE_FLOOR_MULTIPLIER = 10.0
 BUCKET_SEC = 60
 
-DEFAULTS = {"trade_size": 10.0}
+# 2026-07-17 버그 발견: trade_size를 "코인 개수"로 고정(10.0)하면 BTC(~$100k)에서
+# 노셔널이 회당 $1M+로 폭주해 cost_bps가 실제 가격변동을 통째로 삼켜버림(승률<1%,
+# actual/random 둘 다 대참패 후 근소한 차이로 "beats random" 오탐 — EDGE CANDIDATE
+# 오라벨링 원인). 심볼 가격스케일과 무관하게 공정 비교하려면 달러노셔널 고정이 맞다.
+TARGET_NOTIONAL_USD = 1000.0
+
+DEFAULTS: dict = {}
 
 
 def load_ticks(paths: list[str]) -> list[dict]:
@@ -197,14 +203,15 @@ def run_large_trade_hypothesis(
     if len(closes) < 10:
         return _blocked(symbol, f"틱→버킷 변환 후 {len(closes)}봉뿐 — 최소 표본 미달", write_report)
 
+    trade_size = p.get("trade_size") or TARGET_NOTIONAL_USD / _median(closes)
     cost_bps = hl_effective_cost_bps("major", taker=True)
-    trades = simulate_long_short(closes, signals, p["trade_size"], cost_bps)
+    trades = simulate_long_short(closes, signals, trade_size, cost_bps)
     strat = trade_metrics(trades)
 
     holds = [max(1, t["exit_idx"] - t["entry_idx"]) for t in trades] or [1]
     rnd = random_same_frequency(
         closes, n_trades=strat["num_trades"], holding_periods=holds,
-        trade_size=p["trade_size"], cost_bps=cost_bps,
+        trade_size=trade_size, cost_bps=cost_bps,
         eligible_indices=eligible, n_runs=n_runs, seed=seed,
     )
     pval = empirical_p_value(strat["total_pnl"], rnd)
@@ -264,10 +271,11 @@ def run_large_trade_event_hypothesis(
     symbol: str,
     tick_paths: list[str],
     hold_seconds_list: tuple[float, ...] = (10.0, 30.0, 60.0),
-    trade_size: float = 10.0,
+    trade_size: float | None = None,
     n_runs: int = 500,
     seed: int = 42,
     write_report: bool = True,
+    taker: bool = True,
 ) -> dict:
     """대량체결 방향 → 즉시 진입, N초 뒤 고정청산. 1분봉 집계판(run_large_trade_hypothesis)의
     후속 재설계 — 1분에 틱 100개+ 몰리는 BTC/ETH에서 매수/매도 대량체결이 같은 분봉에
@@ -286,30 +294,33 @@ def run_large_trade_event_hypothesis(
 
     ts_arr = [t["ts"] for t in ticks]
     px_arr = [t["price"] for t in ticks]
-    cost_bps = hl_effective_cost_bps("major", taker=True)
+    cost_bps = hl_effective_cost_bps("major", taker=taker)
     rng = _random.Random(seed)
 
     horizons: dict[str, dict] = {}
     for hold_sec in hold_seconds_list:
-        precomputed = []  # (side_sign, entry_px, exit_px, cost)
+        precomputed = []  # (side_sign, entry_px, exit_px, cost, size)
         for ev in events:
             entry_idx, entry_px = ev["idx"], ev["price"]
             exit_ts = ev["ts"] + hold_sec
             exit_idx = min(bisect.bisect_left(ts_arr, exit_ts, entry_idx), len(ts_arr) - 1)
             exit_px = px_arr[exit_idx]
-            cost = (abs(entry_px) + abs(exit_px)) * trade_size * cost_bps / 10_000.0
+            # 심볼 가격스케일 무관하게 회당 노셔널을 맞춘다(고정 코인개수 쓰면 BTC에서
+            # 노셔널 폭주해 cost가 가격변동을 통째로 삼킴 — 2026-07-17 버그 수정).
+            size = trade_size if trade_size is not None else TARGET_NOTIONAL_USD / entry_px
+            cost = (abs(entry_px) + abs(exit_px)) * size * cost_bps / 10_000.0
             side_sign = 1.0 if ev["side"] == "buy" else -1.0
-            precomputed.append((side_sign, entry_px, exit_px, cost))
+            precomputed.append((side_sign, entry_px, exit_px, cost, size))
 
-        actual_pnls = [sign * (ex - en) * trade_size - c for sign, en, ex, c in precomputed]
+        actual_pnls = [sign * (ex - en) * size - c for sign, en, ex, c, size in precomputed]
         strat = trade_metrics([{"pnl": p} for p in actual_pnls])
 
         random_totals = []
         for _ in range(n_runs):
             total = 0.0
-            for _sign, en, ex, c in precomputed:
+            for _sign, en, ex, c, size in precomputed:
                 rsign = rng.choice((1.0, -1.0))
-                total += rsign * (ex - en) * trade_size - c
+                total += rsign * (ex - en) * size - c
             random_totals.append(round(total, 6))
         pval = empirical_p_value(strat["total_pnl"], random_totals)
 
@@ -364,14 +375,15 @@ def run_hypothesis(
     if len(closes) < 10:
         return _blocked(symbol, f"틱→버킷 변환 후 {len(closes)}봉뿐 — 최소 표본 미달", write_report)
 
+    trade_size = p.get("trade_size") or TARGET_NOTIONAL_USD / _median(closes)
     cost_bps = hl_effective_cost_bps("major", taker=True)
-    trades = simulate_long_short(closes, signals, p["trade_size"], cost_bps)
+    trades = simulate_long_short(closes, signals, trade_size, cost_bps)
     strat = trade_metrics(trades)
 
     holds = [max(1, t["exit_idx"] - t["entry_idx"]) for t in trades] or [1]
     rnd = random_same_frequency(
         closes, n_trades=strat["num_trades"], holding_periods=holds,
-        trade_size=p["trade_size"], cost_bps=cost_bps,
+        trade_size=trade_size, cost_bps=cost_bps,
         eligible_indices=eligible, n_runs=n_runs, seed=seed,
     )
     pval = empirical_p_value(strat["total_pnl"], rnd)

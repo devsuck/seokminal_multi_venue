@@ -14,7 +14,7 @@ from orderflow.multi_venue_adapter import MultiVenueOrderflowClient
 RECONNECT_BASE_DELAY = 2.0
 RECONNECT_MAX_DELAY = 60.0
 
-TICK_SIZE_BY_SYMBOL = {"BTC.HL": 1.0, "NQ": 0.25, "ES": 0.25, "GC": 0.10}
+TICK_SIZE_BY_SYMBOL = {"BTC.HL": 1.0, "PAXG.HL": 0.5, "NQ": 0.25, "ES": 0.25, "GC": 0.10}
 DEFAULT_TICK_SIZE = 1.0
 
 SUBSCRIBER_QUEUE_MAXSIZE = 1000

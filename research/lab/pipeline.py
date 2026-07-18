@@ -46,8 +46,16 @@ class LabEngine:
         # 합성 데모 제거 → 실 이벤트 family(Auto-Research 실엔진) + 데이터게이트 예시 1개.
         # 이번 세션에서 이미 판정난 id는 재시드하지 않음(그렇지 않으면 큐 비움=오토파일럿
         # 완주 후 재시작 시 처리했던 가설이 그대로 재등장 — 삭제가 안 되는 것처럼 보임).
+        #
+        # blocked 항목은 _done_ids가 메모리 전용이라 재시작마다 부활한다 — 그 중 registry에
+        # 이미 실제 판정(known_edges, precomputed_id 포함 매칭)이 있는 건 "여전히 BLOCKED"가
+        # 아니라 "이미 답 나옴"이므로 재시드 대상에서 제외한다.
         from research.lab.hypotheses import real_event_queue
-        seeds = real_event_queue() + [h for h in SEED_QUEUE if h.data_mode == "blocked"]
+        known_ids = {e.get("hypothesis_id") for e in known_edges()}
+        seeds = real_event_queue() + [
+            h for h in SEED_QUEUE
+            if h.data_mode == "blocked" and h.id not in known_ids and (h.precomputed_id or h.id) not in known_ids
+        ]
         for h in seeds:
             self._by_id[h.id] = h
         self._queue = [h.id for h in seeds if h.id not in self._done_ids]

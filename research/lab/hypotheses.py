@@ -48,9 +48,10 @@ SEED_QUEUE: list[Hypothesis] = [
         name="KR CB/BW 오버행 해소",
         family="event", market="KR",
         thesis="희석 오버행(전환사채/BW)이 상환·소각·전환완료로 해소되면 매도압력 제거 → buyback과 같은 공급 이벤트 family. 반등 가능.",
-        kill="해소 이벤트를 원발행 회차와 linkage 불가 + 미상환 잔액 재구성 불가 → BLOCKED_BY_DATA.",
+        kill="해소 이벤트를 원발행 회차와 linkage 불가 + 미상환 잔액 재구성 불가 → BLOCKED_BY_DATA(정식 스펙). "
+             "단순 이벤트 버전(linkage 없이 cb_release 단독)은 이미 실행·REJECT — kr_cb_release_drift_v1_PIT 참조.",
         entry="해소 공시 익일 시가", hold="20d / 60d", universe="KR 소중형(PIT survivorship-free)",
-        cost_bps=50.0, data_mode="blocked",
+        cost_bps=50.0, data_mode="blocked", precomputed_id="kr_cb_release_drift_v1_PIT",
     ),
     Hypothesis(
         id="cb_bw_issuance_negdrift_v1",

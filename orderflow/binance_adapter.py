@@ -1,10 +1,16 @@
-"""Binance 퍼블릭 WS(aggTrade + partial depth) 어댑터 — CVD/대량체결/흡수 지표에
-합류시킬 보조 체결 소스이자, COB 유동성 풀에 합류시킬 보조 뎁스 소스."""
+"""Binance 퍼블릭 WS(aggTrade + 풀 L2 뎁스) 어댑터 — CVD/대량체결/흡수 지표에
+합류시킬 보조 체결 소스이자, COB 유동성 풀에 합류시킬 보조 뎁스 소스.
+
+뎁스는 파티셜 뎁스 스트림(@depth20, 상한 20단계 고정)이 아니라 REST 스냅샷 + diff
+스트림 조합으로 로컬 오더북을 유지한다 — 파티셜 스트림은 $0.01 틱 20단계라 폭이
+~$0.2뿐이라 래더 그룹핑 배율(×10/×100)을 켜면 전부 한두 칸에 뭉쳐버리는 문제가 있었음."""
 import json
+import logging
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
+import httpx
 import websockets
 
 from orderflow.models import LiquidationEvent, OrderBookLevel, OrderBookSnapshot, TradeEvent
@@ -12,10 +18,23 @@ from orderflow.models import LiquidationEvent, OrderBookLevel, OrderBookSnapshot
 BINANCE_WS_URL = "wss://stream.binance.com:9443/ws"
 # forceOrder(청산 체결)는 선물 전용 이벤트라 현물 스트림(BINANCE_WS_URL)엔 없음 — USDⓈ-M 선물 WS 별도 접속.
 BINANCE_FUTURES_WS_URL = "wss://fstream.binance.com/ws"
-DEPTH_LEVELS = 20
+BINANCE_REST_URL = "https://api.binance.com/api/v3/depth"
+# REST 스냅샷 리밋 최대치(공식 상한 5000) — $0.01 틱이라 스냅샷 자체가 좁은 가격폭만
+# 커버하면 래더 그룹핑(×100=$10 버킷)이 몇 칸 안 채워짐, 최대한 넓게 받아온다.
+DEPTH_SNAPSHOT_LIMIT = 5000
+# 로컬 오더북 유지 상한 — 이전엔 200으로 잘라서 스냅샷+diff로 확보한 폭을 도로 버렸음
+# (래더 ×100 배율에서 몇 칸밖에 안 뜨는 원인). 스냅샷 상한에 맞춰 넉넉히 들고 있는다.
+LOCAL_BOOK_MAX_LEVELS = 2000
 
 # HL 코인 심볼(예: "BTC") → 바이낸스 spot 심볼
 BINANCE_SYMBOL_MAP = {"BTC": "btcusdt", "ETH": "ethusdt", "SOL": "solusdt"}
+
+
+async def _default_fetch_snapshot(pair: str) -> dict:
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(BINANCE_REST_URL, params={"symbol": pair.upper(), "limit": DEPTH_SNAPSHOT_LIMIT})
+        resp.raise_for_status()
+        return resp.json()
 
 
 class BinanceOrderflowClient:
@@ -24,10 +43,12 @@ class BinanceOrderflowClient:
         base_url: str = BINANCE_WS_URL,
         futures_base_url: str = BINANCE_FUTURES_WS_URL,
         connect_fn: Callable[[str], Any] = websockets.connect,
+        fetch_snapshot_fn: Callable[[str], Awaitable[dict]] = _default_fetch_snapshot,
     ) -> None:
         self._base_url = base_url
         self._futures_base_url = futures_base_url
         self._connect_fn = connect_fn
+        self._fetch_snapshot_fn = fetch_snapshot_fn
 
     async def stream(self, coin: str) -> AsyncIterator[TradeEvent]:
         pair = BINANCE_SYMBOL_MAP.get(coin)
@@ -44,12 +65,45 @@ class BinanceOrderflowClient:
         pair = BINANCE_SYMBOL_MAP.get(coin)
         if pair is None:
             return
-        url = f"{self._base_url}/{pair}@depth{DEPTH_LEVELS}@100ms"
+
+        snapshot = await self._fetch_snapshot_fn(pair)
+        last_update_id = snapshot["lastUpdateId"]
+        bids: dict[float, float] = {float(p): float(s) for p, s in snapshot["bids"]}
+        asks: dict[float, float] = {float(p): float(s) for p, s in snapshot["asks"]}
+
+        url = f"{self._base_url}/{pair}@depth@100ms"
+        synced = False
+        prev_u: int | None = None
         async with self._connect_fn(url) as connection:
             async for raw in connection:
-                event = parse_binance_depth_message(raw, coin=coin)
-                if event is not None:
-                    yield event
+                diff = parse_binance_diff_message(raw)
+                if diff is None:
+                    continue
+                if diff["u"] <= last_update_id:
+                    continue  # 스냅샷보다 오래된 이벤트 — 폐기.
+                if not synced:
+                    # 스냅샷 직후 첫 이벤트가 스냅샷 시점을 감싸지 않으면(U > lastUpdateId+1) 갭 —
+                    # 참고용 뎁스라 하드 재동기화 없이 로그만 남기고 이어감(운영 실거래 데이터 아님).
+                    if diff["U"] > last_update_id + 1:
+                        logging.warning("binance depth stream gap at sync for %s", pair)
+                    synced = True
+                elif prev_u is not None and diff["U"] != prev_u + 1:
+                    logging.warning("binance depth stream gap for %s: prev_u=%s U=%s", pair, prev_u, diff["U"])
+                prev_u = diff["u"]
+                apply_binance_diff(bids, diff["b"])
+                apply_binance_diff(asks, diff["a"])
+                yield OrderBookSnapshot(
+                    symbol=f"{coin}.HL",
+                    ts=time.time(),
+                    bids=[
+                        OrderBookLevel(price=p, size=s)
+                        for p, s in sorted(bids.items(), reverse=True)[:LOCAL_BOOK_MAX_LEVELS]
+                    ],
+                    asks=[
+                        OrderBookLevel(price=p, size=s)
+                        for p, s in sorted(asks.items())[:LOCAL_BOOK_MAX_LEVELS]
+                    ],
+                )
 
     async def stream_liquidations(self, coin: str) -> AsyncIterator[LiquidationEvent]:
         pair = BINANCE_SYMBOL_MAP.get(coin)
@@ -83,22 +137,25 @@ def parse_binance_message(raw: str, coin: str) -> TradeEvent | None:
         return None
 
 
-def parse_binance_depth_message(
-    raw: str, coin: str, now_fn: Callable[[], float] = time.time
-) -> OrderBookSnapshot | None:
+def apply_binance_diff(book: dict[float, float], updates: list[list[str]]) -> None:
+    """diff 이벤트의 한쪽(bids/asks) 배열을 로컬 오더북 dict에 적용 — size 0은 레벨 제거."""
+    for p, s in updates:
+        price, size = float(p), float(s)
+        if size == 0:
+            book.pop(price, None)
+        else:
+            book[price] = size
+
+
+def parse_binance_diff_message(raw: str) -> dict | None:
     try:
         msg = json.loads(raw)
     except (TypeError, ValueError):
         return None
-    if not isinstance(msg, dict) or "bids" not in msg or "asks" not in msg:
+    if not isinstance(msg, dict) or msg.get("e") != "depthUpdate":
         return None
     try:
-        return OrderBookSnapshot(
-            symbol=f"{coin}.HL",
-            ts=now_fn(),
-            bids=[OrderBookLevel(price=float(p), size=float(s)) for p, s in msg["bids"]],
-            asks=[OrderBookLevel(price=float(p), size=float(s)) for p, s in msg["asks"]],
-        )
+        return {"U": int(msg["U"]), "u": int(msg["u"]), "b": msg["b"], "a": msg["a"]}
     except (KeyError, TypeError, ValueError):
         return None
 

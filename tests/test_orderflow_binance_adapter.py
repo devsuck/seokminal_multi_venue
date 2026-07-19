@@ -2,7 +2,8 @@ import json
 
 from orderflow.binance_adapter import (
     BinanceOrderflowClient,
-    parse_binance_depth_message,
+    apply_binance_diff,
+    parse_binance_diff_message,
     parse_binance_liquidation_message,
     parse_binance_message,
 )
@@ -86,37 +87,64 @@ async def test_stream_yields_nothing_for_unmapped_coin():
     assert fake_connect.called_with is None
 
 
-def test_parse_binance_depth_message_maps_levels():
-    raw = json.dumps({
-        "lastUpdateId": 1,
-        "bids": [["65000.0", "0.5"], ["64999.0", "1.2"]],
-        "asks": [["65001.0", "0.3"]],
-    })
-    event = parse_binance_depth_message(raw, coin="BTC", now_fn=lambda: 1720000001.0)
-    assert isinstance(event, OrderBookSnapshot)
-    assert event.symbol == "BTC.HL"
-    assert event.ts == 1720000001.0
-    assert [lvl.price for lvl in event.bids] == [65000.0, 64999.0]
-    assert event.asks[0].size == 0.3
+def test_apply_binance_diff_updates_and_removes_zero_size():
+    book = {65000.0: 0.5, 64999.0: 1.2}
+    apply_binance_diff(book, [["64999.0", "0"], ["64998.0", "2.0"]])
+    assert book == {65000.0: 0.5, 64998.0: 2.0}
 
 
-def test_parse_binance_depth_message_ignores_malformed_json():
-    assert parse_binance_depth_message("not json", coin="BTC") is None
+def test_parse_binance_diff_message_maps_fields():
+    raw = json.dumps({"e": "depthUpdate", "U": 101, "u": 105, "b": [["65000.0", "0.5"]], "a": [["65001.0", "0.3"]]})
+    diff = parse_binance_diff_message(raw)
+    assert diff == {"U": 101, "u": 105, "b": [["65000.0", "0.5"]], "a": [["65001.0", "0.3"]]}
 
 
-def test_parse_binance_depth_message_ignores_missing_field():
-    raw = json.dumps({"lastUpdateId": 1, "bids": [["65000.0", "0.5"]]})  # asks 없음
-    assert parse_binance_depth_message(raw, coin="BTC") is None
+def test_parse_binance_diff_message_ignores_other_event_types():
+    raw = json.dumps({"e": "aggTrade"})
+    assert parse_binance_diff_message(raw) is None
 
 
-async def test_stream_depth_connects_to_depth_url_and_yields_parsed_snapshot():
-    raw = json.dumps({"lastUpdateId": 1, "bids": [["65000.0", "0.5"]], "asks": [["65001.0", "0.3"]]})
-    fake_connect = FakeConnect([raw])
-    client = BinanceOrderflowClient(connect_fn=fake_connect)
+def test_parse_binance_diff_message_ignores_malformed_json():
+    assert parse_binance_diff_message("not json") is None
+
+
+def test_parse_binance_diff_message_ignores_missing_field():
+    raw = json.dumps({"e": "depthUpdate", "U": 101, "b": [], "a": []})  # u 없음
+    assert parse_binance_diff_message(raw) is None
+
+
+async def test_stream_depth_fetches_snapshot_then_merges_diff_and_yields_snapshot():
+    diff_raw = json.dumps({"e": "depthUpdate", "U": 101, "u": 101, "b": [["64998.0", "2.0"]], "a": []})
+    fake_connect = FakeConnect([diff_raw])
+
+    async def fake_fetch_snapshot(pair: str) -> dict:
+        assert pair == "btcusdt"
+        return {"lastUpdateId": 100, "bids": [["65000.0", "0.5"]], "asks": [["65001.0", "0.3"]]}
+
+    client = BinanceOrderflowClient(connect_fn=fake_connect, fetch_snapshot_fn=fake_fetch_snapshot)
     events = [e async for e in client.stream_depth("BTC")]
     assert len(events) == 1
-    assert isinstance(events[0], OrderBookSnapshot)
-    assert fake_connect.called_with == "wss://stream.binance.com:9443/ws/btcusdt@depth20@100ms"
+    event = events[0]
+    assert isinstance(event, OrderBookSnapshot)
+    assert [lvl.price for lvl in event.bids] == [65000.0, 64998.0]
+    assert event.asks[0].price == 65001.0
+    assert fake_connect.called_with == "wss://stream.binance.com:9443/ws/btcusdt@depth@100ms"
+
+
+async def test_stream_depth_discards_diffs_not_newer_than_snapshot():
+    old_diff = json.dumps({"e": "depthUpdate", "U": 90, "u": 100, "b": [["64000.0", "1.0"]], "a": []})
+    new_diff = json.dumps({"e": "depthUpdate", "U": 101, "u": 101, "b": [["64998.0", "2.0"]], "a": []})
+    fake_connect = FakeConnect([old_diff, new_diff])
+
+    async def fake_fetch_snapshot(pair: str) -> dict:
+        return {"lastUpdateId": 100, "bids": [["65000.0", "0.5"]], "asks": [["65001.0", "0.3"]]}
+
+    client = BinanceOrderflowClient(connect_fn=fake_connect, fetch_snapshot_fn=fake_fetch_snapshot)
+    events = [e async for e in client.stream_depth("BTC")]
+    assert len(events) == 1  # old_diff(u=100<=lastUpdateId=100)는 폐기, new_diff만 반영
+    bid_prices = [lvl.price for lvl in events[0].bids]
+    assert 64000.0 not in bid_prices
+    assert 64998.0 in bid_prices
 
 
 async def test_stream_depth_yields_nothing_for_unmapped_coin():

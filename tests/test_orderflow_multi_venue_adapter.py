@@ -24,7 +24,7 @@ def _book():
 
 
 class _FakeClient:
-    """단순 one-shot 스트림 페이크 — 실제 HL/Binance/OKX 어댑터 대역."""
+    """단순 one-shot 스트림 페이크 — 실제 HL/Binance/Bybit 어댑터 대역."""
 
     def __init__(self, events, depth_events=()):
         self._events = events
@@ -94,9 +94,9 @@ class _FailThenYieldClient:
 async def test_merges_events_from_all_three_venues():
     hl = _FakeClient([_book(), _trade(side="buy")])
     binance = _FakeClient([_trade(side="sell")])
-    okx = _FakeClient([_trade(side="buy", price=101.0)])
+    bybit = _FakeClient([_trade(side="buy", price=101.0)])
 
-    client = MultiVenueOrderflowClient(hl_client=hl, binance_client=binance, okx_client=okx)
+    client = MultiVenueOrderflowClient(hl_client=hl, binance_client=binance, bybit_client=bybit)
     gen = client.stream("BTC")
 
     events = []
@@ -111,9 +111,9 @@ async def test_merges_events_from_all_three_venues():
 async def test_dead_venue_does_not_block_others():
     hl = _HangingClient()
     binance = _HangingClient()
-    okx = _FakeClient([_trade(side="buy")])
+    bybit = _FakeClient([_trade(side="buy")])
 
-    client = MultiVenueOrderflowClient(hl_client=hl, binance_client=binance, okx_client=okx)
+    client = MultiVenueOrderflowClient(hl_client=hl, binance_client=binance, bybit_client=bybit)
     gen = client.stream("BTC")
 
     event = await asyncio.wait_for(gen.__anext__(), timeout=1.0)
@@ -130,9 +130,9 @@ async def test_failed_source_reconnects_and_still_yields(monkeypatch):
 
     hl = _FailThenYieldClient([_trade(side="buy")])
     binance = _HangingClient()
-    okx = _HangingClient()
+    bybit = _HangingClient()
 
-    client = MultiVenueOrderflowClient(hl_client=hl, binance_client=binance, okx_client=okx)
+    client = MultiVenueOrderflowClient(hl_client=hl, binance_client=binance, bybit_client=bybit)
     gen = client.stream("BTC")
 
     event = await asyncio.wait_for(gen.__anext__(), timeout=1.0)
@@ -192,7 +192,7 @@ async def test_stream_emits_pooled_book_as_venue_depth_arrives():
         bids=[OrderBookLevel(price=100.7, size=3.0)],
         asks=[OrderBookLevel(price=101.4, size=0.7)],
     )
-    okx_depth_book = OrderBookSnapshot(
+    bybit_depth_book = OrderBookSnapshot(
         symbol="BTC.HL", ts=1002.0,
         bids=[OrderBookLevel(price=100.1, size=0.2)],
         asks=[OrderBookLevel(price=101.9, size=1.0)],
@@ -200,9 +200,9 @@ async def test_stream_emits_pooled_book_as_venue_depth_arrives():
 
     hl = _FakeClient([hl_book])
     binance = _FakeClient([], depth_events=[binance_depth_book])
-    okx = _FakeClient([], depth_events=[okx_depth_book])
+    bybit = _FakeClient([], depth_events=[bybit_depth_book])
 
-    client = MultiVenueOrderflowClient(hl_client=hl, binance_client=binance, okx_client=okx, tick_size=1.0)
+    client = MultiVenueOrderflowClient(hl_client=hl, binance_client=binance, bybit_client=bybit, tick_size=1.0)
     gen = client.stream("BTC")
 
     books = [await asyncio.wait_for(gen.__anext__(), timeout=1.0) for _ in range(3)]
@@ -218,4 +218,4 @@ async def test_stream_emits_pooled_book_as_venue_depth_arrives():
     assert bid_by_price[99.0] == pytest.approx(2.0)
     assert ask_by_price[101.0] == pytest.approx(2.2)  # 101.2(0.5)+101.4(0.7)+101.9(1.0)
     assert fully_pooled.bids[0].price == 100.0  # 매수 호가는 내림차순(최우선 호가가 앞)
-    assert fully_pooled.venues == ["binance-depth", "hyperliquid", "okx-depth"]
+    assert fully_pooled.venues == ["binance-depth", "bybit-depth", "hyperliquid"]

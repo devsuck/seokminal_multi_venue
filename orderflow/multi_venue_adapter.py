@@ -1,4 +1,4 @@
-"""HL + Binance + OKX 통합 스트림 — 체결 테이프 병합 + 오더북 유동성 풀링.
+"""HL + Binance + Bybit 통합 스트림 — 체결 테이프 병합 + 오더북 유동성 풀링.
 
 CVD/대량체결/흡수 지표는 전부 체결 테이프(TradeEvent) 하나로 계산되므로, 세 거래소
 체결을 같은 canonical 심볼("{coin}.HL")로 병합해 넘기면 `orderflow/aggregator.py`
@@ -8,8 +8,8 @@ CVD/대량체결/흡수 지표는 전부 체결 테이프(TradeEvent) 하나로 
 오더북 뎁스(COB)도 세 거래소를 "유동성 풀"로 합친다: 거래소별 최신 스냅샷을 들고
 있다가, 어느 한 곳이 갱신될 때마다 가격을 tick_size 단위로 반올림해 같은 가격대의
 잔량(size)을 합산한 풀링 스냅샷 하나를 내보낸다. 거래소마다 절대가가 미세하게 달라
-틱 반올림 없이는 합산이 무의미해진다. Binance/OKX 모두 REST 스냅샷+diff 병합으로
-로컬 풀 오더북(최대 200단계)을 유지하므로 HL 원장과 비슷한 깊이를 확보한다.
+틱 반올림 없이는 합산이 무의미해진다. Binance/Bybit 모두 스냅샷+diff 병합으로
+로컬 풀 오더북을 유지하므로 HL 원장과 비슷한 깊이를 확보한다.
 
 거래소별로 독립적으로 재연결한다: 한 소스가 끊겨도 나머지는 계속 흐르고, 끊긴
 소스만 자체 백오프로 재시도한다(`manager.py`의 심볼 단위 재연결과 별개 계층). 뎁스
@@ -23,20 +23,19 @@ import time
 from collections.abc import AsyncIterator, Callable, Iterable
 
 from orderflow.binance_adapter import BinanceOrderflowClient
+from orderflow.bybit_adapter import BybitOrderflowClient
 from orderflow.hl_adapter import HyperliquidOrderflowClient
 from orderflow.models import LiquidationEvent, OrderBookLevel, OrderBookSnapshot, TradeEvent
-from orderflow.okx_adapter import OkxOrderflowClient
 
 RECONNECT_BASE_DELAY = 2.0
 RECONNECT_MAX_DELAY = 60.0
 QUEUE_MAXSIZE = 2000
 POOL_DEPTH_LEVELS = 25
 # 거래소별 개별 래더 컬럼(프론트 3분할 뷰)용 원장 뎁스 — 풀 뷰보다 깊게 잡아도 무방(원장 그대로라
-# 반올림 손실 없음). 래더 그룹핑 배율(×100=$10 버킷)이 20행을 채우려면 최소 ~$200 가격폭이
-# 필요한데, 400단계로 실측해보니 OKX(거래소 자체 상한 400)는 ~$150폭까지 나오지만 바이낸스는
-# 틱이 더 촘촘해 400단계로는 ~$60폭뿐 — OKX는 어차피 자체 상한에 막히니 손해 없고 바이낸스만
-# 더 챙기도록 상향(로컬북 상한 2000 이내).
-VENUE_DEPTH_LEVELS = 1200
+# 반올림 손실 없음). 래더 ×1000(=$100 버킷) 옵션까지 채우려면 ×100보다 더 넓은 가격폭이
+# 필요 — 바이빗은 거래소 자체 상한(200)에 막히니 그 이상 올려도 무의미, 바이낸스만 로컬북
+# 상한(5000)에 최대한 가깝게 끌어온다.
+VENUE_DEPTH_LEVELS = 3000
 
 
 class MultiVenueOrderflowClient:
@@ -47,12 +46,12 @@ class MultiVenueOrderflowClient:
         self,
         hl_client: HyperliquidOrderflowClient | None = None,
         binance_client: BinanceOrderflowClient | None = None,
-        okx_client: OkxOrderflowClient | None = None,
+        bybit_client: BybitOrderflowClient | None = None,
         tick_size: float = 1.0,
     ) -> None:
         self._hl_client = hl_client or HyperliquidOrderflowClient()
         self._binance_client = binance_client or BinanceOrderflowClient()
-        self._okx_client = okx_client or OkxOrderflowClient()
+        self._bybit_client = bybit_client or BybitOrderflowClient()
         self._tick_size = tick_size
 
     async def stream(self, coin: str) -> AsyncIterator[OrderBookSnapshot | TradeEvent | LiquidationEvent]:
@@ -65,8 +64,8 @@ class MultiVenueOrderflowClient:
             asyncio.ensure_future(_pump_with_reconnect(lambda: self._binance_client.stream(coin), sink, "binance-trades")),
             asyncio.ensure_future(_pump_with_reconnect(lambda: self._binance_client.stream_depth(coin), sink, "binance-depth")),
             asyncio.ensure_future(_pump_with_reconnect(lambda: self._binance_client.stream_liquidations(coin), sink, "binance-liq")),
-            asyncio.ensure_future(_pump_with_reconnect(lambda: self._okx_client.stream(coin), sink, "okx-trades")),
-            asyncio.ensure_future(_pump_with_reconnect(lambda: self._okx_client.stream_depth(coin), sink, "okx-depth")),
+            asyncio.ensure_future(_pump_with_reconnect(lambda: self._bybit_client.stream(coin), sink, "bybit-trades")),
+            asyncio.ensure_future(_pump_with_reconnect(lambda: self._bybit_client.stream_depth(coin), sink, "bybit-depth")),
         ]
         try:
             while True:

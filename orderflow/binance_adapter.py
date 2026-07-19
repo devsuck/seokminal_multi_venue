@@ -23,8 +23,9 @@ BINANCE_REST_URL = "https://api.binance.com/api/v3/depth"
 # 커버하면 래더 그룹핑(×100=$10 버킷)이 몇 칸 안 채워짐, 최대한 넓게 받아온다.
 DEPTH_SNAPSHOT_LIMIT = 5000
 # 로컬 오더북 유지 상한 — 이전엔 200으로 잘라서 스냅샷+diff로 확보한 폭을 도로 버렸음
-# (래더 ×100 배율에서 몇 칸밖에 안 뜨는 원인). 스냅샷 상한에 맞춰 넉넉히 들고 있는다.
-LOCAL_BOOK_MAX_LEVELS = 2000
+# (래더 ×100 배율에서 몇 칸밖에 안 뜨는 원인). ×1000까지 쓰려면 더 넓게 필요해서 스냅샷
+# 상한(5000)까지 그대로 들고 있는다.
+LOCAL_BOOK_MAX_LEVELS = 5000
 
 # HL 코인 심볼(예: "BTC") → 바이낸스 spot 심볼
 BINANCE_SYMBOL_MAP = {"BTC": "btcusdt", "ETH": "ethusdt", "SOL": "solusdt"}

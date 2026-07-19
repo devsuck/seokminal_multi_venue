@@ -36,6 +36,9 @@ class _FakeClient:
     def stream_depth(self, coin):
         return self._gen(self._depth_events)
 
+    def stream_liquidations(self, coin):
+        return self._gen(())
+
     async def _gen(self, events):
         for e in events:
             yield e
@@ -48,6 +51,9 @@ class _HangingClient:
         return self._gen()
 
     def stream_depth(self, coin):
+        return self._gen()
+
+    def stream_liquidations(self, coin):
         return self._gen()
 
     async def _gen(self):
@@ -65,6 +71,16 @@ class _FailThenYieldClient:
         if self.call_count == 1:
             return self._fail()
         return self._gen()
+
+    def stream_depth(self, coin):
+        return self._empty()
+
+    def stream_liquidations(self, coin):
+        return self._empty()
+
+    async def _empty(self):
+        return
+        yield  # pragma: no cover - unreachable, keeps this an async generator
 
     async def _fail(self):
         raise ConnectionError("boom")

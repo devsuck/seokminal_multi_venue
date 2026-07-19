@@ -16,7 +16,7 @@ def test_on_trade_accumulates_buy_and_sell_volume_in_same_bucket():
     d2 = agg.on_trade(_trade(65000.6, 0.5, "sell", ts=1010.0))
     assert d1 == {
         "type": "footprint_delta", "bucket_ts": 960.0, "price": 65000.0, "side": "buy",
-        "delta_vol": 1.0, "tape_trades_per_sec": 0.1,
+        "delta_vol": 1.0, "tape_trades_per_sec": 0.1, "ts": 1000.0,
     }
     assert d2["side"] == "sell"
     assert d2["bucket_ts"] == 960.0
@@ -122,6 +122,7 @@ def test_latest_book_sorts_best_first_and_caps_each_side():
         "bids": [{"price": 101, "size": 2}, {"price": 100, "size": 3}],
         "asks": [{"price": 103, "size": 2}, {"price": 104, "size": 3}],
         "venues": [],
+        "by_venue": {},
     }
 
 

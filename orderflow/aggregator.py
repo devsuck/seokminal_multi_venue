@@ -97,6 +97,7 @@ class OrderflowAggregator:
             "side": trade.side,
             "delta_vol": trade.size,
             "tape_trades_per_sec": tape_trades_per_sec,
+            "ts": trade.ts,
         }
 
     def _traded_at_price_between(self, price: float, start_ts: float, end_ts: float) -> bool:
@@ -179,6 +180,13 @@ class OrderflowAggregator:
             "bids": [{"price": lvl.price, "size": lvl.size} for lvl in bids],
             "asks": [{"price": lvl.price, "size": lvl.size} for lvl in asks],
             "venues": book.venues,
+            "by_venue": {
+                venue: {
+                    "bids": [{"price": lvl.price, "size": lvl.size} for lvl in sides.get("bids", [])],
+                    "asks": [{"price": lvl.price, "size": lvl.size} for lvl in sides.get("asks", [])],
+                }
+                for venue, sides in book.by_venue.items()
+            },
         }
 
     def snapshot(self) -> dict:

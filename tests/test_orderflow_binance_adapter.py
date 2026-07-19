@@ -3,9 +3,10 @@ import json
 from orderflow.binance_adapter import (
     BinanceOrderflowClient,
     parse_binance_depth_message,
+    parse_binance_liquidation_message,
     parse_binance_message,
 )
-from orderflow.models import OrderBookSnapshot, TradeEvent
+from orderflow.models import LiquidationEvent, OrderBookSnapshot, TradeEvent
 
 
 class FakeConnection:
@@ -122,5 +123,63 @@ async def test_stream_depth_yields_nothing_for_unmapped_coin():
     fake_connect = FakeConnect([])
     client = BinanceOrderflowClient(connect_fn=fake_connect)
     events = [e async for e in client.stream_depth("DOGE")]
+    assert events == []
+    assert fake_connect.called_with is None
+
+
+def _force_order_raw(side: str, ap: str | None = "9910", p: str = "9900") -> str:
+    o = {"s": "BTCUSDT", "S": side, "q": "0.014", "p": p, "T": 1568014460893}
+    if ap is not None:
+        o["ap"] = ap
+    return json.dumps({"e": "forceOrder", "o": o})
+
+
+def test_parse_binance_liquidation_message_sell_is_long_liquidation():
+    event = parse_binance_liquidation_message(_force_order_raw("SELL"), coin="BTC")
+    assert isinstance(event, LiquidationEvent)
+    assert event.symbol == "BTC.HL"
+    assert event.ts == 1568014460.893
+    assert event.price == 9910.0
+    assert event.size == 0.014
+    assert event.side == "long"  # 강제매도 = 롱 청산
+
+
+def test_parse_binance_liquidation_message_buy_is_short_liquidation():
+    event = parse_binance_liquidation_message(_force_order_raw("BUY"), coin="BTC")
+    assert event.side == "short"
+
+
+def test_parse_binance_liquidation_message_falls_back_to_p_when_ap_missing():
+    event = parse_binance_liquidation_message(_force_order_raw("SELL", ap=None, p="9900"), coin="BTC")
+    assert event.price == 9900.0
+
+
+def test_parse_binance_liquidation_message_ignores_other_event_types():
+    raw = json.dumps({"e": "aggTrade", "o": {}})
+    assert parse_binance_liquidation_message(raw, coin="BTC") is None
+
+
+def test_parse_binance_liquidation_message_ignores_malformed_json():
+    assert parse_binance_liquidation_message("not json", coin="BTC") is None
+
+
+def test_parse_binance_liquidation_message_ignores_missing_field():
+    raw = json.dumps({"e": "forceOrder", "o": {"s": "BTCUSDT", "S": "SELL", "q": "0.014", "T": 1568014460893}})  # p/ap 없음
+    assert parse_binance_liquidation_message(raw, coin="BTC") is None
+
+
+async def test_stream_liquidations_connects_to_force_order_url_and_yields_parsed_events():
+    fake_connect = FakeConnect([_force_order_raw("SELL")])
+    client = BinanceOrderflowClient(connect_fn=fake_connect)
+    events = [e async for e in client.stream_liquidations("BTC")]
+    assert len(events) == 1
+    assert events[0].side == "long"
+    assert fake_connect.called_with == "wss://fstream.binance.com/ws/btcusdt@forceOrder"
+
+
+async def test_stream_liquidations_yields_nothing_for_unmapped_coin():
+    fake_connect = FakeConnect([])
+    client = BinanceOrderflowClient(connect_fn=fake_connect)
+    events = [e async for e in client.stream_liquidations("DOGE")]
     assert events == []
     assert fake_connect.called_with is None

@@ -8,7 +8,7 @@ from typing import Callable
 
 from orderflow.aggregator import OrderflowAggregator
 from orderflow.ib_adapter import IBOrderflowClient
-from orderflow.models import TradeEvent
+from orderflow.models import LiquidationEvent, TradeEvent
 from orderflow.multi_venue_adapter import MultiVenueOrderflowClient
 
 RECONNECT_BASE_DELAY = 2.0
@@ -104,6 +104,17 @@ class OrderflowManager:
                         was_reconnecting = False
                     if isinstance(event, TradeEvent):
                         deltas = [aggregator.on_trade(event)]
+                    elif isinstance(event, LiquidationEvent):
+                        deltas = [
+                            {
+                                "type": "liquidation",
+                                "ts": event.ts,
+                                "price": event.price,
+                                "size": event.size,
+                                "side": event.side,
+                                "source": "binance",
+                            }
+                        ]
                     else:
                         deltas = aggregator.on_book_snapshot(event)
                         worker = self._workers.get(symbol)

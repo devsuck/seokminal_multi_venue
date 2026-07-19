@@ -25,13 +25,15 @@ from collections.abc import AsyncIterator, Callable, Iterable
 
 from orderflow.binance_adapter import BinanceOrderflowClient
 from orderflow.hl_adapter import HyperliquidOrderflowClient
-from orderflow.models import OrderBookLevel, OrderBookSnapshot, TradeEvent
+from orderflow.models import LiquidationEvent, OrderBookLevel, OrderBookSnapshot, TradeEvent
 from orderflow.okx_adapter import OkxOrderflowClient
 
 RECONNECT_BASE_DELAY = 2.0
 RECONNECT_MAX_DELAY = 60.0
 QUEUE_MAXSIZE = 2000
 POOL_DEPTH_LEVELS = 25
+# 거래소별 개별 래더 컬럼(프론트 3분할 뷰)용 원장 뎁스 — 풀 뷰보다 깊게 잡아도 무방(원장 그대로라 반올림 손실 없음).
+VENUE_DEPTH_LEVELS = 30
 
 
 class MultiVenueOrderflowClient:
@@ -50,7 +52,7 @@ class MultiVenueOrderflowClient:
         self._okx_client = okx_client or OkxOrderflowClient()
         self._tick_size = tick_size
 
-    async def stream(self, coin: str) -> AsyncIterator[OrderBookSnapshot | TradeEvent]:
+    async def stream(self, coin: str) -> AsyncIterator[OrderBookSnapshot | TradeEvent | LiquidationEvent]:
         queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
         latest_books: dict[str, OrderBookSnapshot] = {}
         sink = _make_pooling_sink(coin, queue, latest_books, self._tick_size)
@@ -59,6 +61,7 @@ class MultiVenueOrderflowClient:
             asyncio.ensure_future(_pump_with_reconnect(lambda: self._hl_client.stream(coin), sink, "hyperliquid")),
             asyncio.ensure_future(_pump_with_reconnect(lambda: self._binance_client.stream(coin), sink, "binance-trades")),
             asyncio.ensure_future(_pump_with_reconnect(lambda: self._binance_client.stream_depth(coin), sink, "binance-depth")),
+            asyncio.ensure_future(_pump_with_reconnect(lambda: self._binance_client.stream_liquidations(coin), sink, "binance-liq")),
             asyncio.ensure_future(_pump_with_reconnect(lambda: self._okx_client.stream(coin), sink, "okx-trades")),
             asyncio.ensure_future(_pump_with_reconnect(lambda: self._okx_client.stream_depth(coin), sink, "okx-depth")),
         ]
@@ -76,8 +79,8 @@ def _make_pooling_sink(
     queue: asyncio.Queue,
     latest_books: dict[str, OrderBookSnapshot],
     tick_size: float,
-) -> Callable[[OrderBookSnapshot | TradeEvent, str], "asyncio.Future"]:
-    async def sink(event: OrderBookSnapshot | TradeEvent, venue: str) -> None:
+) -> Callable[[OrderBookSnapshot | TradeEvent | LiquidationEvent, str], "asyncio.Future"]:
+    async def sink(event: OrderBookSnapshot | TradeEvent | LiquidationEvent, venue: str) -> None:
         if isinstance(event, OrderBookSnapshot):
             latest_books[venue] = event
             await queue.put(_pool_books(coin, latest_books, tick_size))
@@ -107,12 +110,21 @@ def _pool_books(coin: str, latest_books: dict[str, OrderBookSnapshot], tick_size
     bids = _pool_levels((b.bids for b in latest_books.values()), tick_size, reverse=True)
     asks = _pool_levels((b.asks for b in latest_books.values()), tick_size, reverse=False)
     ts = max((b.ts for b in latest_books.values()), default=time.time())
-    return OrderBookSnapshot(symbol=f"{coin}.HL", ts=ts, bids=bids, asks=asks, venues=sorted(latest_books))
+    by_venue = {
+        venue: {
+            "bids": sorted(book.bids, key=lambda lv: lv.price, reverse=True)[:VENUE_DEPTH_LEVELS],
+            "asks": sorted(book.asks, key=lambda lv: lv.price)[:VENUE_DEPTH_LEVELS],
+        }
+        for venue, book in latest_books.items()
+    }
+    return OrderBookSnapshot(
+        symbol=f"{coin}.HL", ts=ts, bids=bids, asks=asks, venues=sorted(latest_books), by_venue=by_venue
+    )
 
 
 async def _pump_with_reconnect(
     make_stream: Callable[[], AsyncIterator],
-    sink: Callable[[OrderBookSnapshot | TradeEvent, str], "asyncio.Future"],
+    sink: Callable[[OrderBookSnapshot | TradeEvent | LiquidationEvent, str], "asyncio.Future"],
     venue: str,
 ) -> None:
     delay = RECONNECT_BASE_DELAY

@@ -147,6 +147,36 @@ async def test_stream_depth_discards_diffs_not_newer_than_snapshot():
     assert 64998.0 in bid_prices
 
 
+async def test_stream_depth_hard_resyncs_on_mid_stream_gap():
+    # 1) synced 상태 진입, 2) U가 prev_u+1을 건너뛰는 갭 diff(폐기+리싱크 트리거),
+    # 3) 리싱크 후 새 스냅샷 기준으로 이어지는 diff — 유령 레벨 없이 새 스냅샷 상태만 반영돼야 함.
+    diff1 = json.dumps({"e": "depthUpdate", "U": 101, "u": 101, "b": [["64998.0", "2.0"]], "a": []})
+    gap_diff = json.dumps({"e": "depthUpdate", "U": 105, "u": 106, "b": [["64000.0", "9.0"]], "a": []})
+    diff_after_resync = json.dumps({"e": "depthUpdate", "U": 201, "u": 201, "b": [["70000.0", "3.0"]], "a": []})
+    fake_connect = FakeConnect([diff1, gap_diff, diff_after_resync])
+
+    snapshots = [
+        {"lastUpdateId": 100, "bids": [["65000.0", "0.5"]], "asks": [["65001.0", "0.3"]]},
+        {"lastUpdateId": 200, "bids": [["70001.0", "1.0"]], "asks": [["70002.0", "0.2"]]},
+    ]
+    calls = {"n": 0}
+
+    async def fake_fetch_snapshot(pair: str) -> dict:
+        snap = snapshots[calls["n"]]
+        calls["n"] += 1
+        return snap
+
+    client = BinanceOrderflowClient(connect_fn=fake_connect, fetch_snapshot_fn=fake_fetch_snapshot)
+    events = [e async for e in client.stream_depth("BTC")]
+
+    assert calls["n"] == 2  # 최초 스냅샷 + 갭으로 인한 리싱크 1회
+    assert len(events) == 2  # gap_diff는 리싱크 트리거로 폐기, 나머지 2개만 yield
+    final_bids = [lvl.price for lvl in events[-1].bids]
+    assert 64000.0 not in final_bids  # 갭 diff 내용은 반영되지 않음
+    assert 65000.0 not in final_bids  # 리싱크 전 스냅샷의 유령 레벨도 제거됨
+    assert 70001.0 in final_bids and 70000.0 in final_bids  # 새 스냅샷 + 리싱크 후 diff
+
+
 async def test_stream_depth_yields_nothing_for_unmapped_coin():
     fake_connect = FakeConnect([])
     client = BinanceOrderflowClient(connect_fn=fake_connect)

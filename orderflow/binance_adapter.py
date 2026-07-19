@@ -84,12 +84,26 @@ class BinanceOrderflowClient:
                     continue  # 스냅샷보다 오래된 이벤트 — 폐기.
                 if not synced:
                     # 스냅샷 직후 첫 이벤트가 스냅샷 시점을 감싸지 않으면(U > lastUpdateId+1) 갭 —
-                    # 참고용 뎁스라 하드 재동기화 없이 로그만 남기고 이어감(운영 실거래 데이터 아님).
+                    # 최초 1회뿐이라 로그만 남기고 이어감(REST 스냅샷 자체가 이미 최신 상태).
                     if diff["U"] > last_update_id + 1:
                         logging.warning("binance depth stream gap at sync for %s", pair)
                     synced = True
                 elif prev_u is not None and diff["U"] != prev_u + 1:
-                    logging.warning("binance depth stream gap for %s: prev_u=%s U=%s", pair, prev_u, diff["U"])
+                    # 중간에 갭이 나면 놓친 삭제(size=0) 이벤트 탓에 유령 레벨이 로컬 북에 영구히
+                    # 남아 크로스(bid>ask)된 스프레드까지 유발할 수 있음 — REST 스냅샷을 다시 받아
+                    # 하드 리싱크. 이번 diff는 새 스냅샷 이후 유효성이 불명확하므로 폐기.
+                    logging.warning(
+                        "binance depth stream gap for %s: prev_u=%s U=%s, resyncing", pair, prev_u, diff["U"]
+                    )
+                    snapshot = await self._fetch_snapshot_fn(pair)
+                    last_update_id = snapshot["lastUpdateId"]
+                    bids.clear()
+                    bids.update({float(p): float(s) for p, s in snapshot["bids"]})
+                    asks.clear()
+                    asks.update({float(p): float(s) for p, s in snapshot["asks"]})
+                    synced = False
+                    prev_u = None
+                    continue
                 prev_u = diff["u"]
                 apply_binance_diff(bids, diff["b"])
                 apply_binance_diff(asks, diff["a"])

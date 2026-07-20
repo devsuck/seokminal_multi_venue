@@ -11,6 +11,7 @@ import asyncio
 import datetime as dt
 import json
 import logging
+import time
 from pathlib import Path
 
 from orderflow.binance_adapter import BinanceOrderflowClient
@@ -24,16 +25,33 @@ COINS = ["BTC", "ETH"]
 VENUES = ["hl", "binance", "okx"]
 RECONNECT_BASE_DELAY = 2.0
 RECONNECT_MAX_DELAY = 60.0
+# cross_venue_skew.py는 IMBALANCE_DEPTH_N=5(상위 5레벨)만 쓰고 RESAMPLE_GRID_S=1.0(1초
+# 격자)로 리샘플한다 — 라이브 래더용 5000레벨 풀북을 100ms마다 그대로 저장하면 분석에
+# 안 쓰이는 데이터가 대부분이라 디스크만 축낸다(하루 27G까지 폭주한 원인). 여유를 두고
+# 상위 50레벨 유지 + 1초 간격으로만 기록.
+STORAGE_MAX_LEVELS = 50
+MIN_WRITE_INTERVAL_S = 1.0
+
+_last_write_ts: dict[tuple[str, str], float] = {}
+
+
+def _trim_levels(snapshot: dict, max_levels: int = STORAGE_MAX_LEVELS) -> dict:
+    return {**snapshot, "bids": snapshot["bids"][:max_levels], "asks": snapshot["asks"][:max_levels]}
 
 
 def append_snapshots(venue: str, coin: str, snapshots: list[dict]) -> None:
     if not snapshots:
         return
+    now = time.monotonic()
+    key = (venue, coin)
+    if now - _last_write_ts.get(key, float("-inf")) < MIN_WRITE_INTERVAL_S:
+        return
+    _last_write_ts[key] = now
     _DATA_DIR.mkdir(parents=True, exist_ok=True)
     path = _DATA_DIR / f"{venue}_{coin}_{dt.datetime.now(dt.timezone.utc).date().isoformat()}.jsonl"
     with path.open("a") as f:
         for s in snapshots:
-            f.write(json.dumps(s, ensure_ascii=False) + "\n")
+            f.write(json.dumps(_trim_levels(s), ensure_ascii=False) + "\n")
 
 
 def _make_client(venue: str):

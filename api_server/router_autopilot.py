@@ -469,6 +469,11 @@ def shutdown_initiate() -> dict:
     with open(KILL_FILE, "w") as f:
         f.write("shutdown\n")
 
+    # autopilot 세션이 안 떠 있으면 인수인계할 게 없음 — tmux에 명령 쏴봐야 허공으로
+    # 가고 HANDOFF_COMPLETE도 영원히 안 찍혀서 status가 무한 대기하게 됨.
+    if not _tmux_session_exists():
+        return {"status": "initiated"}
+
     # Interrupt current tmux process (Ctrl+C)
     subprocess.run(["tmux", "send-keys", "-t", TMUX_SESSION, "C-c", ""], capture_output=True)
     import time; time.sleep(1)
@@ -491,6 +496,8 @@ def shutdown_initiate() -> dict:
 @router.get("/shutdown/status")
 def shutdown_status() -> dict:
     """Check if handoff is complete."""
+    if not _tmux_session_exists():
+        return {"done": True, "recent_lines": ["(autopilot 세션 없음 — 인수인계 생략)"]}
     lines = _tmux_capture(200)
     content = "\n".join(lines)
     done = "HANDOFF_COMPLETE" in content

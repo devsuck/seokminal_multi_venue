@@ -748,6 +748,33 @@
 ### 막힌 부분/결정사항
 - `max_days_to_resolution` 기본값 30일은 임의 선택 — 유저가 UI에서 직접 튜닝 가능("최대잔여일" 필드로 노출됨)
 
+---
+
+## 2026-07-20: 폴리마켓 이벤트 내 후보군 합산 괴리 탐지 (신규 기능)
+
+### 완료된 작업
+- SNS 스캠 광고("크로스마켓 괴리 탐지") 검토 중 아이디어 자체는 유효 판단 → brainstorming으로 스코프 확정: "같은 이벤트 내 후보군 YES가격 합산 괴리"만(크로스*이벤트* 논리상관관계는 범위 밖), 접근법은 폴링 스캐너(WSS/하이브리드 대신)
+- spec 작성/커밋(`docs/superpowers/specs/2026-07-20-polymarket-event-divergence-design.md`, `bab5ef1`) → plan 작성/커밋(`docs/superpowers/plans/2026-07-20-polymarket-event-divergence.md`, `810c343`). 플랜 자체 리뷰에서 spec 내부 불일치(`fee_buffer` 파라미터가 4·9절 "판단은 스캐너 책임 아님"과 모순) 발견해 fee_buffer 완전 제거로 해소, 에러처리 누락(`run_forever` try/except) 발견해 추가
+- Subagent-Driven Development로 구현: Task1 `research/polymarket_event_divergence/collector.py`(group_by_event/compute_divergence/run_once, 순수함수+get_markets 재사용) — 리뷰 클린, 12/12 테스트. Task2 `research/run_polymarket_event_divergence_scan.py`(append_snapshots/run_forever, JSONL 적재+에러시 사이클스킵) — 리뷰 클린, 5/5 테스트
+- Task2 implementer가 보고한 전체스위트 "557 passed"가 이상해서 직접 재검증 → 실제 1239개 중 1234 passed/5 failed(전부 기존 known failure: test_auth×3, test_backtest_happy_path, test_orderflow_ib_adapter×1), 회귀 없음 확인. implementer 보고 오류로 결론(코드 문제 아님)
+- 최종 브랜치 리뷰(opus): Task1↔Task2 시그니처/스키마 정합, fee_buffer 전무, get_markets 필드계약 일치 전부 검증 — READY TO MERGE. → `origin/main` 푸시(`30862b5`)
+
+### 변경된 파일
+- 신규: `research/polymarket_event_divergence/{__init__.py,collector.py}`, `research/run_polymarket_event_divergence_scan.py`, `tests/test_polymarket_event_divergence_collector.py`, `tests/test_run_polymarket_event_divergence_scan.py`
+- 문서: `docs/superpowers/specs/2026-07-20-polymarket-event-divergence-design.md`, `docs/superpowers/plans/2026-07-20-polymarket-event-divergence.md`
+- `.gitignore` — `research/data/polymarket_event_divergence/*.jsonl` 추가(수집 원자재, 로컬 전용)
+
+### 다음 할 일
+- 이번 세션은 **데이터 수집까지만**(스코프 명시적) — 어느 divergence 크기가 실제 유효 시그널인지 판단 로직 없음. 데이터 쌓인 뒤 사람이 보고 임계치 결정 → 후속 `run_polymarket_arb_validation.py` 같은 검증 스크립트로 발전 가능(유저 요청 시)
+- 최종 리뷰 Minor(안 고침, 참고만): `collector.py`의 `get_markets(limit=300)` 하드코딩 — 후보 많은 대형 이벤트가 300개 한도에 잘리면 인위적 divergence 부풀림 가능(스냅샷에 `n_markets` 기록되니 분석 단계에서 교차검증 필요, 명명상수화하면 좋음)
+- 아직 tmux 상시구동 안 올림 — 이번 스코프 밖(스펙 §7에 명시), 필요시 유저 요청으로 별도 착수
+- (이전 세션 이월, 미착수) `api_server/router_autopilot.py` 포트폴리오 파이차트 현금 음수시 0% 클램프 UX 이슈
+- (이전 세션 이월, 미착수) `research/data/krx_api.py`의 `.env` 경로 불일치(`data/.env` vs 루트 `.env`) — 매번 수동 export 필요
+- (이전 세션 이월, 미착수) `congress_forward.py`/`form4_forward.py` 여전히 미실행(exploratory 상태)
+
+### 막힌 부분/결정사항
+- 없음
+
 ## 2026-07-18: buyback 월간 forward-test 재실행 (16일 만에 갱신)
 
 ### 완료된 작업

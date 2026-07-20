@@ -89,6 +89,28 @@ def test_filter_new_trades_ring_buffer_caps_at_size():
     assert hashes[-1] == "new1"
 
 
+def test_filter_new_trades_watch_until_never_shrinks_on_out_of_order_anchors():
+    trades = [_trade(cid="c1", ts=190.0, tx="anchor_new", wallet="0xsharp"),
+              _trade(cid="c1", ts=100.0, tx="anchor_old", wallet="0xsharp")]
+    sharp_wallets = {"0xsharp": {"rank": 1, "pnl": 1.0}}
+    out, last_ts, hashes, watch_until = runner.filter_new_trades(
+        trades, sharp_wallets, {}, last_seen_ts=0.0, seen_hashes=[],
+    )
+    assert watch_until["c1"] == pytest.approx(190.0 + runner.MAX_HORIZON_S)
+
+
+def test_filter_new_trades_nulls_wallet_fields_for_context_trade_from_sharp_wallet():
+    trades = [_trade(cid="c1", ts=150.0, tx="ctx1", wallet="0xsharp", price=0.5, size=10.0)]  # notional=5, below MIN_NOTIONAL_USD
+    sharp_wallets = {"0xsharp": {"rank": 1, "pnl": 10000.0}}
+    out, last_ts, hashes, watch_until = runner.filter_new_trades(
+        trades, sharp_wallets, {"c1": 200.0}, last_seen_ts=0.0, seen_hashes=[],
+    )
+    assert len(out) == 1
+    assert out[0]["is_sharp_wallet"] is False
+    assert out[0]["wallet_rank"] is None
+    assert out[0]["wallet_pnl"] is None
+
+
 def test_prune_stale_watch_removes_entries_older_than_horizon():
     watch_until = {"c1": 100.0, "c2": 1000.0}
     now = 100.0 + runner.MAX_HORIZON_S + 1.0

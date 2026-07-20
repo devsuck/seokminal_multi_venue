@@ -102,11 +102,11 @@ def filter_new_trades(
         if not (is_anchor or is_context):
             continue
         if is_anchor:
-            watch_until[cid] = ts + MAX_HORIZON_S
+            watch_until[cid] = max(watch_until.get(cid, ts), ts + MAX_HORIZON_S)
         out.append({
             **t, "notional_usd": notional, "is_sharp_wallet": is_anchor,
-            "wallet_rank": sharp["rank"] if sharp else None,
-            "wallet_pnl": sharp["pnl"] if sharp else None,
+            "wallet_rank": sharp["rank"] if is_anchor else None,
+            "wallet_pnl": sharp["pnl"] if is_anchor else None,
         })
         seen_set.add(h)
         hashes.append(h)

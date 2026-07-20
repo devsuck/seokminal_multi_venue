@@ -176,14 +176,26 @@ def lab_portfolio() -> dict:
 
 
 def _tmux_process_status(session: str, data_dir: str) -> dict:
-    """tmux 세션 생존 + 최신 데이터 파일 mtime으로 백그라운드 수집기 상태 판정."""
+    """tmux 세션 생존 + 최신 데이터 파일 mtime으로 백그라운드 수집기 상태 판정.
+
+    세션이 살아있어도 안의 python 프로세스가 죽어 쉘 프롬프트만 남아있는 경우
+    (잠자기 후 WS가 재연결 못 하고 크래시하는 등)를 놓치지 않도록, 세션 존재
+    여부뿐 아니라 pane에서 실제로 python이 돌고 있는지까지 확인한다."""
     import datetime as _dt
     import subprocess
     from pathlib import Path
 
-    tmux_alive = subprocess.run(
+    has_session = subprocess.run(
         ["tmux", "has-session", "-t", session], capture_output=True, timeout=5
     ).returncode == 0
+
+    pane_alive = False
+    if has_session:
+        pane_cmd = subprocess.run(
+            ["tmux", "list-panes", "-t", session, "-F", "#{pane_current_command}"],
+            capture_output=True, timeout=5, text=True,
+        ).stdout.strip().lower()
+        pane_alive = "python" in pane_cmd
 
     last_write = None
     age_sec = None
@@ -193,7 +205,51 @@ def _tmux_process_status(session: str, data_dir: str) -> dict:
         last_write = _dt.datetime.fromtimestamp(mtime, tz=_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         age_sec = int(_dt.datetime.now(_dt.timezone.utc).timestamp() - mtime)
 
-    return {"running": tmux_alive, "last_write": last_write, "age_sec": age_sec}
+    return {"running": pane_alive, "session_exists": has_session, "last_write": last_write, "age_sec": age_sec}
+
+
+# 수집기 키 → (tmux 세션명, 데이터 디렉토리, 재기동 모듈). 잠자기 등으로 WS가 끊겨
+# 재연결 루프가 막히거나 프로세스 자체가 죽었을 때 HUD에서 kill+재기동하기 위한 레지스트리.
+COLLECTOR_SESSIONS: dict[str, dict[str, str]] = {
+    "polymarket_tick": {"session": "polymarket-tick", "data_dir": "research/data/polymarket_tick",
+                        "module": "research.run_polymarket_tick_collect"},
+    "polymarket_arb": {"session": "polymarket-arb", "data_dir": "research/data/polymarket_arb",
+                       "module": "research.run_polymarket_arb_scan"},
+    "hl_orderflow_tick": {"session": "hl-orderflow-tick", "data_dir": "research/data/hl_orderflow_tick",
+                          "module": "research.run_hl_orderflow_tick_collect"},
+    "cross_venue_skew_tick": {"session": "cross-venue-skew-tick", "data_dir": "research/data/cross_venue_skew",
+                              "module": "research.run_cross_venue_skew_collect"},
+    "polymarket_whale_tick": {"session": "polymarket-whale-tick", "data_dir": "research/data/polymarket_whale",
+                              "module": "research.run_polymarket_whale_collect"},
+    "polymarket_updown_arb": {"session": "polymarket-updown-arb", "data_dir": "research/data/polymarket_updown_arb",
+                              "module": "research.run_polymarket_updown_arb_scan"},
+}
+
+
+@router.post("/collectors/{key}/restart")
+def restart_collector(key: str) -> dict:
+    """죽었거나 멎은 수집기를 kill 후 같은 세션명으로 재기동. HUD의 재시작 버튼용."""
+    import subprocess
+    import sys as _sys
+    from pathlib import Path
+
+    cfg = COLLECTOR_SESSIONS.get(key)
+    if cfg is None:
+        raise HTTPException(status_code=404, detail=f"알 수 없는 수집기 키: {key}")
+
+    session = cfg["session"]
+    repo_root = Path(__file__).resolve().parent.parent
+
+    subprocess.run(["tmux", "kill-session", "-t", session], capture_output=True, timeout=5)
+
+    result = subprocess.run(
+        ["tmux", "new-session", "-d", "-s", session, _sys.executable, "-m", cfg["module"]],
+        cwd=str(repo_root), capture_output=True, timeout=10, text=True,
+    )
+    if result.returncode != 0:
+        raise HTTPException(status_code=500, detail=f"재기동 실패: {result.stderr[:200]}")
+
+    return _tmux_process_status(session, cfg["data_dir"])
 
 
 @router.get("/status")

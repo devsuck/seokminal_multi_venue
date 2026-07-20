@@ -794,3 +794,23 @@
 
 ### 막힌 부분/결정사항
 - 없음
+
+## 2026-07-21: 폴리마켓 샤프월렛 컨버전스 시그널 (설계→구현→리뷰→push 전체 완료)
+
+### 완료된 작업
+- `superpowers:brainstorming` → 스펙 작성(`docs/superpowers/specs/2026-07-20-polymarket-sharp-wallet-design.md`) → `superpowers:writing-plans` → 플랜 작성(`docs/superpowers/plans/2026-07-20-polymarket-sharp-wallet.md`) → 유저 선택으로 `superpowers:subagent-driven-development` 실행
+- 6개 태스크 전부 구현+per-task 리뷰 클린(Task 2에서 실로직버그 2건 발견해 수정: `watch_until` 축소 방지 `max()` 처리, `wallet_rank`/`wallet_pnl`을 `is_anchor` 기준으로만 채움 — 둘 다 플랜 자체 샘플코드에 있던 버그였고 플랜의 산문 제약과는 안 모순되어 유저 에스컬레이션 없이 직접 수정)
+- 최종 whole-branch 리뷰(opus, 백엔드+대시보드 diff 동시 검토) — HUD `polymarket_sharp_wallet_tick` 키/필드shape 크로스레포 일치, 전역 상수 전부 스펙과 일치, BH-FDR 풀 격리, no-trading 제약 확인 → **READY TO MERGE**, findings 0건
+- 백엔드 전체 테스트 스위트 실행: 1270 pass, 5 fail(기존 pre-existing 4건 + `test_orderflow_ib_adapter.py` 무관 flake 1건, 이번 피처 커밋이 건드린 파일 아님을 확인)
+- 두 repo 모두 `origin/main`으로 push 완료(직접 커밋 컨벤션, PR 없음)
+
+### 변경된 파일
+- 백엔드(`seokminal-multi-venue`, `fecb2b4..4561a40`, 7 커밋): `research/polymarket_sharp_wallet/{__init__,leaderboard}.py`, `research/run_polymarket_sharp_wallet_collect.py`, `research/hypotheses/polymarket_sharp_wallet.py`, `research/run_polymarket_sharp_wallet_validate.py`, `api_server/lab_api.py`(HUD 등록), 대응 테스트 5개 파일
+- 대시보드(`seokminal-dashboard`, `e12fc91..2c63776`, 1 커밋): `lib/api.ts`(`polymarket_sharp_wallet_tick` 타입), `app/hud/page.tsx`(HUD 유닛 등록)
+
+### 다음 할 일
+- tmux 상시구동(`polymarket-sharp-wallet-tick` 세션) 아직 안 올림 — 다음 세션에 유저 요청 시 기동, 데이터 쌓이는 대로 `run_polymarket_sharp_wallet_validate.py`로 검증
+- Minor(안 고침, 참고): 없음 — 최종 리뷰 findings 0건
+
+### 막힌 부분/결정사항
+- 없음

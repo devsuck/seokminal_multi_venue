@@ -38,7 +38,10 @@ def test_zone_tracker_zone_at_price_returns_none_outside_zone():
 def test_zone_tracker_invalidates_zone_on_opposite_close():
     tracker = ZoneTracker()
     tracker.update({"ts": 0, "open": 100, "high": 101.5, "low": 99, "close": 99.5})
-    tracker.update({"ts": 900, "open": 99.5, "high": 106, "low": 99, "close": 105})
+    # low=89 (not 99): keeps bar3's close (90) from dropping below this bar's low, so bar3
+    # doesn't also qualify as a fresh (overlapping) bearish order block per order_blocks() —
+    # this test only exercises invalidation of the existing bullish zone, not zone creation.
+    tracker.update({"ts": 900, "open": 99.5, "high": 106, "low": 89, "close": 105})
     assert tracker.zone_at_price(100.0) is not None
     tracker.update({"ts": 1800, "open": 105, "high": 105, "low": 90, "close": 90})
     assert tracker.zone_at_price(100.0) is None

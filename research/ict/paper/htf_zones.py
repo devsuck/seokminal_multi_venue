@@ -72,46 +72,25 @@ class ZoneTracker:
 
         obs = order_blocks(self._o, self._h, self._l, self._c)
         ifvgs = ifvg_zones(self._h, self._l, self._c)
-        new_keys = set()
         for z in obs:
             key = ("OB", z["type"], z["zone_lo"], z["zone_hi"])
-            if key not in self._zones:
-                new_keys.add(key)
             self._zones.setdefault(
                 key, {"source": "OB", "type": z["type"], "zone_lo": z["zone_lo"], "zone_hi": z["zone_hi"], "status": "active"}
             )
         for z in ifvgs:
             key = ("iFVG", z["type"], z["zone_lo"], z["zone_hi"])
-            if key not in self._zones:
-                new_keys.add(key)
             self._zones.setdefault(
                 key, {"source": "iFVG", "type": z["type"], "zone_lo": z["zone_lo"], "zone_hi": z["zone_hi"], "status": "active"}
             )
 
         latest_close = self._c[-1]
-        invalidated_this_update = []
         for rec in self._zones.values():
             if rec["status"] != "active":
                 continue
             if rec["type"] == "bullish" and latest_close < rec["zone_lo"]:
                 rec["status"] = "invalidated"
-                invalidated_this_update.append(rec)
             elif rec["type"] == "bearish" and latest_close > rec["zone_hi"]:
                 rec["status"] = "invalidated"
-                invalidated_this_update.append(rec)
-
-        # 같은 봉에서 막 무효화된 존과 겹치는 신규 존은 상충 신호로 보고 함께 무효화한다.
-        # (같은 종가가 한쪽 존을 깨는 동시에 그 자리를 덮는 반대쪽 신규 존을 만드는 경우,
-        # 검증되지 않은 신규 존을 곧바로 활성 취급하지 않는다.)
-        if invalidated_this_update and new_keys:
-            for key in new_keys:
-                rec = self._zones[key]
-                if rec["status"] != "active":
-                    continue
-                for old in invalidated_this_update:
-                    if rec["zone_lo"] <= old["zone_hi"] and old["zone_lo"] <= rec["zone_hi"]:
-                        rec["status"] = "invalidated"
-                        break
 
     def zone_at_price(self, price: float) -> dict | None:
         for rec in self._zones.values():

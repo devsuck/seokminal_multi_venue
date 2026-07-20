@@ -63,24 +63,46 @@ class ZoneTracker:
         self._l: list[float] = []
         self._c: list[float] = []
         self._zones: dict[tuple, dict] = {}  # key=(source,type,zone_lo,zone_hi) -> record
+        self._last_ts: int | None = None  # 마지막으로 반영된 봉 타임스탬프 — 재조회 겹침 봉 dedup용
+        self._bar_count = 0  # 확정 반영된 봉 누적 개수 — 존 age 추적(=max_bars 윈도우 밖 존 정리용)
 
     def update(self, bar: dict) -> None:
-        self._o.append(bar["open"]); self._h.append(bar["high"])
-        self._l.append(bar["low"]); self._c.append(bar["close"])
-        if len(self._c) > self._max_bars:
-            self._o.pop(0); self._h.pop(0); self._l.pop(0); self._c.pop(0)
+        ts = bar["ts"]
+        if self._last_ts is not None:
+            if ts < self._last_ts:
+                # REST 재폴링으로 겹쳐 들어온 과거 봉 — 무시(no-op), 시계열 역행 방지
+                return
+            if ts == self._last_ts:
+                # 아직 진행 중(또는 방금 마감)인 마지막 봉 — 새 봉으로 추가하지 않고 제자리 갱신
+                self._o[-1] = bar["open"]; self._h[-1] = bar["high"]
+                self._l[-1] = bar["low"]; self._c[-1] = bar["close"]
+            else:
+                self._append_bar(bar)
+                self._bar_count += 1
+        else:
+            self._append_bar(bar)
+            self._bar_count += 1
+        self._last_ts = ts
 
         obs = order_blocks(self._o, self._h, self._l, self._c)
         ifvgs = ifvg_zones(self._h, self._l, self._c)
         for z in obs:
             key = ("OB", z["type"], z["zone_lo"], z["zone_hi"])
             self._zones.setdefault(
-                key, {"source": "OB", "type": z["type"], "zone_lo": z["zone_lo"], "zone_hi": z["zone_hi"], "status": "active"}
+                key,
+                {
+                    "source": "OB", "type": z["type"], "zone_lo": z["zone_lo"], "zone_hi": z["zone_hi"],
+                    "status": "active", "created_bar": self._bar_count,
+                },
             )
         for z in ifvgs:
             key = ("iFVG", z["type"], z["zone_lo"], z["zone_hi"])
             self._zones.setdefault(
-                key, {"source": "iFVG", "type": z["type"], "zone_lo": z["zone_lo"], "zone_hi": z["zone_hi"], "status": "active"}
+                key,
+                {
+                    "source": "iFVG", "type": z["type"], "zone_lo": z["zone_lo"], "zone_hi": z["zone_hi"],
+                    "status": "active", "created_bar": self._bar_count,
+                },
             )
 
         latest_close = self._c[-1]
@@ -91,6 +113,24 @@ class ZoneTracker:
                 rec["status"] = "invalidated"
             elif rec["type"] == "bearish" and latest_close > rec["zone_hi"]:
                 rec["status"] = "invalidated"
+
+        self._prune_stale_zones()
+
+    def _append_bar(self, bar: dict) -> None:
+        self._o.append(bar["open"]); self._h.append(bar["high"])
+        self._l.append(bar["low"]); self._c.append(bar["close"])
+        if len(self._c) > self._max_bars:
+            self._o.pop(0); self._h.pop(0); self._l.pop(0); self._c.pop(0)
+
+    def _prune_stale_zones(self) -> None:
+        """더 이상 active하지 않은(무효화/소진) 존 중, 생성 시점이 현재 OHLC 보유 윈도우
+        (max_bars) 밖으로 밀려난 것들을 정리 — 존 dict가 무한정 커지는 것을 방지."""
+        stale = [
+            key for key, rec in self._zones.items()
+            if rec["status"] != "active" and (self._bar_count - rec["created_bar"]) > self._max_bars
+        ]
+        for key in stale:
+            del self._zones[key]
 
     def zone_at_price(self, price: float) -> dict | None:
         for rec in self._zones.values():

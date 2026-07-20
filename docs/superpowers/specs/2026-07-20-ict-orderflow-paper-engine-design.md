@@ -77,9 +77,10 @@ research/ict/paper/htf_zones.py        ← HL candleSnapshot(15m) 폴링,
 research/ict/paper/reversal_triggers.py ← 흡수(orderflow_absorption.py 활성화)
                                            +스탑런+다이버전스 라이브 포팅
                                            (lib/orderflow-data.ts 임계값 이식)
-research/ict/paper/ltf_signal.py        ← 1분봉 CISD + reversal_triggers
-                                           컨플루언스 판정
-research/ict/paper/state_machine.py     ← FLAT/IN_POSITION, 진입/청산, 2R
+research/ict/paper/state_machine.py     ← FLAT/IN_POSITION, CISD+reversal_triggers
+                                           컨플루언스 판정까지 포함해 진입/청산 조율
+                                           (컨플루언스 판정은 진입 결정과 분리 안 되는
+                                           로직이라 별도 ltf_signal.py로 안 뺌 — YAGNI)
 research/ict/paper/journal_writer.py    ← 완료 트레이드 1행 CSV append
 research/ict/paper/position_state.py    ← 크래시 복구용 오픈포지션 상태파일
 research/run_ict_paper_engine.py        ← 진입점, tmux 상시구동
@@ -88,9 +89,11 @@ research/run_ict_paper_engine.py        ← 진입점, tmux 상시구동
 ### 데이터 흐름
 
 ```
-기존 WS 어댑터(orderflow/*_adapter.py, 이미 라이브)
-  → aggregator(footprint 60초 버킷)
-  → reversal_triggers: 매 버킷마다 흡수/스탑런/다이버전스 판정
+기존 WS 어댑터(orderflow/hl_adapter.py, 이미 라이브)
+  → reversal_triggers.LTFBarBuilder: 트레이드로 자체 OHLC+footprint 60초 버킷 조립
+                                      (기존 aggregator.py의 FootprintCell엔 OHLC가
+                                      없어 스탑런/다이버전스 판정에 못 씀 — 재사용 안 함)
+  → 매 버킷 마감마다 흡수/스탑런/다이버전스 판정
   → htf_zones: 15분봉 마감마다 존 갱신(REST 폴링)
   → state_machine: 존 + LTF 시그널 + 실시간가 소비
       FLAT: 컨플루언스 충족 시 진입, position_state.py에 오픈포지션 기록
@@ -106,8 +109,10 @@ research/run_ict_paper_engine.py        ← 진입점, tmux 상시구동
 ## 5. 에러 처리
 
 - WS 재연결: 기존 어댑터 재연결 로직 그대로 재사용(신규 로직 없음)
-- REST 폴링(HL candleSnapshot) 실패: 로그+백오프 재시도, 프로세스는 안 죽음
-  — 그 사이클만 존 갱신 스킵, 기존 존 유지
+- REST 폴링(HL candleSnapshot) 실패: 로그만 남기고 그 사이클은 존 갱신
+  스킵(기존 존 유지), 다음 15분 주기에 자동 재시도 — 프로세스는 안 죽음.
+  폴링 주기 자체가 15분이라 별도 지수 백오프는 과설계(YAGNI), 고정 주기
+  재시도로 충분
 - **크래시 복구**: IN_POSITION 중 프로세스가 죽으면 진행 중인 페이퍼
   포지션을 통째로 잃는다 — `position_state.py`가 진입 시점에 진입가/스탑/
   목표/존 정보를 작은 json 상태파일에 기록, 재시작 시 이 파일이 있으면

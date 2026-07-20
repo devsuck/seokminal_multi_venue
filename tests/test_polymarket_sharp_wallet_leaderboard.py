@@ -17,10 +17,11 @@ def test_fetch_leaderboard_returns_parsed_list():
         {"rank": 1, "proxyWallet": "0xAAA", "pnl": 1000.0, "vol": 5000.0},
         {"rank": 2, "proxyWallet": "0xBBB", "pnl": 1000.0, "vol": 5000.0},
     ]
-    _, kwargs = mock_get.call_args
+    args, kwargs = mock_get.call_args
+    assert args[0] == "https://data-api.polymarket.com/v1/leaderboard"
     assert kwargs["params"] == {
-        "category": lb.LEADERBOARD_CATEGORY, "timePeriod": lb.LEADERBOARD_TIME_PERIOD,
-        "orderBy": "PNL", "limit": lb.LEADERBOARD_LIMIT, "offset": 0,
+        "category": "OVERALL", "timePeriod": "ALL",
+        "orderBy": "PNL", "limit": 50, "offset": 0,
     }
 
 

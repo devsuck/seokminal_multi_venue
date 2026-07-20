@@ -223,6 +223,9 @@ COLLECTOR_SESSIONS: dict[str, dict[str, str]] = {
                               "module": "research.run_polymarket_whale_collect"},
     "polymarket_updown_arb": {"session": "polymarket-updown-arb", "data_dir": "research/data/polymarket_updown_arb",
                               "module": "research.run_polymarket_updown_arb_scan"},
+    "polymarket_sharp_wallet_tick": {"session": "polymarket-sharp-wallet-tick",
+                                     "data_dir": "research/data/polymarket_sharp_wallet",
+                                     "module": "research.run_polymarket_sharp_wallet_collect"},
 }
 
 
@@ -301,6 +304,7 @@ def lab_status() -> dict:
             "cross_venue_skew_tick": _tmux_process_status("cross-venue-skew-tick", "research/data/cross_venue_skew"),
             "polymarket_whale_tick": _tmux_process_status("polymarket-whale-tick", "research/data/polymarket_whale"),
             "polymarket_updown_arb": _tmux_process_status("polymarket-updown-arb", "research/data/polymarket_updown_arb"),
+            "polymarket_sharp_wallet_tick": _tmux_process_status("polymarket-sharp-wallet-tick", "research/data/polymarket_sharp_wallet"),
         }
     except Exception as exc:  # noqa: BLE001
         out["processes"] = {"error": str(exc)[:60]}

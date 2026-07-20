@@ -17,6 +17,9 @@ research/paper/buyback_forward_report.md
 # 폴리마켓 차익거래 오더북 원자재 수집(용량 크고 재생성 불가) — 데스크탑/맥에 로컬로만 쌓임
 research/data/polymarket_arb/*.jsonl
 
+# 폴리마켓 이벤트 내 후보군 합산 괴리 원자재 수집(재생성 불가) — 로컬 전용
+research/data/polymarket_event_divergence/*.jsonl
+
 # 틱/오더북 원자재 수집(용량 크고 재생성 불가, 로컬 전용) — 20GB+
 research/data/cross_venue_skew/
 research/data/gex_snapshot/

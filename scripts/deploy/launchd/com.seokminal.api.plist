@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  (선택) uvicorn API 서버를 launchd로 관리 — 크래시/재부팅에도 자동 재기동.
+  progress 로그의 "고아 uvicorn" 문제 재발 방지. 단 재기동 시 WS 연결은 끊김.
+
+  <REPO>/<PYTHON>을 실제 경로로 치환. --timeout-graceful-shutdown 10은 부모 CLAUDE.md의
+  실행 커맨드와 동일(hang 방지). ProgramArguments를 실제 실행 커맨드에 맞게 조정할 것.
+
+  설치: cp → ~/Library/LaunchAgents/ , 경로 치환 후 launchctl load. KeepAlive라 죽으면 재기동.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.seokminal.api</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string><PYTHON></string>
+        <string>-m</string>
+        <string>uvicorn</string>
+        <string>api_server.main:app</string>
+        <string>--host</string><string>127.0.0.1</string>
+        <string>--port</string><string>8000</string>
+        <string>--timeout-graceful-shutdown</string><string>10</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string><REPO></string>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string><REPO>/logs/api.log</string>
+    <key>StandardErrorPath</key>
+    <string><REPO>/logs/api.log</string>
+</dict>
+</plist>

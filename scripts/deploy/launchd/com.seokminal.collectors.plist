@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  맥 수집기 워치독 — ensure_collectors.sh를 매 60초 실행해 죽은 tmux 수집기 세션을
+  되살린다(재부팅/크래시/잠자기 후에도). HUD의 tmux 기반 관리는 그대로 유지.
+
+  설치(경로/파이썬을 실제에 맞게 수정 — <REPO>는 맥의 seokminal-multi-venue 절대경로):
+    cp scripts/deploy/launchd/com.seokminal.collectors.plist ~/Library/LaunchAgents/
+    # ~/Library/LaunchAgents/com.seokminal.collectors.plist 안의 <REPO>/<PYTHON> 치환
+    launchctl load ~/Library/LaunchAgents/com.seokminal.collectors.plist
+    launchctl list | grep seokminal      # 등록 확인
+    tail -f <REPO>/logs/collectors-watchdog.log
+  해제: launchctl unload ~/Library/LaunchAgents/com.seokminal.collectors.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.seokminal.collectors</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string><REPO>/scripts/deploy/ensure_collectors.sh</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>SEOKMINAL_REPO</key>
+        <string><REPO></string>
+        <key>SEOKMINAL_PYTHON</key>
+        <string><PYTHON></string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>60</integer>
+
+    <key>StandardOutPath</key>
+    <string><REPO>/logs/collectors-watchdog.log</string>
+    <key>StandardErrorPath</key>
+    <string><REPO>/logs/collectors-watchdog.log</string>
+</dict>
+</plist>

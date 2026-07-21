@@ -814,3 +814,20 @@
 
 ### 막힌 부분/결정사항
 - 없음
+
+## 2026-07-21: 이월 잡일 2건 정리 (krx .env 경로, 포트폴리오 파이차트 마이너스 현금)
+
+### 완료된 작업
+- `research/data/krx_api.py`의 `_cfg()` .env 폴백 경로가 `data/.env`를 보고 있었는데 실제 키는 프로젝트 루트 `.env`에 있어서 매 세션 수동 export 필요했던 문제 수정 — 폴백 경로를 루트 `.env`로 변경, 테스트 2개 추가(`tests/test_krx_api_cfg.py`)
+- 대시보드 `app/agents/page.tsx`의 `PortfolioPie`가 현금 음수일 때 `Math.max(cash,0)`으로 조용히 0%로 클램프돼 "계좌 거의 다 날림"이 시각적으로 안 보이던 UX 이슈 수정 — 마이너스일 때 빨간 경고줄로 실제 금액 노출. `lv5 가상화폐` 에이전트가 마침 라이브로 현금 -$129.31 상태라 브라우저에서 실제 렌더링 확인함(`현금 마이너스 $-129,31` 빨간 줄 정상 표시)
+
+### 변경된 파일
+- `seokminal-multi-venue`: `research/data/krx_api.py`, `tests/test_krx_api_cfg.py` (신규) — 커밋 `add345a`
+- `seokminal-dashboard`: `app/agents/page.tsx` — 커밋 `c3826b8`
+
+### 다음 할 일
+- Nautilus 플랫폼 다음 엔진 sub-project 착수는 브레인스토밍 게이트 필요(뭘 만들지부터 정해야 함) — 유저 요청 시 착수
+- `congress_forward.py`/`form4_forward.py` 여전히 미실행(exploratory 상태) — 필요시 유저 요청 시 착수
+
+### 막힌 부분/결정사항
+- 없음

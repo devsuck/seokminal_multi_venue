@@ -870,3 +870,27 @@
 
 ### 막힌 부분/결정사항
 - 없음(설계·계획 단계는 유저 승인 완료, 실행 방식 선택만 남음)
+
+---
+
+## 2026-07-21 (이어서): 샤프월렛 confidence score 계획 실행 완료 (Inline TDD)
+
+### 완료된 작업
+- 위 항목에서 남긴 실행방식 선택을 유저가 **Inline** 선택 → `docs/superpowers/plans/2026-07-21-polymarket-sharp-wallet-scoring.md` Task 1·2를 TDD 순서(테스트작성→실패확인→구현→통과→커밋) 그대로 인라인 실행
+- **Task 1**(`research/hypotheses/polymarket_sharp_wallet.py`): `_percentile_rank_0_100()`(bounded `(rank-1)/(n-1)*100`) + `build_convergence_score()`(4컴포넌트 wallet_count/pnl_sum/notional/liquidity percentile 동일가중 평균, anchor<2건이면 전부 NaN) 신규, `build_labels_multi_horizon`에 `score` pass-through(anchors에 score 없으면 NaN) 추가. 테스트 5개 신규 → 16 passed(기존 11 + 신규 5). 커밋 `a730527`
+- **Task 2**(`research/run_polymarket_sharp_wallet_validate.py`): `run_bucket`의 ~20줄 p-value 로직을 `_score_horizons()` 공유헬퍼로 추출(DRY), `SCORE_TERCILES`/`add_score_tercile`(qcut 3분위, 고유값<3이면 None)/`run_score_tercile`(run_bucket과 동일 shape, key만 `tercile`) 신규, `main()` 리라이트로 버킷 풀과 **완전 분리된** score-tercile BH-FDR 풀(alpha=0.1) + `=== score tercile ===` 출력 추가. 테스트 5개 신규 → 9 passed(기존 4 + 신규 5). 커밋 `1c1a49a`
+- 두 타겟 테스트파일 합쳐 **25 passed**. 실 수집데이터(`2026-07-21.jsonl`)로 `python -m research.run_polymarket_sharp_wallet_validate` 실행해 end-to-end 확인 — score-tercile 섹션 정상 렌더, 버킷 풀(0/6)과 score 풀(0/9) 분리 확인(현 표본에선 양쪽 다 BH-FDR 생존자 0)
+- 회귀면 확인: `polymarket_sharp_wallet` 모듈의 유일한 소비자는 validate 러너뿐(동명의 `build_labels_multi_horizon`은 cross_venue_skew/polymarket_whale의 별개 함수 — import 안 걸림). 외부 소비자 없음
+- 두 커밋 `claude/polymarket-wallet-scoring-awzj6n` 브랜치로 push 완료(원격 신규 생성). PR 미생성(유저 요청 없음)
+
+### 환경 메모(이 원격 컨테이너 한정)
+- 프레시 컨테이너라 deps 부트스트랩 필요했음: `pip install -e ".[dev]"` + `openai` 등 미선언 스트래글러. 단 `nautilus_trader`가 최신 1.221.0으로 깔려 `nautilus_trader.analysis.MaxDrawdown` 제거됨 → `api_server.main` import 실패(코드베이스가 구버전 API 기대). `tests/conftest.py` autouse fixture가 매 테스트마다 `api_server.main`을 import하므로 전체 스위트가 이 버전드리프트로 막힘 — **이번 피처와 무관**
+- 타겟 테스트는 순수 pandas라 `pytest --noconftest`로 해당 fixture만 우회해 검증(피처 코드 검증경계로 충분). 전체 스위트 그린 확인은 nautilus_trader 버전 핀 맞춰야 가능(별도 환경작업, 이번 범위 밖)
+
+### 다음 할 일
+- tmux 상시구동(`polymarket-sharp-wallet-tick`) + 데이터 축적 후 `run_polymarket_sharp_wallet_validate.py`로 정기 검증 — 유저 요청 시
+- (원격환경) 전체 pytest 스위트 그린 원하면 `nautilus_trader` 버전을 `MaxDrawdown` 있던 구버전으로 핀 필요
+- (계속 pending, 안 건드림) `cross_venue_skew_tick`: 유저가 `! kill -TERM 81256` 실행 대기중
+
+### 막힌 부분/결정사항
+- 없음

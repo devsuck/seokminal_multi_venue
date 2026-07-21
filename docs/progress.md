@@ -849,3 +849,24 @@
 
 ### 막힌 부분/결정사항
 - `kill -TERM`은 Claude Code auto-mode 클래시파이어가 유저 채팅 승인 이후에도 하드 블록 — 유저가 `!` 프리픽스로 직접 실행해야 함(세션 내 반복 확인된 제약)
+
+## 2026-07-21: Polymarket 샤프월렛 confidence score — 설계+계획 완료, 구현 미착수
+
+### 완료된 작업
+- 유저가 준 SNS 마케팅 이미지 7장(IMG_9618~9624, 하이프 계정 — 수치는 연출로 판단, 참고용) 기반 기존 sharp-wallet convergence 기능 업그레이드 후보 6개 제시 → "시그널 스코어링/랭킹" 선택받음
+- `superpowers:brainstorming` 풀 플로우로 설계 확정: 컨버전스 이벤트에 연속 0~100 confidence score 추가(기존 `convergence_bucket`은 안 건드림). 4개 컴포넌트(wallet_count/pnl_sum/notional/liquidity) 데이터셋 내 percentile 랭크 동일가중 평균. 범위는 연구/검증 전용, 라이브 알림 없음. 스펙 문서: `docs/superpowers/specs/2026-07-21-polymarket-sharp-wallet-scoring-design.md` (커밋 `e8ee32a`)
+- `superpowers:writing-plans`로 구현 계획 작성: `docs/superpowers/plans/2026-07-21-polymarket-sharp-wallet-scoring.md` (커밋 `2cde86a`). Task 1 = `research/hypotheses/polymarket_sharp_wallet.py`에 `build_convergence_score()` 추가 + `build_labels_multi_horizon` score pass-through. Task 2 = `research/run_polymarket_sharp_wallet_validate.py`에 `run_score_tercile()` + 독립 BH-FDR 풀 + `main()` 리라이트. 두 태스크 모두 완전한 코드·테스트까지 계획서에 이미 작성돼있음 — 실행만 하면 됨
+- percentile 공식 관련 plan-writing 단계에서 스펙 문구 하나 보정: 스펙 §3의 `.rank(pct=True)*100`은 스펙 §5의 테스트 예시("3개 anchor면 0/50/100")와 실제로 안 맞아서(pandas 기본 pct rank는 min이 0이 안 됨), plan Global Constraints에 `(rank-1)/(n-1)*100` bounded 공식으로 명시 — 스펙 재승인은 안 받음(구현 디테일 보정 수준 판단)
+- 세션 종료 전 로컬 미커밋 상태(jarvis/research 로그, polymarket 수집기 첫 날짜분 데이터, 누락된 07-20 plan 문서) 전부 커밋+푸시(`e5cbf0c`) — 데스크탑/웹 세션 전환 대비, working tree clean 확인
+
+### 변경된 파일
+- `docs/superpowers/specs/2026-07-21-polymarket-sharp-wallet-scoring-design.md` (신규, 커밋 `e8ee32a`)
+- `docs/superpowers/plans/2026-07-21-polymarket-sharp-wallet-scoring.md` (신규, 커밋 `2cde86a`)
+- `docs/superpowers/plans/2026-07-20-polymarket-sharp-wallet.md`(원 스펙 plan, 이번에 뒤늦게 커밋됨), `research/data/polymarket_sharp_wallet/2026-07-21.jsonl`, `jarvis/_state/*`, `research/autoresearch/*` — 전부 커밋 `e5cbf0c`
+
+### 다음 할 일
+- 계획 실행: `docs/superpowers/plans/2026-07-21-polymarket-sharp-wallet-scoring.md` 열어서 Task 1부터 진행. 유저에게 Subagent-Driven vs Inline 실행방식 물어봤는데 아직 답 안 받고 데스크탑으로 전환한다고 함 — 새 세션에서 다시 물어보거나, 유저가 먼저 방식 지정하면 그걸로
+- (계속 pending, 안 건드림) `cross_venue_skew_tick`: 유저가 `! kill -TERM 81256` 실행 대기중
+
+### 막힌 부분/결정사항
+- 없음(설계·계획 단계는 유저 승인 완료, 실행 방식 선택만 남음)

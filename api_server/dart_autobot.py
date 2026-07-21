@@ -159,8 +159,16 @@ def _process_exits(cfg: dict) -> int:
                         "spent": cfg["spent"]})
             sold += 1
         except Exception as e:  # noqa: BLE001
+            msg = str(e)
+            if "잔고내역이 없습니다" in msg:
+                # 브로커에 실보유가 없음 = 로컬 state가 stale(이미 매도됐거나 migration
+                # 복원 오류). 무한 재시도 대신 드롭 — spent는 과거 매도 시 이미 정산됐다고
+                # 간주하고 다시 차감하지 않는다.
+                _log_event({"kind": "desync", "corp": pos.get("corp", ""), "code": code,
+                            "msg": "브로커 잔고 없음 — 로컬 포지션 정리(재시도 중단)"})
+                continue
             _log_event({"kind": "fail", "corp": pos.get("corp", ""), "code": code,
-                        "msg": f"매도 실패: {str(e)[:80]}"})
+                        "msg": f"매도 실패: {msg[:80]}"})
             keep.append(pos)  # 실패 시 보유 유지, 다음 tick 재시도
     cfg["positions"] = keep
     return sold

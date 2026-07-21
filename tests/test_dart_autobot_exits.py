@@ -75,3 +75,16 @@ def test_sell_order_failure_keeps_position():
     assert sold == 0
     assert len(cfg["positions"]) == 1  # 실패 → 보유 유지, 다음 tick 재시도
     assert cfg["spent"] == 10000.0     # 예산도 그대로
+
+
+def test_sell_no_holdings_drops_stale_position():
+    cfg = _cfg([_pos(entry=1000.0)], spent=10000.0)
+    kis = MagicMock()
+    kis.place_order.side_effect = RuntimeError("KIS API error rt_cd=1: 모의투자 잔고내역이 없습니다.")
+    with patch.object(bot, "_current_price", return_value=1300.0), \
+         patch.object(bot, "_kis", return_value=kis), \
+         patch.object(bot, "_log_event"):
+        sold = bot._process_exits(cfg)
+    assert sold == 0
+    assert cfg["positions"] == []   # 브로커에 실보유 없음 → 드롭, 재시도 안 함
+    assert cfg["spent"] == 10000.0  # 이미 예전에 정산된 것으로 간주 — 중복 차감 없음

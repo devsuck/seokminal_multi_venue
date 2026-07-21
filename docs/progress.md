@@ -1062,3 +1062,23 @@
 
 ### 막힌 부분/결정사항
 - 없음. 순수 코어(알고리즘)는 완성·검증. 수집+조립은 라이브 데이터 결합이라 맥.
+
+---
+
+## 2026-07-21 (이어서): MLB 트랙 Task 3 수집기 + 발열 근본수정
+
+### MLB Task 3 (수집기) 완료 — 코드 완성
+- `research/run_mlb_specialist_collect.py` 신규 — 샤프/whale 골격 복제(글로벌 `/trades` 폴링, transactionHash dedup, 지수백오프). 검증된 `market_filter.mlb_condition_ids`로 MLB 체결만 필터. MLB 마켓 상태 스냅샷(`markets/{date}.jsonl` — 정산/가격)도 축적. 순수 `filter_mlb_trades`/`_map_trade` 유닛테스트 4개. **MLB 트랙 전체 30 tests 통과.**
+- **맥에서 마무리(원격은 Polymarket 차단)**: (1) market_filter 휴리스틱 실태그 튜닝, (2) 체결 outcome(YES/NO) 필드명 실검증, (3) walk-forward 조립(load_and_report) 이 수집데이터로 완성, (4) tmux 상시구동+데이터 축적.
+- MLB 트랙 5모듈 전부 코드 완성: market_filter/leaderboard/collect/consensus/validate. 순수 로직 전부 테스트됨, 라이브 수집+조립만 맥.
+
+### 발열 사건 근본수정 (맥)
+- 34h 99% 고아 = **런처 앱의 `uvicorn --reload` + 중복체크 없음**이 원인. 누를 때마다 새 uvicorn, reload 워커가 고아로 스핀. 81256(cross_venue_skew 고아)·70590(uvicorn 고아) 둘 다 kill.
+- 런처(`Seokminal.app/Contents/MacOS/Seokminal`) 수정: **--reload 제거** + 포트 점유체크(멱등) + `--timeout-graceful-shutdown 10`. 수집기는 원래 멱등(그대로). 재발 방지 완료.
+
+### 다음 할 일
+- 맥에서 MLB 수집기 라이브 튜닝+상시구동, 데이터 축적 후 검증.
+- (이월) 락파일(맥 pip freeze), 다각화 필터 UI 적용, launchd 워치독 설치(선택).
+
+### 막힌 부분/결정사항
+- 없음

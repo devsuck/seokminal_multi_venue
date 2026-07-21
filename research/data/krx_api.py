@@ -21,8 +21,8 @@ NUM = ["TDD_OPNPRC", "TDD_HGPRC", "TDD_LWPRC", "TDD_CLSPRC", "ACC_TRDVOL", "ACC_
 
 def _cfg():
     key = os.environ.get("KRX_API_KEY", ""); base = os.environ.get("KRX_BASE_URL", "")
-    if not key:  # .env 폴백
-        env = os.path.join(os.path.dirname(STORE), ".env")
+    if not key:  # .env 폴백 (프로젝트 루트 .env — data/.env 아님)
+        env = os.path.join(os.path.dirname(os.path.dirname(STORE)), ".env")
         if os.path.exists(env):
             for ln in open(env):
                 if ln.startswith("KRX_API_KEY="):

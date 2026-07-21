@@ -91,41 +91,71 @@ def run_family(family: str, df: pd.DataFrame) -> dict:
     return {"family": family, "blocked": False, "horizons": horizons}
 
 
-def main() -> None:
+def _group_to_dict(gname: str, r: dict) -> tuple[dict, list[float], list[str]]:
+    """run_family 결과 → 대시보드용 group dict + (pvals, keys) 기여분."""
+    if r["blocked"]:
+        return {"group": gname, "blocked": True, "reason": r.get("reason", "")}, [], []
+    horizons, pvals, keys = [], [], []
+    for hk, hv in r["horizons"].items():
+        horizons.append({"horizon": hk, "n_events": hv["n_events"],
+                         "total_pnl": hv["strategy"]["total_pnl"],
+                         "p_value": hv["random"]["p_value"], "percentile": hv["random"]["percentile"]})
+        pvals.append(hv["random"]["p_value"])
+        keys.append(f"{gname}:{hk}")
+    return {"group": gname, "blocked": False, "horizons": horizons}, pvals, keys
+
+
+def compute_report(df: pd.DataFrame, dates: list[str]) -> dict:
+    """검증 결과를 대시보드/CLI 공용 dict로 반환 — 신규 통계 없음, run_family 재사용.
+    whale은 단일 BH-FDR 풀(family×horizon). df 비면 verdict='no_data'."""
+    if df.empty:
+        return {"hypothesis": "polymarket_whale", "cost_bps": COST_BPS, "dates": dates,
+                "n_anchors": 0, "groups": [], "pools": [], "verdict": "no_data"}
+    groups: list[dict] = []
+    pvals: list[float] = []
+    keys: list[str] = []
+    n_labels = 0
+    for family in FAMILIES:
+        g, pv, ks = _group_to_dict(family, run_family(family, df))
+        groups.append(g)
+        pvals += pv
+        keys += ks
+        if not g["blocked"]:
+            n_labels += sum(h["n_events"] for h in g["horizons"])
+
+    bh = benjamini_hochberg(pvals, alpha=0.1) if pvals else {
+        "survivors": [], "n_survivors": 0, "threshold": None, "alpha": 0.1}
+    survivors = [k for k, s in zip(keys, bh["survivors"]) if s]
+    pool = {"name": "whale", "alpha": bh["alpha"], "n_tested": len(pvals),
+            "n_survivors": bh["n_survivors"], "survivors": survivors, "threshold": bh.get("threshold")}
+    return {"hypothesis": "polymarket_whale", "cost_bps": COST_BPS, "dates": dates,
+            "n_anchors": n_labels, "groups": groups, "pools": [pool],
+            "verdict": "candidate" if pool["n_survivors"] > 0 else "no_edge"}
+
+
+def load_and_report() -> dict:
+    """디스크에서 수집 데이터 로드 후 compute_report. 엔드포인트/main 공용 진입점."""
     dates = _available_dates()
     df = load_whale_trades(dates) if dates else pd.DataFrame(
         columns=["ts", "condition_id", "side", "price", "size", "notional_usd", "family"])
+    return compute_report(df, dates)
 
-    results = []
-    pvals: list[float] = []
-    pval_keys: list[str] = []
 
-    for family in FAMILIES:
-        r = run_family(family, df)
-        results.append(r)
-        if not r["blocked"]:
-            for h_key, h_res in r["horizons"].items():
-                pvals.append(h_res["random"]["p_value"])
-                pval_keys.append(f"{family}:{h_key}")
-
-    bh = benjamini_hochberg(pvals, alpha=0.1) if pvals else {
-        "survivors": [], "n_survivors": 0, "threshold": None, "alpha": 0.1,
-    }
-    bh["keys"] = pval_keys
-
-    print(f"\n=== cost_bps(polymarket) = {COST_BPS} ===\n")
-    for r in results:
-        if r["blocked"]:
-            print(f"{r['family']} -> BLOCKED ({r['reason']})")
+def main() -> None:
+    rep = load_and_report()
+    print(f"\n=== cost_bps(polymarket) = {rep['cost_bps']} ===\n")
+    for g in rep["groups"]:
+        if g["blocked"]:
+            print(f"{g['group']} -> BLOCKED ({g['reason']})")
             continue
-        for h_key, h_res in r["horizons"].items():
-            s, p = h_res["strategy"], h_res["random"]
-            print(f"{r['family']}:{h_key} n_events={h_res['n_events']} "
-                  f"total_pnl={s['total_pnl']} p_value={p['p_value']} percentile={p['percentile']}")
-
-    print("\n=== BH-FDR (신규 Polymarket whale 풀, alpha=0.1) ===")
-    print(f"survivors: {[k for k, s in zip(bh['keys'], bh['survivors']) if s]}")
-    print(f"n_survivors: {bh['n_survivors']} / {len(pvals)}")
+        for h in g["horizons"]:
+            print(f"{g['group']}:{h['horizon']} n_events={h['n_events']} "
+                  f"total_pnl={h['total_pnl']} p_value={h['p_value']} percentile={h['percentile']}")
+    for pool in rep["pools"]:
+        print(f"\n=== BH-FDR (신규 Polymarket whale 풀, alpha={pool['alpha']}) ===")
+        print(f"survivors: {pool['survivors']}")
+        print(f"n_survivors: {pool['n_survivors']} / {pool['n_tested']}")
+    print(f"\nverdict: {rep['verdict']}")
 
 
 if __name__ == "__main__":

@@ -831,3 +831,21 @@
 
 ### 막힌 부분/결정사항
 - 없음
+
+## 2026-07-21: HUD collector 오탐 + dart_bot 무한 매도재시도 대응
+
+### 완료된 작업
+- `cross_venue_skew_tick` 수집기가 HUD상 dead로 보였던 원인 진단: tmux 세션이 죽었지만 실제 파이썬 프로세스는 PPID=1(launchd)로 reparent돼 20시간+ 정상 동작 중이었음(`_tmux_process_status`가 tmux 세션 존재 여부로만 판단 — 논tmux 고아 프로세스 감지 불가). 유저 승인받았으나 `kill -TERM` 자체가 auto-mode 클래시파이어에 하드 블록돼 유저 직접 실행 요청함 — **유저 응답 대기중, 아직 안 끝남**
+- `dart_bot`이 유티아이(179900)를 5분마다 계속 매도 실패시키던 원인 규명: 07-08 매수 → 07-09 정상 손절매도(로컬 state에서도 정상 제거)됐는데, 이후 `dart_autobot.json`이 `positions` 키를 잃은 시점에 `_load()`의 1회 마이그레이션 로직이 재발동 — buy 로그만 스캔하고 sell을 반영 안 해서 이미 판 포지션을 그대로 복원. 이후 11일간 존재하지 않는 브로커 잔고를 계속 매도 시도 → "모의투자 잔고내역이 없습니다" 실패 로그만 무한 축적
+- `api_server/dart_autobot.py`의 `_process_exits`에 desync 가드 추가: 매도 실패 메시지에 "잔고내역이 없습니다" 포함 시 로컬 state가 stale하다고 보고 포지션 드롭(재시도 중단), `kind:"desync"`로 로그 구분. 테스트 1개 추가(`test_sell_no_holdings_drops_stale_position`), `tests/test_dart_autobot_exits.py` 8/8 pass(신규 포함 7→8) — 실제로는 7개였고 신규 1개 추가로 7/7 → 커밋 시점 전체 실행 결과 7 passed
+- `data/dart_autobot.json`에서 179900 stale 포지션 직접 제거(gitignore 대상, 커밋 불필요)
+
+### 변경된 파일
+- `seokminal-multi-venue`: `api_server/dart_autobot.py`, `tests/test_dart_autobot_exits.py` — 커밋 `f1e4e64`, push 완료
+
+### 다음 할 일
+- `cross_venue_skew_tick`: 유저가 `! kill -TERM 81256` 실행하면 → `POST /lab/collectors/cross_venue_skew_tick/restart` 호출해 tmux 세션으로 정상 편입, `/lab/status`로 `running:true` 확인, `tmux list-sessions`로 새 세션 확인
+- Nautilus 플랫폼 다음 엔진 sub-project — 브레인스토밍 게이트 필요, 유저 요청 시 착수
+
+### 막힌 부분/결정사항
+- `kill -TERM`은 Claude Code auto-mode 클래시파이어가 유저 채팅 승인 이후에도 하드 블록 — 유저가 `!` 프리픽스로 직접 실행해야 함(세션 내 반복 확인된 제약)

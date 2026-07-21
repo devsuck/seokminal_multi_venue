@@ -6,6 +6,7 @@ import pytest
 import research.hypotheses.polymarket_sharp_wallet as psw
 from research.hypotheses.polymarket_sharp_wallet import (
     build_convergence_count,
+    build_convergence_score,
     build_labels_multi_horizon,
     build_price_series,
     load_sharp_wallet_trades,
@@ -146,3 +147,91 @@ def test_build_labels_multi_horizon_excludes_missing_condition():
     ])
     labels = build_labels_multi_horizon(anchors, {"c1": price}, horizons=[10])
     assert labels.empty
+
+
+def test_build_convergence_score_bounded_percentiles_and_liquidity_window():
+    anchors = pd.DataFrame([
+        {"ts": 0.0, "condition_id": "c1", "side": "BUY", "direction": 1.0,
+         "notional_usd": 50.0, "proxy_wallet": "w1", "convergence_count": 1,
+         "convergence_bucket": 1},
+        {"ts": 1000.0, "condition_id": "c2", "side": "BUY", "direction": 1.0,
+         "notional_usd": 100.0, "proxy_wallet": "w2", "convergence_count": 1,
+         "convergence_bucket": 1},
+        {"ts": 2000.0, "condition_id": "c3", "side": "BUY", "direction": 1.0,
+         "notional_usd": 200.0, "proxy_wallet": "w3", "convergence_count": 1,
+         "convergence_bucket": 1},
+    ])
+    trades = pd.DataFrame([
+        {"ts": 0.0, "condition_id": "c1", "proxy_wallet": "w1", "notional_usd": 50.0,
+         "is_sharp_wallet": True, "wallet_pnl": 100.0},
+        {"ts": 100.0, "condition_id": "c1", "proxy_wallet": "ctx1", "notional_usd": 50.0,
+         "is_sharp_wallet": False, "wallet_pnl": None},
+        {"ts": 301.0, "condition_id": "c1", "proxy_wallet": "ctx1b", "notional_usd": 999.0,
+         "is_sharp_wallet": False, "wallet_pnl": None},  # 윈도우(0~300) 밖 — 제외돼야 함
+        {"ts": 1000.0, "condition_id": "c2", "proxy_wallet": "w2", "notional_usd": 100.0,
+         "is_sharp_wallet": True, "wallet_pnl": 500.0},
+        {"ts": 1100.0, "condition_id": "c2", "proxy_wallet": "ctx2", "notional_usd": 100.0,
+         "is_sharp_wallet": False, "wallet_pnl": None},
+        {"ts": 2000.0, "condition_id": "c3", "proxy_wallet": "w3", "notional_usd": 200.0,
+         "is_sharp_wallet": True, "wallet_pnl": 1000.0},
+        {"ts": 2100.0, "condition_id": "c3", "proxy_wallet": "ctx3", "notional_usd": 200.0,
+         "is_sharp_wallet": False, "wallet_pnl": None},
+    ])
+    out = build_convergence_score(trades, anchors)
+
+    assert list(out["pnl_sum_raw"]) == [100.0, 500.0, 1000.0]
+    assert list(out["liquidity_raw"]) == [100.0, 200.0, 400.0]  # 윈도우 밖 999는 제외
+
+    scores = list(out["score"])
+    # wallet_count는 3개 anchor 모두 convergence_count=1로 동석 -> percentile 50 고정.
+    # pnl/notional/liquidity는 각각 단조증가 -> 0/50/100.
+    assert scores[0] == pytest.approx((50.0 + 0.0 + 0.0 + 0.0) / 4)
+    assert scores[1] == pytest.approx((50.0 + 50.0 + 50.0 + 50.0) / 4)
+    assert scores[2] == pytest.approx((50.0 + 100.0 + 100.0 + 100.0) / 4)
+
+
+def test_build_convergence_score_nan_when_fewer_than_two_anchors():
+    anchors = pd.DataFrame([
+        {"ts": 0.0, "condition_id": "c1", "side": "BUY", "direction": 1.0,
+         "notional_usd": 50.0, "proxy_wallet": "w1", "convergence_count": 1,
+         "convergence_bucket": 1},
+    ])
+    trades = pd.DataFrame([
+        {"ts": 0.0, "condition_id": "c1", "proxy_wallet": "w1", "notional_usd": 50.0,
+         "is_sharp_wallet": True, "wallet_pnl": 100.0},
+    ])
+    out = build_convergence_score(trades, anchors)
+    assert pd.isna(out["score"].iloc[0])
+
+
+def test_build_convergence_score_empty_anchors_returns_empty():
+    trades = pd.DataFrame(columns=["ts", "condition_id", "proxy_wallet", "notional_usd",
+                                    "is_sharp_wallet", "wallet_pnl"])
+    anchors = pd.DataFrame(columns=["ts", "condition_id", "side", "direction",
+                                     "notional_usd", "proxy_wallet", "convergence_count",
+                                     "convergence_bucket"])
+    out = build_convergence_score(trades, anchors)
+    assert out.empty
+    assert "score" in out.columns
+
+
+def test_build_labels_multi_horizon_carries_score_when_present():
+    price = pd.Series([0.5, 0.6], index=[0.0, 10.0])
+    anchors = pd.DataFrame([
+        {"ts": 0.0, "condition_id": "c1", "side": "BUY", "direction": 1.0,
+         "notional_usd": 100.0, "proxy_wallet": "w1", "convergence_count": 1,
+         "convergence_bucket": 1, "score": 87.5},
+    ])
+    labels = build_labels_multi_horizon(anchors, {"c1": price}, horizons=[10])
+    assert labels.iloc[0]["score"] == pytest.approx(87.5)
+
+
+def test_build_labels_multi_horizon_score_nan_when_anchors_lack_score_column():
+    price = pd.Series([0.5, 0.6], index=[0.0, 10.0])
+    anchors = pd.DataFrame([
+        {"ts": 0.0, "condition_id": "c1", "side": "BUY", "direction": 1.0,
+         "notional_usd": 100.0, "proxy_wallet": "w1", "convergence_count": 1,
+         "convergence_bucket": 1},
+    ])
+    labels = build_labels_multi_horizon(anchors, {"c1": price}, horizons=[10])
+    assert pd.isna(labels.iloc[0]["score"])

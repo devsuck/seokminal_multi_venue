@@ -89,6 +89,70 @@ def build_convergence_count(trades: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
+def _percentile_rank_0_100(values: pd.Series) -> pd.Series:
+    """값들을 [0,100] 구간 percentile로 변환 — 최솟값=0, 최댓값=100(동석 있으면
+    average rank). n<2면 정의 불가 — 전부 NaN."""
+    n = len(values)
+    if n < 2:
+        return pd.Series([float("nan")] * n, index=values.index)
+    ranks = values.rank(method="average")
+    return (ranks - 1) / (n - 1) * 100.0
+
+
+def build_convergence_score(trades: pd.DataFrame, anchors: pd.DataFrame) -> pd.DataFrame:
+    """anchors(build_convergence_count 반환)에 4개 percentile 컴포넌트 평균인
+    score 컬럼을 추가한다. 컴포넌트: wallet_count(convergence_count 재사용),
+    pnl_sum(컨버전스 윈도우 내 distinct sharp wallet들의 wallet_pnl 합),
+    notional(anchor 자체 notional_usd), liquidity(anchor.ts ~
+    anchor.ts+max(HORIZONS_S) 구간 동일 condition_id의 모든 체결 notional_usd
+    합). anchor 2건 미만이면 percentile 정의 불가 — score 전부 NaN. 반환 컬럼:
+    입력 anchors 전체 + pnl_sum_raw, notional_raw, liquidity_raw, score."""
+    out = anchors.copy()
+    if out.empty:
+        out["pnl_sum_raw"] = pd.Series(dtype=float)
+        out["notional_raw"] = pd.Series(dtype=float)
+        out["liquidity_raw"] = pd.Series(dtype=float)
+        out["score"] = pd.Series(dtype=float)
+        return out
+
+    sharp = trades[trades["is_sharp_wallet"]]
+    sharp_ts = sharp["ts"].to_numpy()
+    sharp_wallets = sharp["proxy_wallet"].to_numpy()
+    sharp_pnl = sharp["wallet_pnl"].to_numpy()
+    liquidity_window_s = max(HORIZONS_S)
+
+    pnl_sums = []
+    liquidity_sums = []
+    for _, row in out.iterrows():
+        t = row["ts"]
+        window_mask = (sharp_ts >= t - CONVERGENCE_WINDOW_S) & (sharp_ts <= t)
+        seen: dict[str, float] = {}
+        for w, p in zip(sharp_wallets[window_mask], sharp_pnl[window_mask]):
+            seen[w] = p
+        pnl_sums.append(sum(seen.values()))
+
+        cid = row["condition_id"]
+        liq_mask = ((trades["condition_id"] == cid) & (trades["ts"] >= t)
+                    & (trades["ts"] <= t + liquidity_window_s))
+        liquidity_sums.append(trades.loc[liq_mask, "notional_usd"].sum())
+
+    out["pnl_sum_raw"] = pnl_sums
+    out["notional_raw"] = out["notional_usd"].to_numpy()
+    out["liquidity_raw"] = liquidity_sums
+
+    if len(out) < 2:
+        out["score"] = float("nan")
+        return out
+
+    wallet_count_pct = _percentile_rank_0_100(out["convergence_count"])
+    pnl_sum_pct = _percentile_rank_0_100(out["pnl_sum_raw"])
+    notional_pct = _percentile_rank_0_100(out["notional_raw"])
+    liquidity_pct = _percentile_rank_0_100(out["liquidity_raw"])
+    out["score"] = (wallet_count_pct.to_numpy() + pnl_sum_pct.to_numpy()
+                     + notional_pct.to_numpy() + liquidity_pct.to_numpy()) / 4.0
+    return out
+
+
 def build_price_series(trades: pd.DataFrame, condition_id: str) -> pd.Series:
     """해당 condition_id의 모든 행(anchor+context 구분 없이)을 RESAMPLE_GRID_S
     그리드로 ffill 리샘플. whale의 build_price_series와 동일 로직, 입력 필터만
@@ -114,7 +178,9 @@ def build_labels_multi_horizon(
     """anchor(build_convergence_count 결과, convergence_bucket 포함)마다 각 h in
     horizons에 대해 forward_return = (price[t+h]-price[t])/price[t] * direction
     (모멘텀 컨벤션). anchor ts는 해당 마켓 그리드의 가장 가까운 이전 포인트로
-    스냅한다. t+h가 그리드에 없거나 NaN이면 그 행 제외."""
+    스냅한다. t+h가 그리드에 없거나 NaN이면 그 행 제외. anchors에 score 컬럼이
+    있으면 그대로 pass-through, 없으면 NaN."""
+    has_score = "score" in anchors.columns
     records = []
     for _, row in anchors.iterrows():
         cid = row["condition_id"]
@@ -142,8 +208,9 @@ def build_labels_multi_horizon(
                 "entry_price": entry_price, "exit_price": exit_price,
                 "direction": row["direction"], "forward_return": forward_return,
                 "convergence_bucket": row["convergence_bucket"],
+                "score": row["score"] if has_score else float("nan"),
             })
     return pd.DataFrame(records, columns=[
         "ts", "condition_id", "horizon_s", "entry_price", "exit_price",
-        "direction", "forward_return", "convergence_bucket",
+        "direction", "forward_return", "convergence_bucket", "score",
     ])

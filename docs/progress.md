@@ -963,3 +963,25 @@
 
 ### 막힌 부분/결정사항
 - 없음
+
+---
+
+## 2026-07-21 (이어서): p-value 인플랫폼 노출 — 구현 완료(Task 1~3)
+
+> 스펙 승인 후 자율 구현. 플랜: `docs/superpowers/plans/2026-07-21-polymarket-edge-validation-surface.md`
+
+### 완료
+- **Task 1** — `compute_report(trades,dates)->dict` + `load_and_report()` 추출(sharp-wallet·whale 러너), `main()`은 report에서 프린트(CLI 불변). sharp-wallet 2풀(bucket/score_tercile), whale 1풀(whale) 유지. 신규 통계 없음(run_* 재사용). 테스트 6개 신규 → **34 passed**(`--noconftest`). 두 CLI 스모크 정상(verdict 출력). 커밋 `426daf9`
+- **Task 2** — `api_server/lab_api.py`: 백그라운드-웜 캐시(`_task_forward` 선례) + `GET /lab/edge-validation`(스냅샷 즉시반환, stale>10분시 데몬스레드 워밍, 비블록) + `POST /lab/edge-validation/refresh`. py_compile OK. 커밋 `9bac5c1`
+- **Task 3** — 대시보드 `/validation`에 "Polymarket 엣지 검증" 섹션: 가설별 카드(p-value 테이블 group×horizon, BH-FDR 풀별 생존자, verdict 뱃지, 표본부족 경고, "지금 다시 계산"), "스크리닝일 뿐 실집행 근거 아님" 배너 상시, 생존자 0="확인된 엣지 없음(정직한 결과)" 명시. tsc 클린. 커밋(dashboard) `ac15614`
+
+### 변경된 파일
+- 백엔드: `research/run_polymarket_{sharp_wallet,whale}_validate.py`, `tests/test_run_polymarket_{sharp_wallet,whale}_validate.py`, `api_server/lab_api.py`
+- 대시보드: `lib/api.ts`, `app/validation/page.tsx`
+
+### 다음 할 일 / 미검증 (Task 4 = 유저 맥 스모크)
+- **맥에서 런타임 확인**: `curl localhost:8000/lab/edge-validation`(첫 호출 warming:true→잠시 후 reports), `/validation` 페이지 하단 섹션 렌더. (이 컨테이너는 nautilus 드리프트+Polymarket차단으로 백엔드 미기동 — Task1은 --noconftest로 완전검증, Task2 compile-only, Task3 tsc)
+- 남은 Phase: C(시각화 전면 강화) 스펙 후보 / Phase A ②launchd(유저 접근법 결정 대기)·①락파일(맥 pip freeze)
+
+### 막힌 부분/결정사항
+- 없음

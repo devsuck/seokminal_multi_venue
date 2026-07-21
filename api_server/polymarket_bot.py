@@ -15,6 +15,7 @@ import asyncio
 import datetime as _dt
 import json
 import os
+import time as _time
 from pathlib import Path
 
 from fastapi import APIRouter
@@ -271,3 +272,30 @@ def set_config(body: BotConfig) -> dict:
 @router.post("/run-now")
 def run_now() -> dict:
     return tick()
+
+
+_leaderboard_cache: dict = {"ts": 0.0, "data": []}
+_LEADERBOARD_TTL_S = 300
+
+
+@router.get("/leaderboard")
+def leaderboard() -> dict:
+    """Polymarket 공식 전체기간 PnL 상위 지갑(고래·고승률) 노출 — 5분 캐시, 읽기 전용.
+    샤프월렛 수집기가 '샤프월렛 명단'으로 내부에서 쓰는 그 리더보드를 그대로 보여준다.
+    (data-api.polymarket.com/v1/leaderboard, 무인증) 항목: rank/proxyWallet/pnl/vol."""
+    from research.polymarket_sharp_wallet.leaderboard import fetch_leaderboard
+    now = _time.time()
+    fresh = (now - _leaderboard_cache["ts"]) < _LEADERBOARD_TTL_S and _leaderboard_cache["data"]
+    if fresh:
+        return {"entries": _leaderboard_cache["data"], "cached": True,
+                "age_sec": round(now - _leaderboard_cache["ts"], 1)}
+    try:
+        entries = fetch_leaderboard()
+        _leaderboard_cache["ts"] = now
+        _leaderboard_cache["data"] = entries
+        return {"entries": entries, "cached": False, "age_sec": 0.0}
+    except Exception as exc:  # noqa: BLE001
+        # 조회 실패 시 마지막 성공 캐시라도 반환(빈손 방지)
+        return {"entries": _leaderboard_cache["data"], "cached": bool(_leaderboard_cache["ts"]),
+                "age_sec": round(now - _leaderboard_cache["ts"], 1) if _leaderboard_cache["ts"] else None,
+                "error": str(exc)[:120]}

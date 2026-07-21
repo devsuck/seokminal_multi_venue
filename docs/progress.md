@@ -922,3 +922,26 @@
 
 ### 막힌 부분/결정사항
 - 없음
+
+---
+
+## 2026-07-21 (이어서): Phase A ③ 완결(HUD 노출) + Phase B 고래 리더보드 노출
+
+> 유저가 "필요할 때만 부르고 자율로 계속 진행" 위임 → 아래는 자율 진행분.
+
+### 완료된 작업
+- **Phase A ③ 완결** — 봇 불변식을 대시보드 HUD에 노출(백엔드 `/lab/health`는 이전 커밋 `4fcd521`):
+  - (dashboard `d19f121`) `getLabHealth`/`LabHealth`/`HealthViolation` 타입 + HUD "정합성 감시" 패널(정상=녹색, 위반=severity별 색상 행) + 상단 스트립 "정합성 오류 N" 점멸 뱃지(감시견 패턴 재사용). tsc 클린.
+- **Phase B 착수 — 고래/고승률 리더보드 노출** (서베이가 짚은 퀵윈: 샤프월렛이 이미 fetch만 하고 미노출이던 것):
+  - 백엔드 `GET /polymarket/leaderboard` 신규(`api_server/polymarket_bot.py`) — `research/polymarket_sharp_wallet/leaderboard.fetch_leaderboard()` 재사용, **5분 TTL 인메모리 캐시**(폴링이 Polymarket API 안 때리게), 실패 시 마지막 캐시 반환. `time as _time` import 추가.
+  - 프론트 `getPolymarketLeaderboard` + `/polymarket` 페이지에 "고래 리더보드" 패널(rank/지갑(폴리마켓 프로필 링크)/전체PnL/거래량, 5분 느슨 폴링). tsc 클린.
+
+### 변경된 파일
+- 백엔드: `api_server/polymarket_bot.py`(`/polymarket/leaderboard` + `_time`), `docs/progress.md`
+- 대시보드: `lib/api.ts`, `app/hud/page.tsx`, `app/polymarket/page.tsx`
+
+### 다음 할 일 / 미검증
+- **백엔드 두 엔드포인트(`/lab/health`, `/polymarket/leaderboard`) 런타임 미검증** — 이 컨테이너는 (a) nautilus 드리프트로 `api_server.main` import 불가, (b) Polymarket 아웃바운드 403 차단이라 실행 테스트 불가. **맥에서 서버 띄워 `GET /lab/health`, `GET /polymarket/leaderboard` 한 번씩 확인 필요.** (순수모듈/타입/컴파일은 검증됨)
+- ⚠️ **Phase B 카테고리 확장 건 — 전제 어긋남**: 유저는 "허용 카테고리가 적어서 정산 베팅 적다"고 했지만, 다각화 봇은 **이미 카테고리 무필터**(전 종목 거래량순, progress 07-18 기록). 실제 정산 적은 원인은 max_positions=15 / max_days_to_resolution=30 / min_liquidity=5000 필터. → "카테고리 확장"은 무의미, 대신 이 레버(포지션 수↑·만기 짧게·유동성↓)를 유저에게 확인받아야 함. **유저 결정 필요.**
+- Phase A ②(launchd): 맥 전용 + tmux↔launchd 통합 설계 갈림(현 HUD restart/liveness가 tmux 기반) → 유저 접근법 결정 필요, 블라인드 진행 부적합
+- Phase A ①(락파일)·④(CI): 락파일=맥 `pip freeze` 대기

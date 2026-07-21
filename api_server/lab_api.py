@@ -350,6 +350,61 @@ def lab_health() -> dict:
     }
 
 
+# ── Polymarket 엣지 검증(p-value/BH-FDR) 노출 — 백그라운드 워밍 캐시 ──────────────
+# validate 러너는 500셔플이라 느림 → 매 요청 동기실행 금지. _task_forward 선례대로
+# 캐시 스냅샷 반환 + stale시 백그라운드 스레드 워밍(요청 절대 비블록). 읽기 전용.
+_EDGE_VAL_RUNNERS = {
+    "polymarket_sharp_wallet": "research.run_polymarket_sharp_wallet_validate",
+    "polymarket_whale": "research.run_polymarket_whale_validate",
+}
+_edge_val_cache: dict = {"ts": 0.0, "reports": {}, "warming": False}
+_EDGE_VAL_TTL_S = 600
+
+
+def _warm_edge_validation() -> None:
+    import importlib
+    import time
+    try:
+        for hyp, mod_path in _EDGE_VAL_RUNNERS.items():
+            try:
+                mod = importlib.import_module(mod_path)
+                _edge_val_cache["reports"][hyp] = mod.load_and_report()
+            except Exception as exc:  # noqa: BLE001
+                _edge_val_cache["reports"][hyp] = {"hypothesis": hyp, "error": str(exc)[:200]}
+    finally:
+        _edge_val_cache["ts"] = time.time()
+        _edge_val_cache["warming"] = False
+
+
+def _maybe_warm_edge(force: bool = False) -> None:
+    import threading
+    import time
+    if _edge_val_cache["warming"]:
+        return
+    stale = (time.time() - _edge_val_cache["ts"]) > _EDGE_VAL_TTL_S
+    if force or stale or not _edge_val_cache["reports"]:
+        _edge_val_cache["warming"] = True
+        threading.Thread(target=_warm_edge_validation, daemon=True).start()
+
+
+@router.get("/edge-validation")
+def edge_validation() -> dict:
+    """Polymarket 엣지 검증(p-value/BH-FDR) 스냅샷 — 읽기전용. stale시 백그라운드
+    워밍(요청 비블록). ⚠️ 스크리닝 결과일 뿐 실집행 근거 아님."""
+    import time
+    _maybe_warm_edge()
+    return {"reports": _edge_val_cache["reports"], "ts": _edge_val_cache["ts"],
+            "warming": _edge_val_cache["warming"],
+            "age_sec": round(time.time() - _edge_val_cache["ts"], 1) if _edge_val_cache["ts"] else None}
+
+
+@router.post("/edge-validation/refresh")
+def edge_validation_refresh() -> dict:
+    """엣지 검증 강제 재계산 트리거(백그라운드). 즉시 warming 상태 반환."""
+    _maybe_warm_edge(force=True)
+    return {"warming": True}
+
+
 class ServiceToggle(BaseModel):
     on: bool
 

@@ -119,86 +119,92 @@ def run_score_tercile(tercile: str, labels: pd.DataFrame) -> dict:
     return {"tercile": tercile, "blocked": False, "horizons": _score_horizons(tercile_labels)}
 
 
-def main() -> None:
+def _group_to_dict(gname: str, r: dict) -> tuple[dict, list[float], list[str]]:
+    """run_bucket/run_score_tercile 결과 → 대시보드용 group dict + (pvals, keys) 기여분."""
+    if r["blocked"]:
+        return {"group": gname, "blocked": True, "reason": r.get("reason", "")}, [], []
+    horizons, pvals, keys = [], [], []
+    for hk, hv in r["horizons"].items():
+        horizons.append({"horizon": hk, "n_events": hv["n_events"],
+                         "total_pnl": hv["strategy"]["total_pnl"],
+                         "p_value": hv["random"]["p_value"], "percentile": hv["random"]["percentile"]})
+        pvals.append(hv["random"]["p_value"])
+        keys.append(f"{gname}:{hk}")
+    return {"group": gname, "blocked": False, "horizons": horizons}, pvals, keys
+
+
+def _pool_dict(name: str, pvals: list[float], keys: list[str]) -> dict:
+    bh = benjamini_hochberg(pvals, alpha=0.1) if pvals else {
+        "survivors": [], "n_survivors": 0, "threshold": None, "alpha": 0.1}
+    survivors = [k for k, s in zip(keys, bh["survivors"]) if s]
+    return {"name": name, "alpha": bh["alpha"], "n_tested": len(pvals),
+            "n_survivors": bh["n_survivors"], "survivors": survivors, "threshold": bh.get("threshold")}
+
+
+def compute_report(trades: pd.DataFrame, dates: list[str]) -> dict:
+    """검증 결과를 대시보드/CLI 공용 dict로 반환 — 신규 통계 없음, 기존 run_* 재사용.
+    버킷 풀과 score tercile 풀을 분리 유지. anchors 없으면 verdict='no_data'."""
+    anchors = build_convergence_count(trades)
+    if anchors.empty:
+        return {"hypothesis": "polymarket_sharp_wallet", "cost_bps": COST_BPS, "dates": dates,
+                "n_anchors": 0, "groups": [], "pools": [], "verdict": "no_data"}
+    anchors = build_convergence_score(trades, anchors)
+    price_by_condition = {
+        cid: build_price_series(trades, cid) for cid in anchors["condition_id"].unique()
+    }
+    labels = add_score_tercile(build_labels_multi_horizon(anchors, price_by_condition))
+
+    groups: list[dict] = []
+    b_pvals: list[float] = []
+    b_keys: list[str] = []
+    for bucket in CONVERGENCE_BUCKETS:
+        g, pv, ks = _group_to_dict(f"bucket{bucket}", run_bucket(bucket, labels))
+        groups.append(g)
+        b_pvals += pv
+        b_keys += ks
+
+    t_pvals: list[float] = []
+    t_keys: list[str] = []
+    for tercile in SCORE_TERCILES:
+        g, pv, ks = _group_to_dict(tercile, run_score_tercile(tercile, labels))
+        groups.append(g)
+        t_pvals += pv
+        t_keys += ks
+
+    pools = [_pool_dict("bucket", b_pvals, b_keys), _pool_dict("score_tercile", t_pvals, t_keys)]
+    n_surv = sum(p["n_survivors"] for p in pools)
+    return {"hypothesis": "polymarket_sharp_wallet", "cost_bps": COST_BPS, "dates": dates,
+            "n_anchors": int(len(anchors)), "groups": groups, "pools": pools,
+            "verdict": "candidate" if n_surv > 0 else "no_edge"}
+
+
+def load_and_report() -> dict:
+    """디스크에서 수집 데이터 로드 후 compute_report. 엔드포인트/main 공용 진입점."""
     dates = _available_dates()
     trades = load_sharp_wallet_trades(dates) if dates else pd.DataFrame(columns=[
         "ts", "condition_id", "side", "price", "size", "proxy_wallet",
         "notional_usd", "is_sharp_wallet", "wallet_rank", "wallet_pnl",
     ])
+    return compute_report(trades, dates)
 
-    anchors = build_convergence_count(trades)
-    if anchors.empty:
-        labels = pd.DataFrame(columns=[
-            "ts", "condition_id", "horizon_s", "entry_price", "exit_price",
-            "direction", "forward_return", "convergence_bucket", "score",
-        ])
-    else:
-        anchors = build_convergence_score(trades, anchors)
-        price_by_condition = {
-            cid: build_price_series(trades, cid) for cid in anchors["condition_id"].unique()
-        }
-        labels = build_labels_multi_horizon(anchors, price_by_condition)
-    labels = add_score_tercile(labels)
 
-    results = []
-    pvals: list[float] = []
-    pval_keys: list[str] = []
-    for bucket in CONVERGENCE_BUCKETS:
-        r = run_bucket(bucket, labels)
-        results.append(r)
-        if not r["blocked"]:
-            for h_key, h_res in r["horizons"].items():
-                pvals.append(h_res["random"]["p_value"])
-                pval_keys.append(f"bucket{bucket}:{h_key}")
-
-    score_results = []
-    score_pvals: list[float] = []
-    score_pval_keys: list[str] = []
-    for tercile in SCORE_TERCILES:
-        r = run_score_tercile(tercile, labels)
-        score_results.append(r)
-        if not r["blocked"]:
-            for h_key, h_res in r["horizons"].items():
-                score_pvals.append(h_res["random"]["p_value"])
-                score_pval_keys.append(f"{tercile}:{h_key}")
-
-    bh = benjamini_hochberg(pvals, alpha=0.1) if pvals else {
-        "survivors": [], "n_survivors": 0, "threshold": None, "alpha": 0.1,
-    }
-    bh["keys"] = pval_keys
-
-    score_bh = benjamini_hochberg(score_pvals, alpha=0.1) if score_pvals else {
-        "survivors": [], "n_survivors": 0, "threshold": None, "alpha": 0.1,
-    }
-    score_bh["keys"] = score_pval_keys
-
-    print(f"\n=== cost_bps(polymarket) = {COST_BPS} ===\n")
-    for r in results:
-        if r["blocked"]:
-            print(f"bucket{r['bucket']} -> BLOCKED ({r['reason']})")
+def main() -> None:
+    rep = load_and_report()
+    print(f"\n=== cost_bps(polymarket) = {rep['cost_bps']} ===\n")
+    for g in rep["groups"]:
+        if g["blocked"]:
+            print(f"{g['group']} -> BLOCKED ({g['reason']})")
             continue
-        for h_key, h_res in r["horizons"].items():
-            s, p = h_res["strategy"], h_res["random"]
-            print(f"bucket{r['bucket']}:{h_key} n_events={h_res['n_events']} "
-                  f"total_pnl={s['total_pnl']} p_value={p['p_value']} percentile={p['percentile']}")
-
-    print("\n=== BH-FDR (신규 Polymarket sharp-wallet 풀, alpha=0.1) ===")
-    print(f"survivors: {[k for k, s in zip(bh['keys'], bh['survivors']) if s]}")
-    print(f"n_survivors: {bh['n_survivors']} / {len(pvals)}")
-
-    print("\n=== score tercile ===\n")
-    for r in score_results:
-        if r["blocked"]:
-            print(f"{r['tercile']} -> BLOCKED ({r['reason']})")
-            continue
-        for h_key, h_res in r["horizons"].items():
-            s, p = h_res["strategy"], h_res["random"]
-            print(f"{r['tercile']}:{h_key} n_events={h_res['n_events']} "
-                  f"total_pnl={s['total_pnl']} p_value={p['p_value']} percentile={p['percentile']}")
-
-    print("\n=== BH-FDR (score tercile 풀, alpha=0.1, 버킷 풀과 분리) ===")
-    print(f"survivors: {[k for k, s in zip(score_bh['keys'], score_bh['survivors']) if s]}")
-    print(f"n_survivors: {score_bh['n_survivors']} / {len(score_pvals)}")
+        for h in g["horizons"]:
+            print(f"{g['group']}:{h['horizon']} n_events={h['n_events']} "
+                  f"total_pnl={h['total_pnl']} p_value={h['p_value']} percentile={h['percentile']}")
+    for pool in rep["pools"]:
+        label = ("신규 Polymarket sharp-wallet 풀" if pool["name"] == "bucket"
+                 else "score tercile 풀, 버킷 풀과 분리")
+        print(f"\n=== BH-FDR ({label}, alpha={pool['alpha']}) ===")
+        print(f"survivors: {pool['survivors']}")
+        print(f"n_survivors: {pool['n_survivors']} / {pool['n_tested']}")
+    print(f"\nverdict: {rep['verdict']}")
 
 
 if __name__ == "__main__":

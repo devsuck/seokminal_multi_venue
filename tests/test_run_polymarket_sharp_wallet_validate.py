@@ -86,3 +86,45 @@ def test_run_score_tercile_computes_pvalue_when_enough_events():
     assert "30s" in result["horizons"]
     assert result["horizons"]["30s"]["n_events"] == 15
     assert result["horizons"]["30s"]["random"]["p_value"] is not None
+
+
+def _sharp_trades_min():
+    # 소수 sharp anchor — build_convergence_count가 anchor를 만들지만 라벨이 MIN_EVENTS
+    # 미달이라 그룹은 전부 BLOCKED(구조 검증용, 생존자 0 예상).
+    return pd.DataFrame([
+        {"ts": 0.0, "condition_id": "c1", "side": "BUY", "price": 0.5, "size": 100.0,
+         "proxy_wallet": "w1", "notional_usd": 50.0, "is_sharp_wallet": True,
+         "wallet_rank": 1, "wallet_pnl": 100.0},
+        {"ts": 10.0, "condition_id": "c2", "side": "BUY", "price": 0.5, "size": 100.0,
+         "proxy_wallet": "w2", "notional_usd": 80.0, "is_sharp_wallet": True,
+         "wallet_rank": 2, "wallet_pnl": 200.0},
+    ])
+
+
+def test_compute_report_no_data_returns_no_data_verdict():
+    trades = pd.DataFrame(columns=[
+        "ts", "condition_id", "side", "price", "size", "proxy_wallet",
+        "notional_usd", "is_sharp_wallet", "wallet_rank", "wallet_pnl"])
+    rep = val.compute_report(trades, [])
+    assert rep["hypothesis"] == "polymarket_sharp_wallet"
+    assert rep["verdict"] == "no_data"
+    assert rep["n_anchors"] == 0
+    assert rep["groups"] == []
+    assert rep["pools"] == []
+
+
+def test_compute_report_two_separate_bhfdr_pools_and_verdict():
+    rep = val.compute_report(_sharp_trades_min(), ["2026-07-21"])
+    assert rep["n_anchors"] == 2
+    assert [p["name"] for p in rep["pools"]] == ["bucket", "score_tercile"]
+    for p in rep["pools"]:
+        assert set(p) >= {"name", "alpha", "n_tested", "n_survivors", "survivors", "threshold"}
+    # 표본 부족 → 생존자 0 → no_edge
+    assert rep["verdict"] == "no_edge"
+    assert all("group" in g for g in rep["groups"])
+
+
+def test_load_and_report_smoke_no_data(tmp_path):
+    with patch.object(val, "DATA_DIR", str(tmp_path)):
+        rep = val.load_and_report()
+    assert rep["verdict"] == "no_data"

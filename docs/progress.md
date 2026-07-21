@@ -985,3 +985,24 @@
 
 ### 막힌 부분/결정사항
 - 없음
+
+---
+
+## 2026-07-21 (이어서): Phase C 시각화 — 스펙+플랜+C1 구현 완료
+
+### 스펙·플랜
+- 스펙 `docs/superpowers/specs/2026-07-21-viz-ux-upgrade-design.md`(승인): dataviz 스킬 방법론 채택, 블룸버그 톤 위에 재사용 차트 프리미티브 레이어 + 검증된 viz 램프(categorical/sequential/diverging, 상태색과 분리). categorical 5색은 `validate_palette.js` 다크 #000 전항목 PASS. 롤아웃 C1(validation viz)→C2(polymarket/performance)→C3(rest).
+- 플랜 `docs/superpowers/plans/2026-07-21-viz-ux-upgrade-c1.md`(C1만).
+
+### C1 구현 완료(전부 dashboard 레포, tsc 클린)
+- **Task 1**: `globals.css @theme`에 `--color-chart-1..5`(검증 categorical) + `--color-seq-1..4`(시안, 순흑이라 dim→bright). `lib/chart-colors.ts`에 `SEQ`+`seqColor(t)` 추가(기존 CATEGORICAL/TOKEN은 안 건드림 — 기존 d3 차트용). 커밋 `80f89d6`
+- **Task 2**: `components/charts/{ChartFrame,Heatmap,NullDistribution}.tsx` 신규. Heatmap=색만(셀 텍스트 없음, 대비안전)+툴팁, NullDistribution=percentile strip(실제 vs 셔플 null, 유의 tail 음영). 커밋 `d57a20a`
+- **Task 3**: `/validation` 엣지검증 카드에 group×horizon p-value 히트맵(밝을수록 유의) + 테이블 percentile 컬럼→NullDistribution strip. 정확수치·BH판정은 테이블 유지(접근성). 커밋 `854f937`
+
+### 다음 할 일 / 미검증
+- **시각 스모크 맥에서**(Task 4): `/validation` 하단 엣지검증 섹션 히트맵+strip 렌더, 라벨충돌/오버플로우 눈으로. (tsc·색검증은 통과, 실제 렌더만 미확인)
+- Phase C2(polymarket pnl곡선·리더보드 bar / performance equity곡선), C3(risk/agents/논문). 후속 플랜.
+- (대기) Phase A ②launchd 접근법·①락파일(맥 pip freeze)
+
+### 막힌 부분/결정사항
+- 없음. (spec의 `<NullDistribution>`는 백엔드 null 분위수 없어 percentile strip 형태로 구현 — 스펙 §5에 명시된 범위대로. 완전 히스토그램은 향후 백엔드 확장 필요)

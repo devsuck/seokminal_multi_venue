@@ -312,6 +312,44 @@ def lab_status() -> dict:
     return out
 
 
+@router.get("/health")
+def lab_health() -> dict:
+    """봇/에이전트 상태 정합성 불변식 실행 — '조용한 회계 버그' 위반 노출(HUD 알람용).
+    매매/정산 로직엔 관여 안 함, 관찰 전용. api_server/invariants.py 참고."""
+    from api_server import invariants
+    violations: list[dict] = []
+
+    # 폴리마켓 다각화 봇
+    try:
+        from api_server.polymarket_bot import _load as _pm_load
+        violations += invariants.check_polymarket_bot(_pm_load())
+    except Exception as exc:  # noqa: BLE001
+        violations.append({"severity": "warn", "entity": "polymarket_bot",
+                           "code": "CHECK_FAILED", "detail": f"검사 실패: {exc}"[:200]})
+
+    # AI 에이전트들 (성과 회계 정합성)
+    try:
+        from api_server import agent_perf, agent_store
+        for agent in agent_store.list_agents():
+            aid = agent["id"]
+            cycles = agent_store.read_cycles(aid, limit=invariants.CYCLE_CAP)
+            perf = agent_perf.compute_performance(cycles)
+            violations += invariants.check_agent(
+                aid, float(agent.get("account_alloc", 0.0)),
+                perf.realized_pnl, perf.invested, len(cycles))
+    except Exception as exc:  # noqa: BLE001
+        violations.append({"severity": "warn", "entity": "agents",
+                           "code": "CHECK_FAILED", "detail": f"검사 실패: {exc}"[:200]})
+
+    errors = [v for v in violations if v["severity"] == "error"]
+    return {
+        "ok": len(errors) == 0,
+        "n_violations": len(violations),
+        "n_errors": len(errors),
+        "violations": violations,
+    }
+
+
 class ServiceToggle(BaseModel):
     on: bool
 

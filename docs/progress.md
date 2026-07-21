@@ -894,3 +894,31 @@
 
 ### 막힌 부분/결정사항
 - 없음
+
+---
+
+## 2026-07-21 (이어서): 플랫폼 방향 논의 + Phase A 착수 — 봇 정합성 불변식
+
+### 맥락 / 결정
+- 인프라 논의 끝에 **호스트 = 맥 로컬 유지**로 결정(클라우드 오라클은 물러섬, 발열은 "Claude/dev 툴 끄면 idle 서버는 조용" 판단으로 급한 불 아님, 윈도우 데스크탑은 1개월 임시라 폐기). 오라클 배포 킷(`scripts/deploy/*`, `docs/deploy/oracle-pilot.md`)은 나중 재사용 위해 레포에 파킹(커밋 `e0a9dba`).
+- 플랫폼 전반 방향 합의: (1) 실매매 전까지 리서치/검증 지속, (2) 하나 골라 깊게(폴리마켓 유력), (3) **실행 레이어 하드닝**, (4) 관리 업그레이드(락파일/프로세스관리/봇불변식/CI), 폴리마켓 심화(고래·고승률 노출, 샤프월렛/괴리/whale, p-value 인플랫폼), 시각화/UX 강화(블룸버그 톤 유지). → Phase A(기반)부터 천천히.
+- 논문 기능 반영 여부 확인 요청 → **이미 완비**(`research/papers/{arxiv_fetcher,extract_spec,coverage_filter,codegen_signal,smoke_check}.py` + `run_paper_ingest.py`, arxiv q-fin.PM/TR/ST/CP, 논문 3개 처리됨). 단 (a) 수동 1회성(cron 아님, `run_paper_ingest_loop.sh` 래퍼는 있음), (b) 대시보드/HUD 미노출 → "반영 안 된 느낌"의 정체.
+
+### 완료된 작업 (Phase A ③ — 봇 정합성 불변식)
+- `api_server/invariants.py` 신규 — 순수 검증 함수(매매/정산 로직 무관, 관찰 전용). 과거 조용한 회계버그류를 상태만 보고 감지:
+  - `check_polymarket_bot(cfg)`: POSITION_SCHEMA(필수필드 결손=마이그레이션 버그류), SPENT_MISMATCH(`spent` != 오픈 포지션 usd 합 — 정산 시 감산설계라 이 항등식 성립), SPENT_OVER_BUDGET, SLOTS_EXCEEDED, STUCK_RESOLUTION(만기 7일↑ 지났는데 미정산=정산큐 멈춤, 07-18 버그 직격)
+  - `check_agent(...)`: CYCLE_CAP_SATURATION(cycle수 100000 캡 도달=FIFO 잘림 재발위험), INVESTED_NEGATIVE, OVER_ALLOCATED
+- `tests/test_invariants.py` 신규 13개 — `pytest --noconftest`로 13 passed(순수모듈이라 앱체인 무관)
+- `api_server/lab_api.py`에 `GET /lab/health` 엔드포인트 신규(lazy import, `/lab/status` 패턴). 폴리마켓봇 `_load()` + 전 에이전트 `compute_performance` 돌려 위반 집계, `{ok, n_violations, n_errors, violations[]}` 반환. HUD 알람용.
+
+### 변경된 파일
+- 신규: `api_server/invariants.py`, `tests/test_invariants.py`
+- 수정: `api_server/lab_api.py` (`/lab/health`)
+
+### 다음 할 일
+- **`/lab/health` 런타임 검증 미완** — 이 원격 컨테이너는 nautilus 드리프트로 `api_server.main` import 불가라 엔드포인트 실행 테스트 못 함. **맥에서 서버 띄워 `GET /lab/health` 한 번 확인 필요**(순수모듈+테스트는 검증됨, 와이어링만 미검증)
+- Phase A 남은 것: 대시보드 HUD에 `/lab/health` 위반 카드 노출(프론트, 소규모) / ②launchd 자동재시작(맥) / ①락파일(맥 `pip freeze`) / ④CI(①+conftest 지연 후)
+- Phase B/C는 서베이 완료(대시보드 37페이지·lightweight-charts5+d3·블룸버그 @theme 확인, 폴리마켓 엣지 전부 CLI-only·리더보드 이미 fetch만 하고 미노출) → 스펙부터
+
+### 막힌 부분/결정사항
+- 없음

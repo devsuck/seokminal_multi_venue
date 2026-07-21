@@ -1040,3 +1040,25 @@
 
 ### 막힌 부분/결정사항
 - 없음
+
+---
+
+## 2026-07-21 (이어서): MLB 스페셜리스트 트랙 — 스펙+플랜+순수코어 구현(Task 1,2,4,5)
+
+### 배경/설계
+- @bolinger 같은 MLB 전문 수익지갑 착안 → 카테고리 특화 지갑 컨센서스 추종. 스펙 `docs/superpowers/specs/2026-07-21-polymarket-mlb-specialist-design.md`, 플랜 `.../plans/2026-07-21-polymarket-mlb-specialist.md`(승인).
+- 결정: bottom-up 발굴, 3지표(PnL/승률/ROI) 변형 전부, 매일 walk-forward 재선정, 컨센서스(과반/전원 파라미터), 다변형 단일 BH-FDR, 다각화봇=베이스라인. MLB 단일(7월 성수기·매일 정산→표본 빠름). 수집+검증만·페이퍼·라이브 없음.
+
+### 완료 (순수 로직 4모듈, 전부 `--noconftest` 테스트 통과, 26 tests)
+- **Task 1** `research/mlb_specialist/market_filter.py` — `is_mlb_market`(키워드+팀명 휴리스틱, 타리그 겹침 제외)/`mlb_condition_ids`. 9 tests. (`aefe1c9`)
+- **Task 2** `research/mlb_specialist/leaderboard.py` — `wallet_mlb_stats`(pnl/winrate/roi/특화도, **as_of walk-forward**=정산된 것만) + `rank_specialists`(게이트+지표별 랭크). 5 tests. (`a9495d9`)
+- **Task 4** `research/hypotheses/mlb_specialist_consensus.py` — `consensus_signals`(min_present+과반/전원) + `build_labels`(정산까지 이진 payout→forward_return). 8 tests. (`92c3a9d`)
+- **Task 5** `research/run_mlb_specialist_validate.py` — `enumerate_variants`(3×2×2=12) + `compute_report`(변형별 p-value→**단일 BH-FDR 풀**). 4 tests. (`41a8bf1`)
+
+### 남은 것 (Task 3 — 데이터 플러밍, 맥 라이브 필요)
+- **수집기 `research/run_mlb_specialist_collect.py`** 미작성 — Polymarket이 이 컨테이너에서 차단(403)이라 라이브 폴링 검증 불가. 글로벌 `/trades` 폴링(샤프 수집기 골격) → `mlb_condition_ids` 필터 → append + MLB 마켓 정산상태 축적.
+- **`load_and_report()` walk-forward 조립** — 수집 데이터(트레이드/정산)에서 매일 스페셜리스트 선정→forward 컨센서스 신호→변형별 라벨 조립. 수집기 데이터 포맷에 결합돼 데이터 축적 후 맥에서 완성. (compute_report 코어는 준비됨)
+- MLB 마켓 식별 휴리스틱은 맥에서 실제 폴리마켓 태그로 튜닝 필요.
+
+### 막힌 부분/결정사항
+- 없음. 순수 코어(알고리즘)는 완성·검증. 수집+조립은 라이브 데이터 결합이라 맥.

@@ -1022,3 +1022,21 @@
 
 ### 막힌 부분/결정사항
 - 없음
+
+---
+
+## 2026-07-21 (이어서): "전부 다" 자율 진행 — launchd + C2 pnl + 논문 파이프라인 노출
+
+### 완료
+- **맥 launchd 자동재시작 킷**(Phase A ②, 비침습): `scripts/deploy/ensure_collectors.sh`(죽은 tmux 세션만 재생성 — HUD tmux 생존체크 보존) + `launchd/com.seokminal.{collectors,api}.plist` + `docs/deploy/mac-launchd.md`. 커밋 `9c367cd`. **맥 설치·검증은 유저**(런북에 수동검증 스텝).
+- **C2 inc2 `/pnl` 누적 실현손익 곡선**: 체결 원장 running-sum 파생(백엔드 무변경). `/performance`는 이미 equity 곡선 보유, `/portfolio`는 통화혼재로 막대 오해소지라 스킵, `/risk`는 시계열 없음 → 안 건드림. 커밋 `9195ca0`
+- **논문→가설 파이프라인 노출**(이전 "논문 안 보임" 이슈 해소): 백엔드 `GET /lab/papers`(`ast`로 `research/hypotheses/papers/*.py` 메타 파싱 + rejected.jsonl, 실행 안 함) 신규 `api_server/lab_api.py`. ast 파싱 실파일 3건 검증. 프론트 신규 페이지 `/papers`(생성 가설 + 리젝 사유). 커밋: backend/dashboard 아래.
+
+### 미검증/블록(유저)
+- **락파일 ①**: 맥 `pip freeze`만 가능 — 내가 생성 불가. 여전히 대기.
+- **다각화 필터 UI 적용**: 유저 브라우저 입력(최대포지션 20/최소유동성 3000/최대잔여일 21).
+- 백엔드 신규 엔드포인트(`/lab/papers` 등) 런타임은 맥 스모크. `/papers`·`/pnl` viz tsc 통과.
+- CI ④: 락파일 후.
+
+### 막힌 부분/결정사항
+- 없음

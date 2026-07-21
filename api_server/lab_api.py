@@ -405,6 +405,52 @@ def edge_validation_refresh() -> dict:
     return {"warming": True}
 
 
+@router.get("/papers")
+def papers() -> dict:
+    """논문→가설 자동생성 파이프라인 산출물 노출(읽기 전용). 생성된 가설
+    (research/hypotheses/papers/*.py)의 메타 + 리젝 기록(rejected.jsonl). ast로 파싱만."""
+    import ast
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parent.parent
+    ingested: list[dict] = []
+    papers_dir = repo_root / "research" / "hypotheses" / "papers"
+    if papers_dir.is_dir():
+        for f in sorted(papers_dir.glob("*.py")):
+            if f.name == "__init__.py":
+                continue
+            meta = {"file": f.name, "title": None, "name": None, "description": None}
+            try:
+                tree = ast.parse(f.read_text())
+                doc = ast.get_docstring(tree)
+                if doc:
+                    meta["title"] = doc.splitlines()[0].strip()
+                for node in tree.body:
+                    if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+                        for t in node.targets:
+                            if isinstance(t, ast.Name) and t.id in ("NAME", "DESCRIPTION"):
+                                meta[t.id.lower()] = node.value.value
+            except Exception as exc:  # noqa: BLE001
+                meta["title"] = f"(파싱 실패: {exc})"[:120]
+            ingested.append(meta)
+
+    rejected: list[dict] = []
+    rej_path = repo_root / "research" / "data" / "paper_pipeline" / "rejected.jsonl"
+    if rej_path.exists():
+        import json
+        for line in rej_path.read_text().splitlines()[-50:]:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rejected.append(json.loads(line))
+            except ValueError:
+                continue
+
+    return {"ingested": ingested, "n_ingested": len(ingested),
+            "rejected": rejected, "n_rejected": len(rejected)}
+
+
 class ServiceToggle(BaseModel):
     on: bool
 

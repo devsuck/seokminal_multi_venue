@@ -945,3 +945,21 @@
 - ⚠️ **Phase B 카테고리 확장 건 — 전제 어긋남**: 유저는 "허용 카테고리가 적어서 정산 베팅 적다"고 했지만, 다각화 봇은 **이미 카테고리 무필터**(전 종목 거래량순, progress 07-18 기록). 실제 정산 적은 원인은 max_positions=15 / max_days_to_resolution=30 / min_liquidity=5000 필터. → "카테고리 확장"은 무의미, 대신 이 레버(포지션 수↑·만기 짧게·유동성↓)를 유저에게 확인받아야 함. **유저 결정 필요.**
 - Phase A ②(launchd): 맥 전용 + tmux↔launchd 통합 설계 갈림(현 HUD restart/liveness가 tmux 기반) → 유저 접근법 결정 필요, 블라인드 진행 부적합
 - Phase A ①(락파일)·④(CI): 락파일=맥 `pip freeze` 대기
+
+---
+
+## 2026-07-21 (이어서): 다각화 필터 완만 조정 + p-value 노출 스펙 작성
+
+### 완료
+- **다각화 봇 필터 완만 조정**(유저 "셋 다 완만하게"): `_DEFAULT` max_positions 15→20, max_days_to_resolution 30→21, min_liquidity 5000→3000 (커밋 `3a64633`). ⚠️ **실행 중 봇은 저장된 `data/polymarket_bot.json`이 이겨서 defaults 무효** — 유저가 `/polymarket` 페이지 진입필터에 같은 값(최대포지션 20 / 최소유동성$ 3000 / 최대잔여일 21) 직접 입력해야 실효. UI에 이미 필드 있음(추가작업 불필요).
+- **p-value 인플랫폼 스펙 작성**(유저 "p-value부터 스펙"): `docs/superpowers/specs/2026-07-21-polymarket-edge-validation-surface-design.md`. 핵심: (1) `run_*_validate.py`에 `compute_report()->dict` 추출(계산-프린트 분리, CLI 불변), (2) `lab_api.py` 백그라운드-웜 캐시(`_task_forward` 선례) + `GET /lab/edge-validation`·`POST .../refresh`, (3) `/validation` 페이지에 sharp-wallet/whale p-value 테이블 + BH-FDR 풀 요약 섹션(생존자 0=정직한 결과 명시, "스크리닝 뿐 실집행 근거 아님" 배너 상시). arb 게이트/divergence/라이브알림은 범위 밖.
+
+### 다음 할 일
+- **p-value 스펙 유저 리뷰 대기** — 승인되면 writing-plans → 구현(스펙 §8 순서)
+- 다각화 필터: 유저가 UI에서 새 값 적용
+- (미검증) `/lab/health`, `/polymarket/leaderboard` 맥에서 curl 확인
+- (보류, 유저 결정 대기) Phase A ② launchd 접근법(tmux 연동 vs 완전전환)
+- Phase C 시각화 전면 강화 — p-value 노출 다음 스펙 후보
+
+### 막힌 부분/결정사항
+- 없음

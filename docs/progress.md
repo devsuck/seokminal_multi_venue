@@ -1006,3 +1006,19 @@
 
 ### 막힌 부분/결정사항
 - 없음. (spec의 `<NullDistribution>`는 백엔드 null 분위수 없어 percentile strip 형태로 구현 — 스펙 §5에 명시된 범위대로. 완전 히스토그램은 향후 백엔드 확장 필요)
+
+---
+
+## 2026-07-21 (이어서): Phase C2 increment 1 — 폴리마켓 성과 곡선/막대
+
+### 완료(전부 dashboard, tsc 클린)
+- **C2 프리미티브**: `components/charts/TimeSeries.tsx`(lightweight-charts v5 래퍼, RollingChart 패턴, 크로스헤어+리사이즈) + `BarChart.tsx`(SVG 수평막대, 극성색, 툴팁/링크/보조라벨). 커밋 `5090fd7`
+- **`/polymarket` 적용**: (1) 실현손익 누적 곡선 — status.log resolve 이벤트로 최근 추이, **마지막 점을 총 realized_pnl에 앵커**(로그 창 한계 정직 처리), (2) 리더보드 상위 12 PnL 막대(프로필 링크), 기존 테이블 유지. 커밋 `41a7683`
+
+### 다음 할 일 / 미검증
+- **맥 시각 스모크**: `/polymarket`에 손익 곡선 + 리더보드 막대 렌더 확인.
+- C2 increment 2: `/performance`·`/pnl`·`/portfolio` equity/pnl 곡선 — 그쪽 시계열 데이터 서베이 후 착수(현 status류가 시계열 주는지 확인 필요).
+- C3(risk/agents/논문), Phase A ②launchd·①락파일 여전히 대기.
+
+### 막힌 부분/결정사항
+- 없음

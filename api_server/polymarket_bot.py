@@ -31,9 +31,9 @@ _LOG = _DATA / "polymarket_bot_log.jsonl"
 
 _DEFAULT = {
     "enabled": False, "interval_sec": 3600,
-    "budget": 500.0, "per_market_usd": 20.0, "max_positions": 15,
-    "min_liquidity": 5000.0, "min_price": 0.10, "max_price": 0.90,
-    "min_days_to_resolution": 3, "max_days_to_resolution": 30,
+    "budget": 500.0, "per_market_usd": 20.0, "max_positions": 20,
+    "min_liquidity": 3000.0, "min_price": 0.10, "max_price": 0.90,
+    "min_days_to_resolution": 3, "max_days_to_resolution": 21,
     "side": "favorite",  # "favorite" | "underdog" | "random" — 무엣지, 다각화 전용
     "spent": 0.0, "realized_pnl": 0.0,
     "positions": [],  # [{condition_id, question, event_id, side, entry_price, usd, shares, end_date, entry_ts}]

@@ -27,6 +27,15 @@ class StrategySignal:
             raise ValueError(f"direction must be -1/0/+1, got {self.direction}")
         object.__setattr__(self, "strength", _clamp01(self.strength))
 
+    # 인터페이스 별칭 — 스펙 필드명(timestamp/metadata)과 정합. canonical = as_of/meta.
+    @property
+    def timestamp(self) -> str:
+        return self.as_of
+
+    @property
+    def metadata(self) -> dict:
+        return self.meta
+
     def to_dict(self) -> dict:
         return asdict(self)
 

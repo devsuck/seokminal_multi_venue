@@ -33,6 +33,7 @@ ACTION_PERMISSIONS: dict[str, str] = {
     "propose_data_source": "RESEARCH_ONLY",
     "request_data_audit": "RESEARCH_ONLY",
     "write_research_memo": "RESEARCH_ONLY",
+    "write_planner_proposal": "RESEARCH_ONLY",
     "register_rejected_strategy": "RESEARCH_ONLY",
     "add_market_lesson": "RESEARCH_ONLY",
     "run_data_gate": "BACKTEST_ONLY",

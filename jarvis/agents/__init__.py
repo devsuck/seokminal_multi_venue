@@ -2,6 +2,8 @@
 from jarvis.permissions import Level, Principal
 
 RESEARCH_AGENT = Principal("research_agent", Level.RESEARCH_ONLY)
+# Research Planner — 커버리지 격차 '제안'만. 집행/트레이딩 권한 없음.
+PLANNER_AGENT = Principal("planner_agent", Level.RESEARCH_ONLY)
 DATAGATE_AGENT = Principal("datagate_agent", Level.BACKTEST_ONLY)
 BACKTEST_AGENT = Principal("backtest_agent", Level.BACKTEST_ONLY)
 CRITIC_AGENT = Principal("critic_agent", Level.BACKTEST_ONLY)

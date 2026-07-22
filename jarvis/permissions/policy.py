@@ -51,6 +51,7 @@ ACTION_PERMISSIONS: dict[str, str] = {
     "portfolio_state_transition": "PAPER_ONLY",
     "record_turnover": "PAPER_ONLY",
     "create_live_order_proposal": "LIVE_PROPOSAL_ONLY",
+    "submit_production_proposal": "LIVE_PROPOSAL_ONLY",
     "execute_micro_live_order": "MICRO_LIVE_EXECUTION",
     "execute_constrained_live_order": "CONSTRAINED_LIVE_EXECUTION",
     # 사람만 —
@@ -60,6 +61,7 @@ ACTION_PERMISSIONS: dict[str, str] = {
     "raise_autonomy_level": "ADMIN_HUMAN_ONLY",
     "change_validation_threshold": "ADMIN_HUMAN_ONLY",
     "approve_live_promotion": "ADMIN_HUMAN_ONLY",
+    "approve_production_proposal": "ADMIN_HUMAN_ONLY",
     # 영구 금지 —
     "delete_audit_log": "FORBIDDEN",
     "rewrite_registry_history": "FORBIDDEN",

@@ -23,11 +23,15 @@ class RiskScalingConfig:
     conservative_vol_scalar: float = 0.5  # vol 데이터 결측 시 보수 스칼라
     # drawdown 사다리(오름차순 임계, 배수). dd<=임계면 해당 배수.
     dd_ladder: tuple = ((0.05, 1.0), (0.10, 0.75), (0.20, 0.5), (1.0, 0.25))
-    # regime 라벨 → 배수(미지 라벨/None = 1.0)
+    # regime 라벨 → 배수(테이블 밖 라벨 = 1.0 무조정; None = 1.0)
     regime_multipliers: dict = field(default_factory=lambda: {
+        # regime_filter HMM vocab
+        "bull_low_vol": 1.0, "bull_high_vol": 0.75, "bear_low_vol": 0.5, "bear_high_vol": 0.3,
+        # 일반 라벨
         "risk_on": 1.0, "bull": 1.0, "trending": 1.0,
         "neutral": 0.75, "range": 0.75, "chop": 0.75,
         "risk_off": 0.5, "bear": 0.5, "high_vol": 0.5, "crisis": 0.3,
+        "unknown": 0.5,  # 탐지실패/데이터부족 안전 폴백(보수)
     })
 
 
@@ -71,7 +75,8 @@ def _regime_multiplier(regime, table: dict) -> tuple[float, str]:
         return _clamp(float(regime), 0.0, 1.0), f"numeric:{regime}"
     label = regime
     if isinstance(regime, dict):
-        label = regime.get("regime") or regime.get("state") or regime.get("label")
+        label = (regime.get("current_regime") or regime.get("regime")
+                 or regime.get("state") or regime.get("label"))
     label = str(label) if label is not None else None
     if label in table:
         return table[label], label
@@ -99,7 +104,8 @@ class PortfolioRiskScaler:
         return max(0.0, (peak - cur) / peak) if peak > _EPS else 0.0
 
     def scale(self, allocation, matrix, as_of: str | None = None,
-              state: PortfolioState | None = None, regime=None, ts: str = "") -> RiskAdjustedAllocation:
+              state: PortfolioState | None = None, regime=None, ts: str = "",
+              quality=None) -> RiskAdjustedAllocation:
         weights = {p.strategy_id: p.target_weight for p in allocation.proposals}
         cal = [d for d in matrix.calendar() if as_of is None or d <= as_of]
         _, aligned = matrix.aligned(cal)
@@ -131,6 +137,16 @@ class PortfolioRiskScaler:
         # ── regime 배수 ──
         regime_mult, regime_label = _regime_multiplier(regime, self.c.regime_multipliers)
 
+        # ── 리스크 입력 품질 게이팅(P2.25) ──
+        q_mode = None
+        if quality is not None:
+            q_mode = getattr(quality, "recommended_mode", None)
+            if q_mode in ("conservative", "exclude"):
+                lev_cap = min(lev_cap, 1.0)                # 신뢰 낮음 → 레버리지 금지
+                vol_note = (vol_note + "; " if vol_note else "") + f"quality={q_mode}→no_leverage"
+            if q_mode == "exclude":
+                vol_scalar = min(vol_scalar, self.c.conservative_vol_scalar)  # 강한 보수화
+
         gross = _clamp(vol_scalar * dd_adj * regime_mult, 0.0, lev_cap)
         scaled = {k: round(w * gross, 6) for k, w in weights.items()}
 
@@ -146,11 +162,12 @@ class PortfolioRiskScaler:
             rationale=rationale, timestamp=ts,
             diagnostics={"n_obs": n_obs, "leverage_cap": lev_cap,
                          "vol_scalar": round(vol_scalar, 6), "drawdown": round(dd, 6),
-                         "regime_label": regime_label, "base_weights": weights})
+                         "regime_label": regime_label, "quality_mode": q_mode,
+                         "base_weights": weights})
 
 
 def scale_allocation(allocation, matrix, config: RiskScalingConfig | None = None,
                      as_of: str | None = None, state: PortfolioState | None = None,
-                     regime=None, ts: str = "") -> RiskAdjustedAllocation:
+                     regime=None, ts: str = "", quality=None) -> RiskAdjustedAllocation:
     """편의 진입점. 기록 안 함(제안 계산만)."""
-    return PortfolioRiskScaler(config).scale(allocation, matrix, as_of, state, regime, ts)
+    return PortfolioRiskScaler(config).scale(allocation, matrix, as_of, state, regime, ts, quality)

@@ -41,7 +41,7 @@ def _cmd_allocate(write: bool) -> int:
     return 0
 
 
-def _cmd_scale(regime: str | None) -> int:
+def _cmd_scale(regime: str | None, auto_regime: bool, quality_gate: bool) -> int:
     from datetime import datetime, timezone
     from jarvis.portfolio.allocator import RiskConstraints, propose_allocation
     from jarvis.portfolio.returns_matrix import ReturnMatrix, buyback_source
@@ -49,10 +49,33 @@ def _cmd_scale(regime: str | None) -> int:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     m = ReturnMatrix([buyback_source()], capacity=1.0)
     alloc = propose_allocation(m, RiskConstraints(), ts=ts)
-    scaled = scale_allocation(alloc, m, regime=regime, ts=ts)
+    weights = {p.strategy_id: p.target_weight for p in alloc.proposals}
+    reg = regime
+    if auto_regime:
+        from jarvis.portfolio.regime import regime_for_scaler
+        reg = regime_for_scaler(m, weights, method="hmm")
+    qrep = None
+    if quality_gate:
+        from jarvis.portfolio.risk_quality import check_matrix
+        qrep = check_matrix(m)
+    scaled = scale_allocation(alloc, m, regime=reg, ts=ts, quality=qrep)
     out = scaled.to_dict()
-    out["note"] = "제안 전용 — 집행 아님. gross exposure는 vol-target×dd×regime."
+    if isinstance(reg, dict):
+        out["regime_detected"] = reg
+    if qrep is not None:
+        out["quality"] = {"mode": qrep.recommended_mode, "confidence": qrep.confidence_score,
+                          "valid": qrep.valid}
+    out["note"] = "제안 전용 — 집행 아님. gross = vol-target×dd×regime, 품질게이팅 반영."
     print(json.dumps(out, ensure_ascii=False, indent=2, default=str))
+    return 0
+
+
+def _cmd_quality() -> int:
+    from jarvis.portfolio.returns_matrix import ReturnMatrix, buyback_source
+    from jarvis.portfolio.risk_quality import check_matrix
+    m = ReturnMatrix([buyback_source()], capacity=1.0)
+    rep = check_matrix(m)
+    print(json.dumps(rep.to_dict(), ensure_ascii=False, indent=2, default=str))
     return 0
 
 
@@ -64,13 +87,18 @@ def main(argv=None) -> int:
     a.add_argument("--write", action="store_true")
     s = sub.add_parser("scale")
     s.add_argument("--regime", default=None)
+    s.add_argument("--auto-regime", action="store_true")
+    s.add_argument("--quality-gate", action="store_true")
+    sub.add_parser("quality")
     args = ap.parse_args(argv)
     if args.cmd == "matrix":
         return _cmd_matrix()
     if args.cmd == "allocate":
         return _cmd_allocate(args.write)
     if args.cmd == "scale":
-        return _cmd_scale(args.regime)
+        return _cmd_scale(args.regime, args.auto_regime, args.quality_gate)
+    if args.cmd == "quality":
+        return _cmd_quality()
     return 1
 
 

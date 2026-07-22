@@ -8,6 +8,8 @@ CRITIC_AGENT = Principal("critic_agent", Level.BACKTEST_ONLY)
 PAPER_AGENT = Principal("paper_agent", Level.PAPER_ONLY)
 # Signal Fusion — 합성신호(자문)만 산출/기록. 주문 권한 없음.
 FUSION_AGENT = Principal("fusion_agent", Level.PAPER_ONLY)
+# Meta Portfolio — 자본배분 '제안'만 산출/기록. 집행 권한 없음(승인은 사람 게이트).
+META_PORTFOLIO_AGENT = Principal("meta_portfolio_agent", Level.LIVE_PROPOSAL_ONLY)
 LIVE_PROPOSAL_AGENT = Principal("live_proposal_agent", Level.LIVE_PROPOSAL_ONLY)
 # 사람만 — live 승인·리스크·레벨 변경
 HUMAN_ADMIN = Principal("human_admin", Level.ADMIN_HUMAN_ONLY, is_human=True)

@@ -258,6 +258,23 @@ def restart_collector(key: str) -> dict:
     return _tmux_process_status(session, cfg["data_dir"])
 
 
+@router.get("/fleet")
+def lab_fleet() -> dict:
+    """수집기 함대 헬스 — 등록된 모든 tmux 수집기의 데이터 신선도 verdict + 요약.
+    하나가 조용히 죽으면 엣지가 소리없이 썩으므로 '기계 살아있나'를 한눈에. 읽기전용.
+    api_server/fleet_health.py(순수 판정) 참고."""
+    from api_server import fleet_health
+    rows = []
+    for key, cfg in COLLECTOR_SESSIONS.items():
+        try:
+            status = _tmux_process_status(cfg["session"], cfg["data_dir"])
+        except Exception as exc:  # noqa: BLE001
+            status = {"running": False, "session_exists": False, "last_write": None,
+                      "age_sec": None, "error": str(exc)[:120]}
+        rows.append(fleet_health.classify(key, status))
+    return fleet_health.fleet_summary(rows)
+
+
 @router.get("/status")
 def lab_status() -> dict:
     """모바일 상태 보드 — 서버·DART봇·AI루프·congress 한눈에."""
@@ -357,11 +374,12 @@ def lab_health() -> dict:
 # ── Polymarket 엣지 검증(p-value/BH-FDR) 노출 — 백그라운드 워밍 캐시 ──────────────
 # validate 러너는 500셔플이라 느림 → 매 요청 동기실행 금지. _task_forward 선례대로
 # 캐시 스냅샷 반환 + stale시 백그라운드 스레드 워밍(요청 절대 비블록). 읽기 전용.
-_EDGE_VAL_RUNNERS = {
-    "polymarket_sharp_wallet": "research.run_polymarket_sharp_wallet_validate",
-    "polymarket_whale": "research.run_polymarket_whale_validate",
-    "mlb_specialist_consensus": "research.run_mlb_specialist_validate",
-}
+def _edge_val_runners() -> dict:
+    from research.hypothesis_registry import warmable_runners
+    return warmable_runners()
+
+
+
 _edge_val_cache: dict = {"ts": 0.0, "reports": {}, "warming": False}
 _EDGE_VAL_TTL_S = 600
 
@@ -369,11 +387,16 @@ _EDGE_VAL_TTL_S = 600
 def _warm_edge_validation() -> None:
     import importlib
     import time
+    from research import edge_history
+    now = time.time()
     try:
-        for hyp, mod_path in _EDGE_VAL_RUNNERS.items():
+        for hyp, mod_path in _edge_val_runners().items():
             try:
                 mod = importlib.import_module(mod_path)
-                _edge_val_cache["reports"][hyp] = mod.load_and_report()
+                report = mod.load_and_report()
+                _edge_val_cache["reports"][hyp] = report
+                # 감쇠추적: 매 워밍마다 요약을 시계열에 append(관찰 전용, 실패해도 무시)
+                edge_history.record(hyp, edge_history.summarize_report(report), now)
             except Exception as exc:  # noqa: BLE001
                 _edge_val_cache["reports"][hyp] = {"hypothesis": hyp, "error": str(exc)[:200]}
     finally:
@@ -408,6 +431,48 @@ def edge_validation_refresh() -> dict:
     """엣지 검증 강제 재계산 트리거(백그라운드). 즉시 warming 상태 반환."""
     _maybe_warm_edge(force=True)
     return {"warming": True}
+
+
+@router.get("/edges")
+def edges_meta() -> dict:
+    """엣지 메타-대시보드 — 전 가설 포트폴리오를 한 화면에. 각 가설의 검증 요약
+    (FDR 생존/최소 p-value/표본수/유의여부) + 감쇠 궤적. 읽기전용, 백그라운드 워밍.
+    ⚠️ 스크리닝 결과일 뿐 실집행 근거 아님. research/hypothesis_registry.py 참고."""
+    import time
+    from research import edge_history
+    from research.hypothesis_registry import registry_list
+    _maybe_warm_edge()
+    reports = _edge_val_cache["reports"]
+    edges = []
+    n_sig = n_warm = 0
+    for entry in registry_list():
+        key = entry["key"]
+        traj = edge_history.load_trajectory(key)
+        row = {**entry, "trajectory": traj, "trend": edge_history.trajectory_trend(traj)}
+        rep = reports.get(key)
+        if entry["warmable"]:
+            n_warm += 1
+            if rep is not None:
+                summ = edge_history.summarize_report(rep)
+                row["summary"] = summ
+                row["status"] = "error" if summ.get("verdict") == "error" else (
+                    "significant" if summ["significant"] else
+                    ("no_data" if summ["verdict"] == "no_data" else "not_significant"))
+                if summ["significant"]:
+                    n_sig += 1
+            else:
+                row["status"] = "warming"
+        else:
+            row["status"] = "pending"      # 맥 데이터 조립/백테스트 대기
+        edges.append(row)
+    return {
+        "edges": edges,
+        "portfolio": {"n_total": len(edges), "n_warmable": n_warm,
+                      "n_significant": n_sig, "n_pending": len(edges) - n_warm},
+        "ts": _edge_val_cache["ts"],
+        "warming": _edge_val_cache["warming"],
+        "age_sec": round(time.time() - _edge_val_cache["ts"], 1) if _edge_val_cache["ts"] else None,
+    }
 
 
 @router.get("/papers")

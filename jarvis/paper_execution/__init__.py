@@ -17,6 +17,7 @@ from jarvis.paper_execution.models import (  # noqa: F401
     PaperPosition,
 )
 from jarvis.paper_execution.monitoring import PaperRiskReport, monitor  # noqa: F401
+from jarvis.paper_execution.runner import PaperTradingRunner, RuntimeConfig, RuntimeEvent  # noqa: F401
 from jarvis.paper_execution.performance import attribution, attribution_current  # noqa: F401
 from jarvis.paper_execution.valuation import PortfolioSnapshot, valuate, valuate_current  # noqa: F401
 from jarvis.paper_execution.verify import verify  # noqa: F401

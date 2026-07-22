@@ -7,6 +7,11 @@ __pycache__/
 jarvis/_state/index.db
 jarvis/_state/index.db-wal
 jarvis/_state/index.db-shm
+
+# 재생성 가능한 Knowledge Graph(P4) — P3 projection 위. disposable.
+jarvis/_state/knowledge.db
+jarvis/_state/knowledge.db-wal
+jarvis/_state/knowledge.db-shm
 .venv/
 *.egg-info/
 /data/

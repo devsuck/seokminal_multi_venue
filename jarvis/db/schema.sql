@@ -51,7 +51,8 @@ CREATE TABLE IF NOT EXISTS experiments (
     hypothesis TEXT,
     result     TEXT,
     status     TEXT,
-    created_at TEXT
+    created_at TEXT,
+    metadata   TEXT   -- P4 지원: reason/data_source/universe/net/sharpe/percentile(JSON)
 );
 
 CREATE TABLE IF NOT EXISTS audit_events (

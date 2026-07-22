@@ -1082,3 +1082,28 @@
 
 ### 막힌 부분/결정사항
 - 없음
+
+---
+
+## 2026-07-22: XAU Session Confluence 전략 Pine→Python 포팅 (Task 1–3 완료)
+
+### 배경 / 결정
+- 유저의 TradingView "XAU Session Confluence Strategy"(Pine v6, 15분봉 기준)를 플랫폼에 심으려 했으나, **Lv1 에이전트 `condition` rule은 condition_engine 지표(rsi/ma/bb/macd/cci/obv)만** 표현 가능 → 세션/아시안레인지/돌파/HTF바이어스 프리미티브가 없어 구조적으로 담을 수 없음.
+- 따라서 조건 rule 대신 **BTC ICT 엔진(`run_ict_paper_engine`)처럼 별도 파이썬 엔진으로 충실 포팅**. 성공기준 = 파이썬 백테스트가 유저 TradingView 결과와 근사 일치.
+- 스펙: `docs/superpowers/specs/2026-07-21-xau-session-confluence-port-design.md`. 플랜: `docs/superpowers/plans/2026-07-22-xau-session-confluence-port.md`. 설정=Pine 기본값(유저 확인: 미변경), 차트=15분봉.
+
+### 완료된 작업 (TDD, `pytest --noconftest`, 23 tests)
+- **Task 1** `research/xau_session/sessions.py` — NY tz 세션 판정(asian 19–03 자정넘김/london 02–11:30/ny 08–16), zoneinfo DST, 세션 시작/종료 엣지. 8 tests. (`sessions`)
+- **Task 2** `research/xau_session/strategy.py` — 순수 사이클 상태머신: 아시안레인지 03:00 고정 → 런던돌파(사이클1회, 롱우선, cycle_range_ready 오버랩가드) → NY연속 → 엔트리(토글) → R:R(SL=반대극단, TP=entry±0.5·risk) → 필터(아시안폭 ON[1.2,100]/HTF·스탑거리·캔들강도 OFF) → 엑싯(SL+TP resting 인트라바, 동봉 SL우선; 브레이크이븐/시간청산 구현; 트레일 미구현 명시에러). sizing은 러너 위임. 10 tests.
+- **Task 3** `research/run_xau_session_backtest.py` — 전략 트레이드 → equity 복리 순차 sizing(risk%3)·비용(commission 2.5/계약·slippage 2틱) → 통계(트레이드수/승률/PF/총손익). 240m HTF 리샘플(봉종료 태깅 no-lookahead). `main()`은 저장 XAU 15m 탐색. 5 tests.
+
+### 충실도 포인트 (§4)
+- 바 종가 평가(process_orders_on_close), 60m 아시안레인지는 베이스 바에서 세션중 hi/lo 추적(60m highest==15m highest라 리샘플 불요), zoneinfo DST, 사이클 상태머신 dedup/타이브레이크.
+
+### 남은 것 (Task 4 — TV 대조, 맥 필요)
+- **이 컨테이너엔 XAU 15m parquet 없음** → 순수 로직/상태머신은 합성 바로 전부 검증(23 tests). **실제 백테스트+TradingView 대조는 맥.**
+- 맥 절차: (1) intraday_store에 XAU 15m 저장(`xyz:GOLD`/`PAXG`/`GC` 중), (2) `python -m research.run_xau_session_backtest` 실행, (3) 트레이드수/승률/PF/총손익을 유저 TradingView Strategy Tester와 대조. 불일치 시 원인순서: 심볼 mintick(`TICK_SIZE`)·데이터소스(TV 스팟 XAU↔HL/IB) → 세션경계/DST.
+- 대조로 충실도 확인되면 (후속) 라이브 페이퍼 엔진(ICT 패턴 재사용) 승격.
+
+### 막힌 부분/결정사항
+- 없음. R:R=0.5(소익다승, 비용 민감)·데이터소스 차이는 스펙 §8에 함정으로 명시. 통계적 근사가 목표.

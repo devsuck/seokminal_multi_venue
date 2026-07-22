@@ -1107,3 +1107,44 @@
 
 ### 막힌 부분/결정사항
 - 없음. R:R=0.5(소익다승, 비용 민감)·데이터소스 차이는 스펙 §8에 함정으로 명시. 통계적 근사가 목표.
+
+---
+
+## 2026-07-22 (이어서): 플랫폼 업그레이드 6종 (엣지 메타-대시보드/함대헬스/감쇠추적/집행시임/워치독)
+
+유저 "자는 동안 다 해줘" — MLB/골드 빼고 플랫폼 전반 업그레이드. 전부 커밋·푸시,
+순수 로직은 여기서 검증(56 tests), 백엔드 런타임/프론트 렌더는 맥 확인 필요.
+
+### ① 엣지 메타-대시보드 (백+프론트)
+- `research/hypothesis_registry.py` — 전 가설 포트폴리오 단일소스(8가설, warmable 2=폴리마켓). 순수 메타.
+- `api_server/lab_api.py` `GET /lab/edges` — 가설별 검증요약(FDR생존/최소p/표본/유의) + 감쇠궤적 + 포트폴리오 카운트. 기존 edge-validation 워밍을 레지스트리 기반으로 전환.
+- `seokminal_dashboard/app/edges/page.tsx` — 포트폴리오 요약 타일 + 가설 테이블(p-value 바 + 감쇠 스파크라인 개선녹/감쇠적) + 함대 패널. 네비 "검증" 그룹에 추가. `getEdges`/`getFleet` + 타입.
+
+### ② 수집기 함대 헬스 (백+프론트)
+- `api_server/fleet_health.py` — 순수 신선도 판정(fresh/stale/dead, 수집기별 임계) + 함대요약. `GET /lab/fleet`이 COLLECTOR_SESSIONS 순회+`_tmux_process_status`+classify.
+- 프론트 `/edges` 상단 함대 패널(verdict 칩, 30s 폴링). "하나 죽으면 엣지 조용히 썩는다" 가시화.
+
+### ③ 엣지 감쇠(decay) 추적
+- `research/edge_history.py` — 검증 리포트 관용적(재귀) 요약추출 + `research/data/edge_history/{hyp}.jsonl` 시계열 저장/로드/추세. 매 워밍마다 append → 레짐변화 조기포착. 신규 통계 없음(관찰 전용).
+
+### ④ 시각화 (엣지 페이지에 통합)
+- p-value 감쇠 인라인 SVG 스파크라인(저비용), p-value 크기 바(1-p, ≤0.05 강조). Bloomberg 테마·예약 status색 준수.
+
+### ⑤ 집행 시임 (안전)
+- `execution/broker.py` — dry-run 페이퍼 브로커(주문가 즉시체결 시뮬+가중평균 포지션/실현손익+저널, 벤뉴 API 미접촉) + `make_broker` mode 기본 paper. `mode="live"`는 등록 어댑터 없으면 NotImplementedError로 거부 — **실주문 경로 구조적 부재.** 실어댑터는 후속 register_live_adapter.
+
+### ⑥ 운영 경화
+- `ops/collector_watchdog.py` — `/lab/fleet` 폴링→dead(옵션 stale) 자동 재기동(멱등 restart 엔드포인트, launchd-tmux 결정 무관). `ops/README.md`(tmux/launchd 설치, pip freeze 락파일), `ops/com.seokminal.watchdog.plist` 템플릿.
+
+### 테스트 (컨테이너, --noconftest)
+- fleet_health 7, edge_history 7, hypothesis_registry 3, execution_broker 12, collector_watchdog 4 = **신규 33 + XAU 23 = 56 통과.** 백엔드 py_compile OK, 대시보드 tsc 클린.
+
+### 맥 검증 체크리스트 (일어나서)
+1. 두 레포 pull(같은 브랜치). uvicorn 재기동(--reload 없이).
+2. `curl localhost:8000/lab/edges` → 폴리마켓 2종 요약 뜨는지(warming→잠시후 reports), 나머지 6종 status=pending.
+3. `curl localhost:8000/lab/fleet` → 수집기별 verdict. dead/stale 있으면 워치독 붙이기(ops/README).
+4. 대시보드 `/edges` 렌더 — 포트폴리오 타일/함대칩/테이블/스파크라인 눈으로.
+5. (선택) 워치독 tmux/launchd 상시화, 맥 `pip freeze > requirements.lock`.
+
+### 막힌 부분/결정사항
+- 없음. ⑤ 실집행은 의도적으로 페이퍼만(자는 동안 실주문 방지). 엣지 확정 후 실어댑터 별도 태스크.

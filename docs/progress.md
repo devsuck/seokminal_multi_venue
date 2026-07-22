@@ -1235,3 +1235,25 @@
 
 ### 후속 반영 (병합 시)
 - `mlb_specialist_consensus`는 위 6종 커밋에서 `warmable: False`(맥 조립 전 가정)로 등록됐으나, 실제로는 (이어서 2~5) 세션에서 `load_and_report()` 완성+수집기 라이브 기동까지 끝난 상태라 병합하며 `warmable: True`로 승격.
+
+---
+
+## 2026-07-22 (이어서 6): 두 저장소 commit→pull(merge)→push 동기화, 세션 마무리
+
+- 유저 요청: 데스크탑에서 넘어온 미동기화 작업 있는지 확인 후 커밋·풀·푸시로 맞추기.
+- 양쪽 레포(`seokminal-dashboard`, `seokminal-multi-venue`) 모두 `git fetch` + `git log HEAD..origin/<branch>`로 미풀 커밋 확인 → 실제로 데스크탑발 "플랫폼 업그레이드 6종"(엣지 메타-대시보드/함대헬스/감쇠추적/집행시임/워치독, 위 섹션) + 대시보드 `/edges` 페이지가 origin에만 있고 안 풀려있었음(유저 우려 적중).
+- `git pull --no-rebase origin <branch>`로 병합(git config 변경 없이 플래그로만 처리 — "git config 절대 변경 금지" 규칙 준수).
+- **충돌 2건 해결**:
+  - `seokminal-dashboard/components/Sidebar.tsx`: 내 `/mlb` 링크 추가 vs origin `/edges` 링크 추가, 같은 배열 위치 — 둘 다 유지(`/validation`→`/edges`→`/mlb` 순).
+  - `seokminal-multi-venue/api_server/lab_api.py`: 내 구버전 flat `_EDGE_VAL_RUNNERS` dict vs origin의 신규 `research/hypothesis_registry.py` 기반 `_edge_val_runners()`. **origin 채택**(아키텍처 상위호환, MLB도 이미 레지스트리에 등록돼 있었음) — 단, `mlb_specialist_consensus`의 `warmable` 플래그는 `research/hypothesis_registry.py`에서 별도로 `True`로 승격(위 "후속 반영" 참조 — 레지스트리 자체의 병합은 충돌 없었음, 이건 병합 후 판단 결정).
+  - `docs/progress.md` 하단 append 충돌 — 양쪽 섹션 순서대로 이어붙임.
+- 승격 판단으로 깨진 테스트 수정: `tests/test_hypothesis_registry.py`의 `test_warmable_runners_are_polymarket_two`(warmable=정확히 폴리마켓 2종이라 가정)가 MLB 승격으로 거짓이 됨 → 어서션/이름 갱신(`test_warmable_runners_include_mlb_now_promoted`), `test_registry_list_warmable_first`도 3종 기준으로 수정. 해당 테스트 파일 재실행 12 passed.
+- 병합 후 라이브 스모크: `curl localhost:8000/lab/edges` (이미 `--reload`로 떠있던 서버) → `mlb_specialist_consensus`가 `warmable: true`+감쇠궤적 항목 정상 반영 확인.
+- 최종 push 완료. 커밋 해시: `seokminal-dashboard` 병합커밋 `ff88fc2`(`774b250` MLB분리 + `fb9f30d` desktop edges 병합), `seokminal-multi-venue` 병합커밋 `adc93e9`(`81494ed` XAU/MLB작업 + `4be6a7a` state스냅샷 + desktop `85e2555`/`b2b3fdf`/`9e362b6`/`9f43c55` 병합).
+
+### 남은 갭
+- 없음. 두 레포 모두 동일 브랜치(`claude/polymarket-wallet-scoring-awzj6n`)에서 commit/merge/push 완료, 충돌 마커 0건, 관련 테스트 통과.
+
+### 다음 세션 확인
+- 위 "맥 검증 체크리스트"(엣지 메타-대시보드/함대헬스) 항목들은 이번 세션 중 이미 일부 확인됨(`/lab/edges` curl 스모크). `/edges` 프론트 페이지 브라우저 렌더는 아직 미확인 — 다음 세션에서 확인 권장.
+- MLB 데이터는 여전히 축적 대기(수집기 상시구동 중, 표본 쌓이면 자동 계산).

@@ -60,6 +60,7 @@
 4. **CB/BW 발행 negative-drift 리스크필터 배선** — 공시 후 하위5% 확인됨(07-초 검증)이나 아직 미배선. buyback v1은 동결이라 붙이려면 새 v3 shadow로 등록 필요(설계 미착수)
 5. **US 내부자매수 UNDERPOWERED** — 27개 대형주 유니버스로는 이벤트 부족(24건/유효13건) 확정. 유니버스 확장 시 재시도 가능(미착수)
 6. **논문기반 알파마이닝 파이프라인(Phase 133) 실전 검증** — `python -m research.run_paper_ingest` 1회 실행해 라이브 arXiv 논문 e2e 통과율 확인 안 됨(구현만 완료, 최종 whole-branch 리뷰도 미실행: `scripts/review-package e18921b <HEAD>`)
+7. **`/edges` 프론트 페이지 브라우저 렌더 확인** — 백엔드 `/lab/edges`·`/lab/fleet`는 curl 스모크 완료(2026-07-22), 대시보드 `/edges` 페이지(포트폴리오 타일+함대칩+테이블+스파크라인) 실브라우저 확인은 아직 안 함. `mlb_specialist_consensus`는 이번 세션에 `warmable: True`로 승격됐으니 폴리마켓 2종+MLB 총 3종이 뜨는지 확인.
 
 ---
 

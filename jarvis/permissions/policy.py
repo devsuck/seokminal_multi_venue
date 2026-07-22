@@ -43,6 +43,7 @@ ACTION_PERMISSIONS: dict[str, str] = {
     "create_paper_order": "PAPER_ONLY",
     "record_paper_fill": "PAPER_ONLY",
     "promote_to_paper_active": "PAPER_ONLY",
+    "write_fusion_signal": "PAPER_ONLY",
     "create_live_order_proposal": "LIVE_PROPOSAL_ONLY",
     "execute_micro_live_order": "MICRO_LIVE_EXECUTION",
     "execute_constrained_live_order": "CONSTRAINED_LIVE_EXECUTION",

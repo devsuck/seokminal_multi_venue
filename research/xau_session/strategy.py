@@ -43,7 +43,7 @@ class Config:
     candle_strength_min: float = 0.6
     # 엑싯 (기본 SL+TP만)
     use_breakeven: bool = False
-    be_trigger_r: float = 1.0
+    be_trigger_r: float = 0.45          # Pine "Breakeven Trigger (x SL distance)" 기본값
     use_time_exit: bool = False
     max_bars_in_trade: int = 60
     use_trailing: bool = False           # 부분청산+ATR 트레일 (미구현 — 토글 시 명시 에러)

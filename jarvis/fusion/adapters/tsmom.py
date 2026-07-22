@@ -16,6 +16,14 @@ from jarvis.fusion.types import StrategySignal
 
 _CAP_DEFAULT = 3.0
 
+# 정적 폴백 유니버스 — research.data.futures_loader.BASKET_FULL(32시장)의 심볼.
+# ib_async 미설치(임포트 불가)여도 심볼 해석 가능하도록 복제. 데이터는 여전히 별도 배선.
+FUTURES_UNIVERSE = [
+    "ES", "NQ", "RTY", "YM", "EMD", "NKD", "ZN", "ZB", "ZF", "ZT", "UB", "ZQ",
+    "GC", "SI", "HG", "PL", "PA", "CL", "NG", "RB", "HO", "ZC", "ZS", "ZW",
+    "ZL", "ZM", "KC", "SB", "CT", "CC", "LE", "HE",
+]
+
 
 class TsmomAdapter:
     def __init__(self, strategy_id: str, symbols: list[str] | None = None,
@@ -34,8 +42,8 @@ class TsmomAdapter:
         try:  # 실환경: 선물 유니버스. 데이터 없으면 아래 loader가 빈 패널.
             from research.data.futures_loader import ASSET_CLASS
             return sorted(ASSET_CLASS.keys())
-        except Exception:  # noqa: BLE001
-            return []
+        except Exception:  # noqa: BLE001 — ib_async 미설치 등 → 정적 폴백
+            return list(FUTURES_UNIVERSE)
 
     def _load_panels(self, symbols: list[str]) -> dict:
         loader = self._loader

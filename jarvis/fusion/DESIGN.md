@@ -49,3 +49,26 @@ direction  = sign(net)  (deadband 1e-9)
 ## Validation (CLI)
 `python -m jarvis.fusion validate` — 결정적 속성검사(가중합=1, 단조성, 손실전략=0표,
 수축, degenerate 무크래시, 방향정합). 통과해야 해당 버전 "passed".
+
+---
+
+## P1.5 — Signal Provider Adapters (jarvis/fusion/adapters/)
+검증전략 → StrategySignal 번역(로직 무수정, no-lookahead). PROVIDER_REGISTRY 자기등록.
+- buyback: 포지션 원장의 예정 entry/exit(결과데이터 미사용)로 롱 신호
+- tom: turn-of-month 캘린더 창 → 바스켓 롱
+- tsmom: 전략 자신의 tsmom_weights(panels, as_of) 호출 → 부호/크기 번역
+
+## P1.6 — Signal Coverage Completion
+- **커버리지 보강**: buyback exit_date 결측 시 동결 hold 규칙으로 만료(stale 롱 방지);
+  tsmom 정적 32시장 유니버스 폴백(ib_async 없이 심볼 해석); tom 캘린더 검증 진단.
+- **Normalization Layer** (`normalize.py`): raw_strength → 전략-상대 [0,1]
+  (rank/minmax/zscore). raw는 meta 보존. FusionEngine 불변(앞단 별도 레이어).
+- **Fusion Backtest** (`backtest.py`): 개별 vs 융합 포트폴리오 — Sharpe·CAGR·MaxDD·
+  turnover·correlation reduction(분산비율). 전략 ≥2 필요(1개면 분산지표 n/a, 정직).
+- **Diagnostics** (`diagnostics.py`) + CLI: `diagnose`(어댑터 상태+buyback 신선도),
+  `backtest`, `run --norm-method`.
+
+### 잔여 블로커(정직)
+- tsmom 실신호 = 선물 intraday parquet + (CME 실시간 구독) 필요. 코드/배선 완결, 데이터 대기.
+- tom 캘린더 = 평일 근사. 정확한 KRX 휴장일 반영은 KR 거래일 데이터 필요.
+- buyback = 봇이 exit_date 미기록분 존재(진단이 n_expired_missing_exit로 노출).

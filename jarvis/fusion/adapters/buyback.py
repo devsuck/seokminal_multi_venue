@@ -13,11 +13,12 @@ import json
 import os
 
 from jarvis.config import state_path
-from jarvis.fusion.adapters.base import as_date
+from jarvis.fusion.adapters.base import add_business_days, as_date
 from jarvis.fusion.types import StrategySignal
 
 STRATEGY_ID = "kr_dart_buyback_drift_v1"
 _LEDGER = "buyback_bot_positions.jsonl"
+DEFAULT_HOLD_DAYS = 20  # buyback_config 동결 time-stop(거래일). exit_date 결측 시 이 규칙으로 만료.
 
 
 def _read_rows() -> list[dict]:
@@ -44,14 +45,17 @@ class BuybackPositionAdapter:
         active: dict[str, dict] = {}
         for p in self._positions():
             entry = p.get("entry_date")
-            exit_ = p.get("exit_date")
             code = p.get("stock_code")
             if not code or not entry:
                 continue
             if entry > d:               # 진입 전 = 아직 알 수 없음(no-lookahead)
                 continue
-            if exit_ and d >= exit_:     # 예정 time-stop 도달 = 보유 종료
+            # 예정 종료일: exit_date 있으면 사용, 없으면 동결 hold 규칙으로 계산(freshness).
+            hold = int(p.get("hold_days") or DEFAULT_HOLD_DAYS)
+            scheduled = p.get("exit_date") or add_business_days(entry, hold)
+            if d >= scheduled:           # 예정 time-stop 도달 = 보유 종료(stale 방지)
                 continue
+            p = {**p, "_scheduled_exit": scheduled}
             active.setdefault(code, p)   # dedup: 종목당 하나
         out = []
         for code, p in sorted(active.items()):
@@ -59,5 +63,6 @@ class BuybackPositionAdapter:
                 strategy_id=self.strategy_id, instrument=code, direction=1, strength=1.0,
                 as_of=as_of, source="buyback_bot_positions",
                 meta={"corp": p.get("corp_name"), "entry_date": p.get("entry_date"),
-                      "exit_date": p.get("exit_date")}))
+                      "exit_date": p.get("exit_date"), "scheduled_exit": p["_scheduled_exit"],
+                      "exit_source": "ledger" if p.get("exit_date") else "hold_rule"}))
         return out

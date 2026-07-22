@@ -44,11 +44,20 @@ def eligible_strategy_ids() -> list[str]:
             if r["status"] in FUSION_ELIGIBLE_STATUSES]
 
 
+def _ensure_adapters() -> None:
+    """어댑터 패키지 import → PROVIDER_REGISTRY 자기등록(지연). 실패해도 무해."""
+    try:
+        import jarvis.fusion.adapters  # noqa: F401
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def collect_signals(as_of: str = "") -> tuple[list[StrategySignal], list[dict]]:
     """검증전략들의 신호 수집. 반환: (신호목록, 스킵로그[정직]).
 
     어댑터 없는 전략은 스킵(사유 기록). PROVIDER_REGISTRY 비면 전부 스킵.
     """
+    _ensure_adapters()
     sigs: list[StrategySignal] = []
     skipped: list[dict] = []
     for sid in eligible_strategy_ids():

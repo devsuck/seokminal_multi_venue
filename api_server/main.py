@@ -5161,6 +5161,10 @@ app.include_router(orderflow_router)
 from api_server.router_options_flow import router as options_flow_router
 app.include_router(options_flow_router)
 
+# ── AI Hedge Fund Operations Console (read-only 거버넌스/집행 파이프라인 표면) ──────
+from api_server.console_api import router as console_router
+app.include_router(console_router)
+
 
 @app.on_event("startup")
 async def _start_dart_bot() -> None:

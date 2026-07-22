@@ -31,7 +31,7 @@ _CHECKSUM_COLS = {
     "signals": ["strategy_id", "instrument", "direction", "strength", "timestamp"],
     "allocations": ["strategy_id", "weight", "risk_contribution", "timestamp"],
     "portfolio_decisions": ["decision", "reason", "timestamp", "regime", "risk_level"],
-    "experiments": ["id", "hypothesis", "result", "status", "created_at"],
+    "experiments": ["id", "hypothesis", "result", "status", "created_at", "metadata"],
     "audit_events": ["event", "actor", "action", "timestamp", "metadata"],
 }
 
@@ -161,15 +161,22 @@ def _project_portfolio_decisions(db, rows) -> int:
     return len(out)
 
 
+_EXP_META_KEYS = ("reason", "data_source", "universe", "sharpe", "random_percentile",
+                  "percentile", "failure_mechanism", "net", "net_pnl", "net_base")
+
+
 def _project_experiments(db, rows) -> int:
     out = []
     for r in rows:
+        meta = {k: r[k] for k in _EXP_META_KEYS if r.get(k) is not None}
         out.append((r.get("hypothesis_id") or r.get("id"),
                     r.get("name") or r.get("hypothesis") or r.get("hypothesis_id"),
                     r.get("diagnosis") or r.get("verdict") or r.get("result") or r.get("reason"),
-                    r.get("status"), r.get("timestamp")))
+                    r.get("status"), r.get("timestamp"),
+                    json.dumps(meta, ensure_ascii=False, sort_keys=True, default=str)))
     db.executemany(
-        "INSERT INTO experiments(id,hypothesis,result,status,created_at) VALUES (?,?,?,?,?)", out)
+        "INSERT INTO experiments(id,hypothesis,result,status,created_at,metadata)"
+        " VALUES (?,?,?,?,?,?)", out)
     return len(out)
 
 

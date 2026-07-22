@@ -123,18 +123,26 @@ def load(symbol: str, base_tf: str = "15m") -> dict:
 
 
 def main() -> None:
+    """사용: python -m research.run_xau_session_backtest [SYMBOL] [TICK_SIZE]
+    SYMBOL 미지정 시 xyz:GOLD/PAXG/GC/XAUUSD 순 자동탐색. TradingView가 OANDA:XAUUSD
+    스팟이면 xyz:GOLD(24/7 연속)가 가장 가까운 대체, GC(6개월)는 교차대조용."""
+    import sys
     from research.data.intraday_store import load_df
     candidates = ["xyz:GOLD", "PAXG", "GC", "XAUUSD", "GOLD"]
-    symbol = next((s for s in candidates if not load_df(s, "15m").empty), None)
-    if symbol is None:
+    argv = sys.argv[1:]
+    symbol = argv[0] if argv else next((s for s in candidates if not load_df(s, "15m").empty), None)
+    tick = float(argv[1]) if len(argv) > 1 else TICK_SIZE
+    if symbol is None or load_df(symbol, "15m").empty:
         print("XAU 15m 데이터 없음. intraday_store에 xyz:GOLD/PAXG/GC 등 저장 후 재실행(맥).")
-        print(f"  탐색 심볼: {candidates}")
+        print(f"  탐색 심볼: {candidates}  (직접 지정: python -m research.run_xau_session_backtest GC)")
         return
-    rep = backtest(load(symbol))
-    print(f"=== XAU Session Confluence 백테스트 ({symbol}, 15m) ===")
+    rep = backtest(load(symbol), tick_size=tick)
+    df = load_df(symbol, "15m")
+    print(f"=== XAU Session Confluence 백테스트 ({symbol}, 15m, {len(df)}봉, tick={tick}) ===")
     for k in ("n_trades", "wins", "win_rate", "profit_factor", "gross_win", "gross_loss", "net", "final_equity"):
         print(f"  {k:14s}: {rep[k]}")
     print("  → TradingView Strategy Tester 결과와 대조(트레이드수/승률/PF/총손익).")
+    print("  ⚠️ OANDA:XAUUSD 스팟과 데이터소스가 달라 트레이드 1:1 불일치 정상 — 통계적 근사가 목표.")
 
 
 if __name__ == "__main__":

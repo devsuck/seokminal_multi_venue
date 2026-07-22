@@ -25,13 +25,33 @@ def _cmd_matrix() -> int:
     return 0
 
 
+def _cmd_allocate(write: bool) -> int:
+    from datetime import datetime, timezone
+    from jarvis.portfolio.allocator import RiskConstraints, propose_allocation
+    from jarvis.portfolio.returns_matrix import ReturnMatrix, buyback_source
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    m = ReturnMatrix([buyback_source()], capacity=1.0)
+    res = propose_allocation(m, RiskConstraints(), ts=ts)
+    out = res.to_dict()
+    out["note"] = "제안 전용 — 집행 아님. 활동 전략 <2면 폴백."
+    if write:
+        from jarvis.portfolio.allocation_ledger import write_proposal
+        out["ledger"] = write_proposal(res)
+    print(json.dumps(out, ensure_ascii=False, indent=2, default=str))
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="jarvis.portfolio")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("matrix")
+    a = sub.add_parser("allocate")
+    a.add_argument("--write", action="store_true")
     args = ap.parse_args(argv)
     if args.cmd == "matrix":
         return _cmd_matrix()
+    if args.cmd == "allocate":
+        return _cmd_allocate(args.write)
     return 1
 
 

@@ -2,6 +2,11 @@ __pycache__/
 *.pyc
 .env
 /catalog/
+
+# 재생성 가능한 SQLite 프로젝션(P3) — 소스는 JSONL(불변). disposable.
+jarvis/_state/index.db
+jarvis/_state/index.db-wal
+jarvis/_state/index.db-shm
 .venv/
 *.egg-info/
 /data/

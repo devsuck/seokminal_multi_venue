@@ -46,5 +46,9 @@ def is_mlb_market(market: dict) -> bool:
 
 
 def mlb_condition_ids(markets: list[dict]) -> set[str]:
-    """마켓 리스트에서 MLB 마켓의 condition_id 집합."""
-    return {m["condition_id"] for m in markets if m.get("condition_id") and is_mlb_market(m)}
+    """마켓 리스트에서 MLB **경기** 마켓(시즌 우승/수상 등 선물 제외)의 condition_id 집합.
+    `game_start_time` 있는 것만 인정 — 실라이브 확인(2026-07-22): 월드시리즈 우승/골드글러브
+    같은 시즌 선물은 정산까지 수개월이라 매일 walk-forward 표본에 안 맞고, 실제 게임(nrfi/
+    moneyline 등)만 game_start_time이 채워져 있어 이 필드로 정확히 구분된다."""
+    return {m["condition_id"] for m in markets
+            if m.get("condition_id") and m.get("game_start_time") and is_mlb_market(m)}

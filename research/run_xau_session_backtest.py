@@ -122,6 +122,31 @@ def load(symbol: str, base_tf: str = "15m") -> dict:
     return {"ts": d["ts"], "o": d["open"], "h": d["high"], "l": d["low"], "c": d["close"]}
 
 
+def summary(symbols: list[str] | None = None, tick_sizes: dict[str, float] | None = None) -> dict:
+    """멀티 심볼 백테스트 요약 — `/research/xau-session` 노출용. trades 리스트는 무거워 제외,
+    통계만. 심볼별 없는 데이터는 건너뜀(빈 dict면 데이터 미저장 상태)."""
+    from research.data.intraday_store import load_df
+    candidates = symbols or ["xyz:GOLD", "GC", "PAXG"]
+    tick_sizes = tick_sizes or {}
+    cfg = Config()
+    out: dict[str, dict] = {}
+    for sym in candidates:
+        df = load_df(sym, "15m")
+        if df.empty:
+            continue
+        tick = tick_sizes.get(sym, TICK_SIZE)
+        rep = {k: v for k, v in backtest(load(sym), cfg, tick_size=tick).items() if k != "trades"}
+        rep["tick_size"] = tick
+        rep["n_bars"] = len(df)
+        out[sym] = rep
+    return {
+        "symbols": out,
+        "config": {"risk_reward": cfg.risk_reward, "risk_percent": cfg.risk_percent,
+                   "use_london_breakout": cfg.use_london_breakout, "use_ny_continuation": cfg.use_ny_continuation},
+        "note": "TradingView Strategy Tester 대조용 — 실집행 근거 아님, 데이터소스 차이로 트레이드 1:1 불일치 정상.",
+    }
+
+
 def main() -> None:
     """사용: python -m research.run_xau_session_backtest [SYMBOL] [TICK_SIZE]
     SYMBOL 미지정 시 xyz:GOLD/PAXG/GC/XAUUSD 순 자동탐색. TradingView가 OANDA:XAUUSD

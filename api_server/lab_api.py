@@ -226,6 +226,9 @@ COLLECTOR_SESSIONS: dict[str, dict[str, str]] = {
     "polymarket_sharp_wallet_tick": {"session": "polymarket-sharp-wallet-tick",
                                      "data_dir": "research/data/polymarket_sharp_wallet",
                                      "module": "research.run_polymarket_sharp_wallet_collect"},
+    "polymarket_mlb_specialist_tick": {"session": "polymarket-mlb-specialist-tick",
+                                       "data_dir": "research/data/mlb_specialist",
+                                       "module": "research.run_mlb_specialist_collect"},
 }
 
 
@@ -305,6 +308,7 @@ def lab_status() -> dict:
             "polymarket_whale_tick": _tmux_process_status("polymarket-whale-tick", "research/data/polymarket_whale"),
             "polymarket_updown_arb": _tmux_process_status("polymarket-updown-arb", "research/data/polymarket_updown_arb"),
             "polymarket_sharp_wallet_tick": _tmux_process_status("polymarket-sharp-wallet-tick", "research/data/polymarket_sharp_wallet"),
+            "polymarket_mlb_specialist_tick": _tmux_process_status("polymarket-mlb-specialist-tick", "research/data/mlb_specialist"),
         }
     except Exception as exc:  # noqa: BLE001
         out["processes"] = {"error": str(exc)[:60]}
@@ -356,6 +360,7 @@ def lab_health() -> dict:
 _EDGE_VAL_RUNNERS = {
     "polymarket_sharp_wallet": "research.run_polymarket_sharp_wallet_validate",
     "polymarket_whale": "research.run_polymarket_whale_validate",
+    "mlb_specialist_consensus": "research.run_mlb_specialist_validate",
 }
 _edge_val_cache: dict = {"ts": 0.0, "reports": {}, "warming": False}
 _EDGE_VAL_TTL_S = 600

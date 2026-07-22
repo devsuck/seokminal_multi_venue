@@ -70,6 +70,29 @@ def _cmd_scale(regime: str | None, auto_regime: bool, quality_gate: bool) -> int
     return 0
 
 
+def _cmd_rebalance(write: bool) -> int:
+    from datetime import datetime, timezone
+    from jarvis.portfolio.allocator import RiskConstraints, propose_allocation
+    from jarvis.portfolio.decision_engine import CurrentPortfolio, propose_rebalance
+    from jarvis.portfolio.returns_matrix import ReturnMatrix, buyback_source
+    from jarvis.portfolio.risk_scaler import scale_allocation
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = ts[:10]
+    m = ReturnMatrix([buyback_source()], capacity=1.0)
+    alloc = propose_allocation(m, RiskConstraints(), ts=ts)
+    scaled = scale_allocation(alloc, m, ts=ts)
+    # 현재 보유 미상 → 보수 폴백 시연(실운영은 실제 holdings 주입)
+    cur = CurrentPortfolio({}, known=False)
+    dec = propose_rebalance(scaled, cur, now=now, ts=ts)
+    out = dec.to_dict()
+    out["note"] = "제안 전용 — 주문 안 냄. 실 holdings 주입 시 delta/turnover/cost 계산."
+    if write:
+        from jarvis.portfolio.rebalance_ledger import write_proposal
+        out["ledger"] = write_proposal(dec)
+    print(json.dumps(out, ensure_ascii=False, indent=2, default=str))
+    return 0
+
+
 def _cmd_quality() -> int:
     from jarvis.portfolio.returns_matrix import ReturnMatrix, buyback_source
     from jarvis.portfolio.risk_quality import check_matrix
@@ -90,6 +113,8 @@ def main(argv=None) -> int:
     s.add_argument("--auto-regime", action="store_true")
     s.add_argument("--quality-gate", action="store_true")
     sub.add_parser("quality")
+    rb = sub.add_parser("rebalance")
+    rb.add_argument("--write", action="store_true")
     args = ap.parse_args(argv)
     if args.cmd == "matrix":
         return _cmd_matrix()
@@ -99,6 +124,8 @@ def main(argv=None) -> int:
         return _cmd_scale(args.regime, args.auto_regime, args.quality_gate)
     if args.cmd == "quality":
         return _cmd_quality()
+    if args.cmd == "rebalance":
+        return _cmd_rebalance(args.write)
     return 1
 
 

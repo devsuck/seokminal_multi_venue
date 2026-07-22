@@ -85,6 +85,17 @@ def _cmd_monitor() -> int:
     return 0
 
 
+def _cmd_run(commit: bool, frequency: str) -> int:
+    from jarvis.paper_execution.runner import PaperTradingRunner, RuntimeConfig
+    runner = PaperTradingRunner(config=RuntimeConfig(frequency=frequency))
+    event = runner.run(_now(), commit=commit)
+    out = event.to_dict()
+    out["note"] = ("read-only 런타임 루프 — 집행 없음·주문 없음. " +
+                   ("COMMIT: 런타임 이벤트 기록." if commit else "DRY-RUN."))
+    print(json.dumps(out, ensure_ascii=False, indent=2, default=str))
+    return 0
+
+
 def _cmd_verify() -> int:
     from jarvis.paper_execution.verify import verify
     res = verify()
@@ -104,6 +115,9 @@ def main(argv=None) -> int:
     v.add_argument("--commit", action="store_true")
     sub.add_parser("performance")
     sub.add_parser("monitor")
+    rn = sub.add_parser("run")
+    rn.add_argument("--commit", action="store_true")
+    rn.add_argument("--frequency", default="manual", choices=["manual", "daily", "weekly", "interval"])
     sub.add_parser("verify")
     args = ap.parse_args(argv)
     if args.cmd == "status":
@@ -118,6 +132,8 @@ def main(argv=None) -> int:
         return _cmd_performance()
     if args.cmd == "monitor":
         return _cmd_monitor()
+    if args.cmd == "run":
+        return _cmd_run(args.commit, args.frequency)
     if args.cmd == "verify":
         return _cmd_verify()
     return 1

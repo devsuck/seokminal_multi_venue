@@ -10,6 +10,7 @@ router = APIRouter(prefix="/research", tags=["research"])
 
 # TSMOM 요약 캐시(백테스트 여러번 도니 60초 캐시)
 _tsmom_cache: dict = {"ts": 0.0, "data": None}
+_xau_cache: dict = {"ts": 0.0, "data": None}
 
 
 @router.get("/experiments")
@@ -43,4 +44,16 @@ def tsmom() -> dict:
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=f"TSMOM 데이터 없음(선물 pull 필요): {exc}") from exc
     _tsmom_cache.update(ts=time.time(), data=data)
+    return data
+
+
+@router.get("/xau-session")
+def xau_session() -> dict:
+    """XAU Session Confluence 백테스트 요약(트레이드수/승률/PF/총손익) — TV 대조용, 실집행 근거 아님."""
+    import time
+    if _xau_cache["data"] is not None and time.time() - _xau_cache["ts"] < 60:
+        return _xau_cache["data"]
+    from research.run_xau_session_backtest import summary
+    data = summary()
+    _xau_cache.update(ts=time.time(), data=data)
     return data

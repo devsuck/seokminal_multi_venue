@@ -1,9 +1,11 @@
 """XAU 백테스트 러너 유닛테스트 — 리샘플·sizing·통계 산식."""
 from datetime import datetime
 
+import pandas as pd
+
 from research.xau_session.sessions import NY_TZ
 from research.xau_session.strategy import Config
-from research.run_xau_session_backtest import _resample_ohlc, build_htf_bias, backtest
+from research.run_xau_session_backtest import _resample_ohlc, build_htf_bias, backtest, summary
 
 
 def _ts(mo, d, h, mi):
@@ -70,3 +72,33 @@ def test_costs_reduce_net():
 def test_empty_bars_no_trades():
     rep = backtest({"ts": [], "o": [], "h": [], "l": [], "c": []})
     assert rep["n_trades"] == 0 and rep["net"] == 0.0 and rep["profit_factor"] == 0.0
+
+
+# ── summary (API/대시보드 노출) ────────────────────────────────────
+def test_summary_skips_symbols_without_data(monkeypatch):
+    import research.data.intraday_store as store
+    monkeypatch.setattr(store, "load_df", lambda symbol, tf: pd.DataFrame())
+    rep = summary(symbols=["xyz:GOLD", "GC"])
+    assert rep["symbols"] == {}
+    assert "config" in rep
+
+
+def test_summary_reports_stats_for_available_symbol(monkeypatch):
+    import research.data.intraday_store as store
+    rows = _one_long_tp()
+    df = pd.DataFrame({"ts_utc": [r[0] for r in rows]})
+
+    def _fake_load_df(symbol, tf):
+        return df if symbol == "xyz:GOLD" else pd.DataFrame()
+
+    def _fake_load_ohlc_lists(symbol, tf):
+        b = _bars(rows)
+        return {"ts": b["ts"], "open": b["o"], "high": b["h"], "low": b["l"], "close": b["c"]}
+
+    monkeypatch.setattr(store, "load_df", _fake_load_df)
+    monkeypatch.setattr(store, "load_ohlc_lists", _fake_load_ohlc_lists)
+    rep = summary(symbols=["xyz:GOLD", "GC"], tick_sizes={"xyz:GOLD": 0.1})
+    assert set(rep["symbols"]) == {"xyz:GOLD"}
+    sym = rep["symbols"]["xyz:GOLD"]
+    assert sym["n_trades"] == 1 and sym["tick_size"] == 0.1 and sym["n_bars"] == len(df)
+    assert "trades" not in sym

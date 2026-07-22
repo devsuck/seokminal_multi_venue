@@ -1,9 +1,9 @@
 from research.mlb_specialist.market_filter import is_mlb_market, mlb_condition_ids
 
 
-def _mkt(question="", slug="", event_title="", sports=None, cid="c1"):
+def _mkt(question="", slug="", event_title="", sports=None, cid="c1", game_start_time=None):
     return {"question": question, "slug": slug, "event_title": event_title,
-            "sports_market_type": sports, "condition_id": cid}
+            "sports_market_type": sports, "condition_id": cid, "game_start_time": game_start_time}
 
 
 def test_explicit_mlb_keyword():
@@ -43,8 +43,18 @@ def test_non_sports_market_is_false():
 
 def test_mlb_condition_ids_filters():
     markets = [
-        _mkt(question="MLB Yankees", cid="a"),
-        _mkt(question="NBA Lakers", sports="moneyline", cid="b"),
-        _mkt(question="Astros vs Rangers", sports="moneyline", cid="c"),
+        _mkt(question="MLB Yankees", cid="a", game_start_time="2026-08-31 22:05:00+00"),
+        _mkt(question="NBA Lakers", sports="moneyline", cid="b", game_start_time="2026-08-31 22:05:00+00"),
+        _mkt(question="Astros vs Rangers", sports="moneyline", cid="c", game_start_time="2026-08-31 22:05:00+00"),
     ]
     assert mlb_condition_ids(markets) == {"a", "c"}
+
+
+def test_mlb_condition_ids_excludes_season_futures():
+    # 실라이브 확인: "Will the Mets win the 2026 World Series?" 류는 mlb 키워드 없이도
+    # 팀명 매치되지만 game_start_time이 없음(경기 단위 마켓 아님) — 매일 walk-forward에 안 맞아 제외.
+    markets = [
+        _mkt(question="Will the New York Mets win the 2026 World Series?", cid="futures"),
+        _mkt(question="MLB: Mets vs Yankees", cid="game", game_start_time="2026-08-31 22:05:00+00"),
+    ]
+    assert mlb_condition_ids(markets) == {"game"}

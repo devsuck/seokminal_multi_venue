@@ -1107,3 +1107,87 @@
 
 ### 막힌 부분/결정사항
 - 없음. R:R=0.5(소익다승, 비용 민감)·데이터소스 차이는 스펙 §8에 함정으로 명시. 통계적 근사가 목표.
+
+---
+
+## 2026-07-22 (이어서): 맥에서 마무리할 것 — XAU/MLB 두 트랙 정리
+
+원격 컨테이너는 Polymarket 차단 + XAU 인트라데이 데이터 없음이라 둘 다 코어 로직만 완성(테스트 그린), 라이브 결합은 맥 필요. `claude/polymarket-wallet-scoring-awzj6n` 브랜치 pull 완료, 체크리스트만 정리.
+
+### XAU Session Confluence (`research/xau_session/`, `run_xau_session_backtest.py`)
+1. `intraday_store`에 XAU 15m 저장 — `xyz:GOLD`(24/7, TV OANDA:XAUUSD 스팟에 최근사) / `PAXG` / `GC`(교차대조용) 중 확보.
+2. `python -m research.run_xau_session_backtest [SYMBOL] [TICK_SIZE]` 실행.
+3. 트레이드수/승률/PF/총손익을 유저 TradingView Strategy Tester 결과와 대조. 불일치 시 원인 순서: 심볼 mintick(`TICK_SIZE`) → 데이터소스 차이(TV 스팟↔HL/IB) → 세션경계/DST.
+4. 충실도 확인되면 후속으로 라이브 페이퍼 엔진(ICT 패턴 재사용) 승격 검토.
+
+### MLB 스페셜리스트 (`research/mlb_specialist/`, `run_mlb_specialist_collect.py`)
+1. `market_filter.is_mlb_market` 휴리스틱을 실제 Polymarket 태그/슬러그 스키마로 튜닝(현재는 키워드+팀명 추정).
+2. 체결 `outcome`(YES/NO) 필드명이 data-api 실응답과 맞는지 `_map_trade` 검증.
+3. `run_mlb_specialist_collect.run_forever` tmux 상시 구동 시작 — `/trades` 5초 폴링, 10분마다 MLB 마켓 세트+정산 스냅샷 축적.
+4. 데이터 축적되면 `load_and_report()` walk-forward 조립 완성(스펙 §7) — 매일 스페셜리스트 선정→컨센서스 신호→변형별 라벨. `compute_report` 코어(BH-FDR 12변형)는 이미 준비됨.
+
+### 막힌 부분/결정사항
+- 없음. 둘 다 순수 로직/상태머신은 컨테이너에서 전부 테스트 검증 완료 — 남은 건 라이브 데이터 결합뿐.
+
+---
+
+## 2026-07-22 (이어서 2): 맥 마무리 작업 완료 — XAU 백테스트 실행 + MLB 라이브 결합 + 대시보드 노출
+
+### 완료된 작업
+- **XAU**: `xyz:GOLD`(tick 0.01) 77트레이드→승률 76.5%/PF 1.31/순익 $4018.97, `GC`(tick 0.1) 77트레이드→승률 79.2%/PF 1.56/순익 $34199.48. TV Strategy Tester 대조는 유저 몫(TV 접근 불가) — 대조 아직 안 됨.
+- **MLB market_filter 버그 수정**: 라이브 확인 결과 시즌 선물/수상 마켓(월드시리즈 우승 등)이 팀명만으로 오매칭됨. `game_start_time` 있는 것만 인정하도록 `mlb_condition_ids` 수정(경기 단위만 이 필드 보유). 테스트 갱신+추가.
+- **MLB side 필드 버그 수정**: raw `/trades`의 `side`는 BUY/SELL(주문방향)이라 정산결과 비교 불가 — `outcome`("Yes"/"No")에서 `_outcome_side()`로 YES/NO 도출하도록 전체 파이프라인 수정.
+- **`load_and_report()` 완성**: `research/run_mlb_specialist_validate.py`에 실데이터 로더(`_load_jsonl_dir`/`_build_resolutions`/`_build_entry_prices`/`_daily_positions`/`_trades_df`) + walk-forward 조립 구현. 신규 테스트 5개 추가, MLB 트랙 전체 36 tests 통과.
+- **MLB 검증을 기존 `/lab/edge-validation` 파이프라인에 편입**: `lab_api.py`의 `_EDGE_VAL_RUNNERS`/`COLLECTOR_SESSIONS`/`processes`에 등록 — 별도 엔드포인트 안 만들고 sharp_wallet/whale과 동일 구조 재사용.
+- **MLB 수집기 라이브 기동**: `tmux new-session -d -s polymarket-mlb-specialist-tick ...` 상시 구동 시작, health-check 정상 확인.
+- **프론트엔드**: `lib/api.ts`에 `EdgeVariant` 타입 추가, `app/validation/page.tsx`의 `EdgeReportCard`에 `rep.variants` 분기(변형 그리드 테이블) 추가 — MLB는 group×horizon 히트맵 대신 변형별(랭킹지표×임계×N) p-value 테이블로 렌더링. `npx tsc --noEmit` 통과.
+
+### 남은 갭
+- MLB는 데이터 축적 전이라 `/validation` 페이지에서 현재 `no_data` verdict로 보일 것 — 트레이드 쌓이면 자동 계산.
+- TV Strategy Tester 대조는 유저가 직접 확인 필요(수치는 위 참고).
+
+### 막힌 부분/결정사항
+- MLB는 새 페이지 대신 기존 `/validation` 재사용 결정(아키텍처 일관성, 중복 방지).
+
+---
+
+## 2026-07-22 (이어서 3): XAU도 /lab(정확히는 /research)에 노출
+
+- XAU는 p-value/BH-FDR 가설검증이 아니라 단순 백테스트 통계라 `_EDGE_VAL_RUNNERS`(Polymarket 엣지 검증 전용) 대신, TSMOM이 쓰던 `/research` 라우터(`research_api.py`, 60초 캐시) 패턴 재사용 — 기존 `/research/tsmom`과 동일 구조로 `/research/xau-session` 신설.
+- `research/run_xau_session_backtest.py`에 `summary(symbols, tick_sizes)` 추가 — xyz:GOLD/GC/PAXG 멀티심볼 순회, trades 리스트 제외한 통계만 반환(데이터 없는 심볼은 건너뜀, 에러 안 남).
+- `api_server/research_api.py`에 `GET /research/xau-session` 추가.
+- 프론트: `lib/api.ts`에 `XauSessionSummary`/`getXauSession` 추가, `app/validation/page.tsx`에 `XauSessionPanel` 신설 — TSMOM 패널 바로 아래, 심볼별 봉수/tick/트레이드수/승률/PF/순손익 테이블.
+- 테스트 2개 추가(`test_xau_backtest.py`) — 데이터없음 스킵 케이스 + 통계 매핑 케이스. XAU 트랙 전체 25 tests 통과.
+- `npx tsc --noEmit` 통과, 실데이터로 엔드포인트 스모크 확인(xyz:GOLD/GC/PAXG 3개 다 잡힘).
+- `pytest tests/ -q` 전체: 1357 passed, 실패 11개는 전부 기존 known failures(test_auth/test_backtest_happy_path/IB주문계열, 무관).
+
+### 남은 갭
+- 없음(요청받은 XAU 노출 작업 완료). TV 대조는 여전히 유저 몫.
+
+---
+
+## 2026-07-22 (이어서 4): dev 서버 브라우저 실검증 — XAU/MLB 둘 다 정상
+
+- 이미 떠있던 백엔드(:8000)/프론트(:3000) 그대로 `/validation` 페이지 브라우저로 확인(Chrome MCP).
+- **XAU 패널**: TSMOM 밑에 정상 렌더링. xyz:GOLD(17트레이드/76.5%/PF1.31/net 4018.97), GC(77트레이드/79.2%/PF1.57/net 35338.82 — API 재계산 시점 데이터 갱신으로 CLI 최초값 34199.48과 소폭 차이, 버그 아님), PAXG(15트레이드/80.0%/PF1.62/net 6085.28) 3심볼 다 테이블에 뜸.
+- **MLB 카드**: Polymarket 엣지검증 섹션 맨 아래 정상 위치, "데이터 대기" 배지 + "수집 데이터 대기 중 — 틱 쌓이면 자동 계산됨" 메시지 정확 — 수집기 막 켠 상태라 예상된 정상 상태.
+- 기존 sharp_wallet/whale 카드 회귀 없음. 브라우저 콘솔 에러 0건.
+
+### 남은 갭
+- 없음. XAU TV 대조(유저 몫), MLB 데이터 축적(수집기 상시구동 중, 쌓이면 자동 계산)만 남음.
+
+---
+
+## 2026-07-22 (이어서 5): MLB 전용 `/mlb` 페이지로 분리
+
+- 유저 요청: MLB를 `/validation`의 공용 카드 대신 별도 페이지로 분리.
+- `EdgeReportCard`/`EdgeHeatmap`/`EdgeVariantTable`/`VERDICT_BADGE`를 `app/validation/page.tsx` 로컬 정의에서 `components/charts/EdgeReportCard.tsx`로 추출·export — `/validation`과 신규 `/mlb` 둘 다 재사용.
+- `app/mlb/page.tsx` 신설: `mlb_specialist_consensus` 리포트만 뽑아 `EdgeReportCard`로 렌더 + 수집기 상태(ON/OFF, 마지막수집 경과시간)/재시작 버튼(`polymarket_mlb_specialist_tick`) + "지금 다시 계산" 버튼.
+- `/validation`의 `EdgeValidationSection`에서 `mlb_specialist_consensus`는 목록에서 제외(중복 렌더 방지) — sharp_wallet/whale만 남음.
+- `lib/api.ts`: `CollectorKey`/`LabStatus.processes`에 `polymarket_mlb_specialist_tick` 추가(백엔드는 이미 등록돼 있었음, 프론트 타입만 누락 상태였음).
+- `components/Sidebar.tsx` "검증" 그룹에 `{ href: "/mlb", label: "MLB 스페셜리스트" }` 추가.
+- `app/hud/page.tsx` Unit 목록에 MLB 수집기 row 추가(다른 폴리마켓 수집기들과 동일 패턴, href `/mlb`).
+- `npx tsc --noEmit` 통과. 브라우저 실확인: `/mlb` 페이지 정상 렌더(수집기 ON·6시간 전, MLB_SPECIALIST_CONSENSUS 카드 "데이터 대기" 정상 상태), `/validation`에서 MLB 카드 사라지고 sharp_wallet/whale만 남은 것 확인, 상단 네비 "검증" 드롭다운에서 "MLB 스페셜리스트" 클릭→`/mlb` 정상 이동. 콘솔 에러 0건.
+
+### 남은 갭
+- 없음. XAU TV 대조(유저 몫), MLB 데이터 축적(수집기 상시구동 중)만 남음.

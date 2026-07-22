@@ -93,6 +93,22 @@ def _cmd_rebalance(write: bool) -> int:
     return 0
 
 
+def _cmd_evaluate(commit: bool) -> int:
+    from datetime import datetime, timezone
+    from jarvis.portfolio.decision_engine import CurrentPortfolio
+    from jarvis.portfolio.orchestrator import PortfolioOrchestrator
+    from jarvis.portfolio.returns_matrix import ReturnMatrix, buyback_source
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = ts[:10]
+    m = ReturnMatrix([buyback_source()], capacity=1.0)
+    cur = CurrentPortfolio({}, known=False)   # 실 holdings 미주입 → 보수
+    res = PortfolioOrchestrator().evaluate(m, cur, now, ts, dry_run=not commit)
+    res["note"] = ("제안 전용 — 주문 안 냄. " +
+                   ("COMMIT: 저널/상태/회전율 기록됨." if commit else "DRY-RUN: 상태 무변경."))
+    print(json.dumps(res, ensure_ascii=False, indent=2, default=str))
+    return 0
+
+
 def _cmd_quality() -> int:
     from jarvis.portfolio.returns_matrix import ReturnMatrix, buyback_source
     from jarvis.portfolio.risk_quality import check_matrix
@@ -115,6 +131,9 @@ def main(argv=None) -> int:
     sub.add_parser("quality")
     rb = sub.add_parser("rebalance")
     rb.add_argument("--write", action="store_true")
+    ev = sub.add_parser("evaluate")
+    ev.add_argument("--commit", action="store_true", help="상태 기록(기본: dry-run, 무변경)")
+    ev.add_argument("--dry-run", action="store_true", help="명시적 dry-run(기본값)")
     args = ap.parse_args(argv)
     if args.cmd == "matrix":
         return _cmd_matrix()
@@ -126,6 +145,8 @@ def main(argv=None) -> int:
         return _cmd_quality()
     if args.cmd == "rebalance":
         return _cmd_rebalance(args.write)
+    if args.cmd == "evaluate":
+        return _cmd_evaluate(args.commit)
     return 1
 
 

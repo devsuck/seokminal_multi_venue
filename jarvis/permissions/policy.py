@@ -46,6 +46,7 @@ ACTION_PERMISSIONS: dict[str, str] = {
     "promote_to_paper_active": "PAPER_ONLY",
     "write_fusion_signal": "PAPER_ONLY",
     "execute_paper_order": "PAPER_ONLY",
+    "record_paper_valuation": "PAPER_ONLY",
     "propose_allocation": "LIVE_PROPOSAL_ONLY",
     "propose_rebalance": "LIVE_PROPOSAL_ONLY",
     "write_portfolio_journal": "PAPER_ONLY",

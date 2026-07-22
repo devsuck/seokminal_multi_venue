@@ -49,6 +49,42 @@ def _cmd_execute(commit: bool) -> int:
     return 0
 
 
+def _cmd_price() -> int:
+    from jarvis.paper_execution.ledger import current_positions
+    now = _now()
+    positions = list(current_positions().values())
+    prov = None
+    if positions:
+        from jarvis.paper_execution.market_data import FlatMarkProvider
+        prov = FlatMarkProvider({p["strategy_id"]: p["average_price"] for p in positions}, now)
+    prices = [prov.get(p["strategy_id"], now).to_dict() for p in positions] if prov else []
+    print(json.dumps({"as_of": now, "prices": prices,
+                      "note": "flat mark @entry (실시장데이터 아님 — 결측 시 평단)"},
+                     ensure_ascii=False, indent=2, default=str))
+    return 0
+
+
+def _cmd_valuation(commit: bool) -> int:
+    from jarvis.paper_execution.valuation import valuate_current
+    snap = valuate_current(_now(), commit=commit)
+    out = snap.to_dict()
+    out["note"] = "NAV mark-to-market. " + ("COMMIT: paper_portfolio 기록." if commit else "DRY-RUN.")
+    print(json.dumps(out, ensure_ascii=False, indent=2, default=str))
+    return 0
+
+
+def _cmd_performance() -> int:
+    from jarvis.paper_execution.performance import attribution_current
+    print(json.dumps(attribution_current(_now()), ensure_ascii=False, indent=2, default=str))
+    return 0
+
+
+def _cmd_monitor() -> int:
+    from jarvis.paper_execution.monitoring import monitor
+    print(json.dumps(monitor(_now()).to_dict(), ensure_ascii=False, indent=2, default=str))
+    return 0
+
+
 def _cmd_verify() -> int:
     from jarvis.paper_execution.verify import verify
     res = verify()
@@ -63,12 +99,25 @@ def main(argv=None) -> int:
     sub.add_parser("status")
     e = sub.add_parser("execute")
     e.add_argument("--commit", action="store_true")
+    sub.add_parser("price")
+    v = sub.add_parser("valuation")
+    v.add_argument("--commit", action="store_true")
+    sub.add_parser("performance")
+    sub.add_parser("monitor")
     sub.add_parser("verify")
     args = ap.parse_args(argv)
     if args.cmd == "status":
         return _cmd_status()
     if args.cmd == "execute":
         return _cmd_execute(args.commit)
+    if args.cmd == "price":
+        return _cmd_price()
+    if args.cmd == "valuation":
+        return _cmd_valuation(args.commit)
+    if args.cmd == "performance":
+        return _cmd_performance()
+    if args.cmd == "monitor":
+        return _cmd_monitor()
     if args.cmd == "verify":
         return _cmd_verify()
     return 1

@@ -41,17 +41,36 @@ def _cmd_allocate(write: bool) -> int:
     return 0
 
 
+def _cmd_scale(regime: str | None) -> int:
+    from datetime import datetime, timezone
+    from jarvis.portfolio.allocator import RiskConstraints, propose_allocation
+    from jarvis.portfolio.returns_matrix import ReturnMatrix, buyback_source
+    from jarvis.portfolio.risk_scaler import scale_allocation
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    m = ReturnMatrix([buyback_source()], capacity=1.0)
+    alloc = propose_allocation(m, RiskConstraints(), ts=ts)
+    scaled = scale_allocation(alloc, m, regime=regime, ts=ts)
+    out = scaled.to_dict()
+    out["note"] = "제안 전용 — 집행 아님. gross exposure는 vol-target×dd×regime."
+    print(json.dumps(out, ensure_ascii=False, indent=2, default=str))
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="jarvis.portfolio")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("matrix")
     a = sub.add_parser("allocate")
     a.add_argument("--write", action="store_true")
+    s = sub.add_parser("scale")
+    s.add_argument("--regime", default=None)
     args = ap.parse_args(argv)
     if args.cmd == "matrix":
         return _cmd_matrix()
     if args.cmd == "allocate":
         return _cmd_allocate(args.write)
+    if args.cmd == "scale":
+        return _cmd_scale(args.regime)
     return 1
 
 

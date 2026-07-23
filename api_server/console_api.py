@@ -75,18 +75,57 @@ def status() -> dict:
     }
 
 
-# ── 시장 레짐 ────────────────────────────────────────────────────
+# ── 시장 레짐 + 포트폴리오 posture ───────────────────────────────
+_POSTURE_BUCKETS = {
+    "TREND-FOLLOWING": {"Momentum", "Breakout", "Price-Action"},
+    "MEAN-REVERSION": {"Mean-Reversion", "Stat-Arb"},
+    "CARRY & EVENT": {"Carry", "Event"},
+    "FLOW-DRIVEN": {"Flow"},
+}
+
+
+def _derive_posture() -> dict:
+    """실 레지스트리의 활성 전략 팩터 분포에서 '포트폴리오 posture' 도출.
+
+    **시장 레짐 예측이 아님** — 펀드가 현재 어느 스타일에 포지셔닝됐는지의 정직한 파생 지표.
+    """
+    from jarvis.registry import StrategyRegistry
+    rows = _safe(lambda: StrategyRegistry().all_current(), []) or []
+    active_by_factor: dict = {}
+    for r in rows:
+        if r.get("status") in _ACTIVE_STATUS:
+            f = _factor_of(r.get("strategy_id", ""))
+            active_by_factor[f] = active_by_factor.get(f, 0) + 1
+    total_active = sum(active_by_factor.values())
+    bucket_active = {b: sum(active_by_factor.get(f, 0) for f in facs)
+                     for b, facs in _POSTURE_BUCKETS.items()}
+    if total_active == 0:
+        return {"label": "DEFENSIVE / CASH", "confidence": 1.0, "total_active": 0,
+                "breakdown": bucket_active, "basis": "활성 전략 없음"}
+    dominant = max(bucket_active.items(), key=lambda x: x[1])
+    return {"label": dominant[0] if dominant[1] > 0 else "DIVERSIFIED",
+            "confidence": round(dominant[1] / total_active, 3),
+            "total_active": total_active, "breakdown": bucket_active,
+            "basis": "레지스트리 활성 전략 팩터 분포"}
+
+
 @router.get("/regime")
 def regime() -> dict:
-    """포트폴리오 레짐 추정(있으면). 없으면 unknown — 정직한 미구성."""
+    """시장 레짐(있으면) + 포트폴리오 posture(항상, 실데이터 파생).
+
+    시장 레짐 감지기는 실 시장데이터/returns matrix 필요 — 없으면 UNKNOWN(정직).
+    posture는 레지스트리 활성 전략에서 항상 도출(정직한 파생 지표).
+    """
     def _regime():
         from jarvis.portfolio.regime import detect_regime  # noqa
         return detect_regime()
     r = _safe(_regime, None)
+    posture = _safe(_derive_posture, None)
     if r is None:
         return {"regime": "UNKNOWN", "confidence": None,
-                "note": "레짐 추정기 미구성 또는 데이터 없음"}
-    return r
+                "note": "시장 레짐 감지기 미구성 (실 시장데이터 필요)",
+                "posture": posture}
+    return {**r, "posture": posture}
 
 
 # ── P8 집행 파이프라인 상태 ──────────────────────────────────────

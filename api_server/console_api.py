@@ -335,60 +335,135 @@ def logs(limit: int = 60) -> dict:
     return {"logs": rows[-limit:], "count": len(rows)}
 
 
-# ── Knowledge Graph ──────────────────────────────────────────────
+# ── Knowledge Graph (레지스트리·실험에서 실 그래프 도출) ─────────
+_ACTIVE_STATUS = {"paper_active", "live_candidate", "micro_live", "constrained_live", "live"}
+
+
+def _registry_rows() -> list:
+    def _reg():
+        from jarvis.registry import StrategyRegistry
+        return StrategyRegistry().all_current()
+    return _safe(_reg, []) or []
+
+
 @router.get("/knowledge")
 def knowledge() -> dict:
-    """지식 그래프 — 노드/엣지(있으면). 미구축이면 정직한 empty + 안내."""
-    def _kg():
+    """지식 그래프 — 전략·팩터·상태의 실제 관계를 노드-엣지로 도출(레지스트리 기반).
+
+    정식 KG projection DB가 있으면 failed_strategies도 첨부. 없어도 실데이터 그래프 제공.
+    """
+    rows = _registry_rows()
+    nodes: list = []
+    edges: list = []
+    factors: dict = {}
+    statuses: dict = {}
+    for r in rows:
+        sid = r.get("strategy_id", "")
+        if not sid:
+            continue
+        fac = _factor_of(sid)
+        st = r.get("status", "?")
+        factors[fac] = factors.get(fac, 0) + 1
+        statuses[st] = statuses.get(st, 0) + 1
+        nodes.append({"id": f"S:{sid}", "label": r.get("name", sid), "type": "strategy",
+                      "factor": fac, "status": st})
+        edges.append({"source": f"S:{sid}", "target": f"F:{fac}", "kind": "factor"})
+    for fac, n in factors.items():
+        nodes.append({"id": f"F:{fac}", "label": fac, "type": "factor", "count": n})
+
+    def _kg_failed():
         from jarvis.knowledge.query import find_failed_strategies
-        failed = find_failed_strategies()
-        return failed
-    failed = _safe(_kg, None)
-    if failed is None:
-        return {"built": False, "nodes": [], "edges": [], "failed_strategies": [],
-                "note": "지식 그래프 projection DB 미구축 (python -m jarvis.knowledge build)"}
-    return {"built": True, "failed_strategies": failed, "nodes": [], "edges": [],
-            "note": "그래프 프로젝션에서 조회"}
+        return find_failed_strategies()
+    failed = _safe(_kg_failed, []) or []
+
+    return {"built": bool(nodes), "derived": True,
+            "nodes": nodes, "edges": edges,
+            "factors": factors, "statuses": statuses,
+            "failed_strategies": failed,
+            "note": f"레지스트리 {len(rows)}전략에서 도출한 실 관계 그래프"}
 
 
-# ── Research (Planner) ───────────────────────────────────────────
+# ── Research (Planner 제안 + 커버리지 갭 도출) ────────────────────
 @router.get("/research")
 def research() -> dict:
-    """리서치 — planner 제안/커버리지 갭(있으면). 없으면 정직한 empty."""
+    """리서치 — planner 제안(있으면) + 팩터×상태 커버리지 갭 도출."""
     def _plan():
         from jarvis.planner.query import latest_proposals
         return latest_proposals()
-    props = _safe(_plan, None)
-    if props is None:
-        return {"proposals": [], "note": "planner 제안 없음 (python -m jarvis.planner analyze)"}
-    return {"proposals": props, "count": len(props)}
+    props = _safe(_plan, []) or []
+
+    # 커버리지 갭: 팩터별 활성(paper_active+) 전략 유무
+    rows = _registry_rows()
+    fac_active: dict = {}
+    fac_total: dict = {}
+    for r in rows:
+        sid = r.get("strategy_id", "")
+        fac = _factor_of(sid)
+        fac_total[fac] = fac_total.get(fac, 0) + 1
+        if r.get("status") in _ACTIVE_STATUS:
+            fac_active[fac] = fac_active.get(fac, 0) + 1
+    gaps = []
+    for fac, total in sorted(fac_total.items(), key=lambda x: -x[1]):
+        active = fac_active.get(fac, 0)
+        if active == 0:
+            gaps.append({"factor": fac, "total": total, "active": 0,
+                         "gap": "활성 전략 없음 — 검증 통과 후보 필요",
+                         "severity": "high" if total >= 3 else "medium"})
+    return {"proposals": props, "count": len(props), "coverage_gaps": gaps,
+            "factor_coverage": {f: {"total": fac_total[f], "active": fac_active.get(f, 0)}
+                                for f in fac_total}}
 
 
-# ── Market Intelligence ──────────────────────────────────────────
+# ── Market Intelligence (팩터 성과 기반 posture 도출) ─────────────
 @router.get("/market")
 def market() -> dict:
-    """마켓 인텔리전스 — 레짐 + 요약."""
-    return {"regime": regime(), "note": "레짐 기반 마켓 인텔리전스"}
+    """마켓 인텔리전스 — 레짐 + 팩터별 활성/성과 posture 도출."""
+    rows = _registry_rows()
+    fac: dict = {}
+    for r in rows:
+        f = _factor_of(r.get("strategy_id", ""))
+        d = fac.setdefault(f, {"total": 0, "active": 0, "rejected": 0})
+        d["total"] += 1
+        if r.get("status") in _ACTIVE_STATUS:
+            d["active"] += 1
+        if r.get("status") == "rejected":
+            d["rejected"] += 1
+    # posture: 활성 비중이 높은 팩터 = 시장에서 '먹히는' 것으로 해석
+    posture = sorted(
+        ({"factor": f, **d, "conviction": round(d["active"] / d["total"], 3) if d["total"] else 0.0}
+         for f, d in fac.items()),
+        key=lambda x: (-x["conviction"], -x["total"]))
+    return {"regime": regime(), "posture": posture,
+            "note": "팩터별 활성 전략 비중 기반 시장 posture(레지스트리 도출)"}
 
 
 # ── Portfolio OS ─────────────────────────────────────────────────
 @router.get("/allocation")
 def allocation() -> dict:
-    """포트폴리오 배분 — allocation 원장 + 결정 저널(있으면)."""
+    """포트폴리오 배분 — 원장(있으면) + 활성 전략 기반 파생 제안."""
     def _alloc():
         from jarvis.portfolio.allocation_ledger import read_latest
         return read_latest(20)
     def _journal():
         from jarvis.portfolio.journal import read_latest
         return read_latest(20)
-    def _rebal():
-        from jarvis.portfolio.rebalance_ledger import read_latest
-        return read_latest(20)
     allocs = _safe(_alloc, []) or []
     journal = _safe(_journal, []) or []
-    rebal = _safe(_rebal, []) or []
-    return {"allocations": allocs, "decisions": journal, "rebalances": rebal,
-            "note": "" if allocs else "배분 제안 없음 (포트폴리오 오케스트레이터 미실행)"}
+
+    # 파생 제안: 활성(paper_active+) 전략 동일비중(제안 전용·미집행)
+    rows = _registry_rows()
+    active = [r for r in rows if r.get("status") in _ACTIVE_STATUS]
+    derived = []
+    if active:
+        w = round(1.0 / len(active), 4)
+        for r in active:
+            sid = r.get("strategy_id", "")
+            derived.append({"strategy_id": sid, "name": r.get("name", sid),
+                            "factor": _factor_of(sid), "status": r.get("status"),
+                            "target_weight": w})
+    return {"allocations": allocs, "decisions": journal, "rebalances": [],
+            "derived_proposal": derived, "derived_note": "활성 전략 동일비중 파생(제안 전용·미집행)",
+            "note": "" if allocs else "포트폴리오 오케스트레이터 원장 없음 — 활성 전략 기반 파생 제안 표시"}
 
 
 @router.get("/positions")

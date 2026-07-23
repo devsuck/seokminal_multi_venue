@@ -143,3 +143,326 @@ def council(limit: int = 20) -> dict:
         events = _safe(_audit_tail, []) or []
         return {"source": "audit_log", "decisions": events[-limit:], "count": len(events)}
     return {"source": "decision_engine", "decisions": rows[-limit:], "count": len(rows)}
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 콘솔 확장 엔드포인트 (Strategy DNA · Validation · AI Council · Knowledge ·
+# Research · Market · Portfolio OS · Execution). 모두 read-only·방어적.
+# ══════════════════════════════════════════════════════════════════════
+
+# ── Strategy DNA (레지스트리) ────────────────────────────────────
+_FACTOR_HINT = {
+    "tsmom": "Momentum", "momentum": "Momentum", "orb": "Breakout", "vwap": "Mean-Reversion",
+    "buyback": "Event", "dart": "Event", "insider": "Event", "macro": "Macro",
+    "pairs": "Stat-Arb", "vrp": "Volatility", "ict": "Price-Action", "funding": "Carry",
+    "gex": "Flow", "orderflow": "Flow", "skew": "Volatility", "liquidity": "Flow",
+}
+
+
+def _factor_of(sid: str) -> str:
+    s = (sid or "").lower()
+    for k, v in _FACTOR_HINT.items():
+        if k in s:
+            return v
+    return "Unclassified"
+
+
+@router.get("/strategies")
+def strategies() -> dict:
+    """전략 DNA 목록 — 레지스트리 all_current + 팩터/상태 분류."""
+    def _reg():
+        from jarvis.registry import StrategyRegistry
+        return StrategyRegistry().all_current()
+    rows = _safe(_reg, []) or []
+    out = []
+    for r in rows:
+        sid = r.get("strategy_id", "")
+        out.append({
+            "strategy_id": sid, "name": r.get("name", sid), "status": r.get("status", "?"),
+            "factor": _factor_of(sid), "frozen": r.get("frozen", False),
+            "config_hash": (r.get("config_hash", "") or "")[:16],
+            "created_at": r.get("created_at", r.get("first_seen", "")),
+            "updated_at": r.get("updated_at", r.get("last_event", "")),
+        })
+    out.sort(key=lambda x: (x["status"], x["strategy_id"]))
+    return {"strategies": out, "total": len(out), "by_status": _count_by(rows, "status"),
+            "by_factor": _count_by(out, "factor")}
+
+
+@router.get("/strategies/{sid}")
+def strategy_detail(sid: str) -> dict:
+    """단일 전략 DNA + 관련 실험 이력 + 생애주기 이벤트."""
+    def _reg():
+        from jarvis.registry import StrategyRegistry
+        reg = StrategyRegistry()
+        st = reg.state(sid)
+        events = []
+        try:
+            events = reg.history(sid)  # type: ignore
+        except Exception:  # noqa: BLE001
+            events = []
+        return st, events
+    st, events = _safe(_reg, (None, [])) or (None, [])
+
+    def _exps():
+        from research.agents.experiment_registry import load_all
+        rows = [e for e in load_all() if e.get("hypothesis_id") == sid]
+        return rows[-40:]
+    exps = _safe(_exps, []) or []
+    return {"strategy_id": sid, "state": st, "factor": _factor_of(sid),
+            "lifecycle": events[-40:] if events else [], "experiments": exps,
+            "experiment_count": len(exps)}
+
+
+# ── Experiments / Hypothesis / Backtests ─────────────────────────
+@router.get("/experiments")
+def experiments(limit: int = 60) -> dict:
+    """검증 실험 — hypothesis별 최신 상태 + 카운트 + 최근."""
+    def _all():
+        from research.agents.experiment_registry import load_all
+        return load_all()
+    rows = _safe(_all, []) or []
+    latest: dict = {}
+    for e in rows:
+        hid = e.get("hypothesis_id")
+        if hid:
+            latest[hid] = e
+    latest_rows = list(latest.values())
+    counts = _count_by(latest_rows, "status")
+    return {"latest": latest_rows[:limit], "counts": counts, "total_experiments": len(rows),
+            "unique_hypotheses": len(latest_rows), "recent": rows[-limit:]}
+
+
+# ── Validation Report (redteam + 실험 상태) ──────────────────────
+@router.get("/validation")
+def validation() -> dict:
+    """검증 리포트 — redteam 감사(사람 vs 레드팀 판정) + 실험 상태 분포."""
+    def _audit():
+        from jarvis.redteam.review import audit_registry
+        return audit_registry()
+    audit = _safe(_audit, {"n": 0, "rows": []}) or {"n": 0, "rows": []}
+
+    def _exp_counts():
+        from research.agents.experiment_registry import load_all
+        latest: dict = {}
+        for e in load_all():
+            hid = e.get("hypothesis_id")
+            if hid:
+                latest[hid] = e
+        return _count_by(list(latest.values()), "status")
+    exp_counts = _safe(_exp_counts, {}) or {}
+    return {"redteam": audit, "experiment_status": exp_counts,
+            "gates": ["walk_forward", "monte_carlo", "bh_fdr", "cost_stress", "redteam"]}
+
+
+# ── AI Council 조직도 (실 서브시스템 상태 기반) ──────────────────
+@router.get("/agents")
+def agents() -> dict:
+    """AI Council 조직도 — 실제 거버넌스/집행 서브시스템 상태로 구성. 정직한 status."""
+    import jarvis
+    from jarvis.config import AUTONOMY_LEVEL, live_execution_enabled
+    js = _safe(jarvis.status, {}) or {}
+
+    def _reg_counts():
+        from jarvis.registry import StrategyRegistry
+        rows = StrategyRegistry().all_current()
+        return _count_by(rows, "status"), len(rows)
+    reg_counts, reg_total = _safe(_reg_counts, ({}, 0)) or ({}, 0)
+
+    def _profiles():
+        import api_server.agent_store as ags
+        return list(ags.AGENT_PROFILES.keys()) if isinstance(ags.AGENT_PROFILES, dict) else []
+    profiles = _safe(_profiles, []) or []
+
+    def _pipeline_active():
+        return pipeline()
+    pipe = _safe(_pipeline_active, {"stages": []}) or {"stages": []}
+    pipe_by = {s["key"]: s["count"] for s in pipe.get("stages", [])}
+
+    active = "active"
+    dry = "dry-run"
+    gated = "gated"
+    closed = "closed"
+
+    tree = {
+        "id": "cio", "role": "CIO", "name": "JARVIS Governance",
+        "status": active if js.get("initialized") else gated,
+        "detail": f"Autonomy L{AUTONOMY_LEVEL} · {js.get('autonomy_name','')}",
+        "children": [
+            {"id": "research", "role": "Research", "name": "Alpha Research Division", "status": active,
+             "children": [
+                 {"id": "planner", "name": "Planner (P5)", "status": active, "detail": "coverage optimizer"},
+                 {"id": "knowledge", "name": "Knowledge Graph (P4)", "status": active, "detail": "market memory"},
+                 {"id": "fusion", "name": "Signal Fusion (P1)", "status": active, "detail": "weighted voting"},
+                 {"id": "registry", "name": "Strategy Registry", "status": active,
+                  "detail": f"{reg_total} strategies", "meta": reg_counts},
+             ]},
+            {"id": "risk", "role": "Risk", "name": "Risk & Governance Division",
+             "status": dry,
+             "children": [
+                 {"id": "governor", "name": "Risk Governor", "status": dry, "detail": js.get("risk_governor", "")},
+                 {"id": "redteam", "name": "Red Team", "status": active, "detail": "adversarial audit"},
+                 {"id": "exec_risk", "name": "Execution Risk (P8.5)", "status": gated,
+                  "detail": f"{pipe_by.get('risk',0)} reports"},
+                 {"id": "audit", "name": "Execution Audit (P8.6)", "status": gated,
+                  "detail": f"{pipe_by.get('audit',0)} certs"},
+             ]},
+            {"id": "execution", "role": "Execution", "name": "Execution Division",
+             "status": closed if not live_execution_enabled() else active,
+             "children": [
+                 {"id": "control", "name": "Execution Control (P7.4)", "status": gated,
+                  "detail": f"{pipe_by.get('control',0)} decisions"},
+                 {"id": "adapter", "name": "Live Adapter (P8.1)", "status": closed,
+                  "detail": "broker write · human-gated"},
+                 {"id": "recon", "name": "Fill Reconciliation (P8.3)", "status": gated,
+                  "detail": f"{pipe_by.get('reconciliation',0)} events"},
+                 {"id": "tca", "name": "Post-Trade Analytics (P8.7)", "status": gated,
+                  "detail": f"{pipe_by.get('tca',0)} reports"},
+             ]},
+        ],
+    }
+    return {"council": tree, "archetypes": profiles,
+            "live_execution_enabled": live_execution_enabled()}
+
+
+@router.get("/logs")
+def logs(limit: int = 60) -> dict:
+    """거버넌스 감사 로그 tail (원시)."""
+    def _tail():
+        from jarvis.audit import tail
+        return tail(limit)
+    rows = _safe(_tail, []) or []
+    return {"logs": rows[-limit:], "count": len(rows)}
+
+
+# ── Knowledge Graph ──────────────────────────────────────────────
+@router.get("/knowledge")
+def knowledge() -> dict:
+    """지식 그래프 — 노드/엣지(있으면). 미구축이면 정직한 empty + 안내."""
+    def _kg():
+        from jarvis.knowledge.query import find_failed_strategies
+        failed = find_failed_strategies()
+        return failed
+    failed = _safe(_kg, None)
+    if failed is None:
+        return {"built": False, "nodes": [], "edges": [], "failed_strategies": [],
+                "note": "지식 그래프 projection DB 미구축 (python -m jarvis.knowledge build)"}
+    return {"built": True, "failed_strategies": failed, "nodes": [], "edges": [],
+            "note": "그래프 프로젝션에서 조회"}
+
+
+# ── Research (Planner) ───────────────────────────────────────────
+@router.get("/research")
+def research() -> dict:
+    """리서치 — planner 제안/커버리지 갭(있으면). 없으면 정직한 empty."""
+    def _plan():
+        from jarvis.planner.query import latest_proposals
+        return latest_proposals()
+    props = _safe(_plan, None)
+    if props is None:
+        return {"proposals": [], "note": "planner 제안 없음 (python -m jarvis.planner analyze)"}
+    return {"proposals": props, "count": len(props)}
+
+
+# ── Market Intelligence ──────────────────────────────────────────
+@router.get("/market")
+def market() -> dict:
+    """마켓 인텔리전스 — 레짐 + 요약."""
+    return {"regime": regime(), "note": "레짐 기반 마켓 인텔리전스"}
+
+
+# ── Portfolio OS ─────────────────────────────────────────────────
+@router.get("/allocation")
+def allocation() -> dict:
+    """포트폴리오 배분 — allocation 원장 + 결정 저널(있으면)."""
+    def _alloc():
+        from jarvis.portfolio.allocation_ledger import read_latest
+        return read_latest(20)
+    def _journal():
+        from jarvis.portfolio.journal import read_latest
+        return read_latest(20)
+    def _rebal():
+        from jarvis.portfolio.rebalance_ledger import read_latest
+        return read_latest(20)
+    allocs = _safe(_alloc, []) or []
+    journal = _safe(_journal, []) or []
+    rebal = _safe(_rebal, []) or []
+    return {"allocations": allocs, "decisions": journal, "rebalances": rebal,
+            "note": "" if allocs else "배분 제안 없음 (포트폴리오 오케스트레이터 미실행)"}
+
+
+@router.get("/positions")
+def positions() -> dict:
+    """포지션 — 페이퍼 원장 현재 포지션."""
+    def _pos():
+        from jarvis.paper_execution.ledger import current_positions
+        return list(current_positions().values())
+    pos = _safe(_pos, []) or []
+    return {"positions": pos, "count": len(pos),
+            "note": "" if pos else "오픈 포지션 없음"}
+
+
+@router.get("/risk")
+def risk() -> dict:
+    """리스크 — 거버너 상태 + 한도 + 노출 + 집행 리스크 원장."""
+    from jarvis.config import AUTONOMY_LEVEL, MIN_LIVE_LEVEL, live_execution_enabled
+    def _limits():
+        from jarvis.risk.governor import RiskLimits
+        rl = RiskLimits()
+        return {"max_notional": rl.max_notional, "max_order_qty": rl.max_order_qty,
+                "max_leverage": rl.max_leverage, "kill_switch": rl.kill_switch,
+                "require_human_approval": rl.require_human_approval}
+    limits = _safe(_limits, {}) or {}
+    cap = status()["capital"]
+    def _xrisk():
+        from jarvis.execution_risk.ledger import read_events
+        return read_events()
+    xrisk = _safe(_xrisk, []) or []
+    return {"governor": "active (dry-run)", "limits": limits, "capital": cap,
+            "autonomy": {"level": AUTONOMY_LEVEL, "min_live": MIN_LIVE_LEVEL,
+                         "live_execution_enabled": live_execution_enabled()},
+            "execution_risk_events": len(xrisk),
+            "by_status": _count_by(xrisk, "overall_status")}
+
+
+# ── Execution ────────────────────────────────────────────────────
+@router.get("/orders")
+def orders() -> dict:
+    """주문 — 라이브 집행 요청/응답 + 생애주기(있으면). 정직한 CLOSED."""
+    def _req():
+        from jarvis.live_execution.ledger import read_requests, read_responses
+        return read_requests(), read_responses()
+    reqs, resps = _safe(_req, ([], [])) or ([], [])
+    def _lc():
+        from jarvis.order_lifecycle.ledger import read_events
+        return read_events()
+    lc = _safe(_lc, []) or []
+    return {"requests": reqs, "responses": resps, "lifecycle_events": len(lc),
+            "note": "" if reqs else "라이브 주문 없음 (자본 경계 CLOSED)"}
+
+
+@router.get("/broker")
+def broker() -> dict:
+    """브로커 — read-only health + 집행 어댑터 상태(mock/ib/kis)."""
+    def _health():
+        from jarvis.broker_readonly.adapters import IBReadOnlyProvider, KISReadOnlyProvider
+        ib = IBReadOnlyProvider("now").health_check()
+        kis = KISReadOnlyProvider("now").health_check()
+        return {"ib": ib.to_dict() if hasattr(ib, "to_dict") else ib,
+                "kis": kis.to_dict() if hasattr(kis, "to_dict") else kis}
+    ro = _safe(_health, {}) or {}
+    def _exec_adapters():
+        from jarvis.live_execution.adapters import (
+            IBExecutionAdapter, KISExecutionAdapter, MockExecutionAdapter)
+        return {"mock": MockExecutionAdapter().health_check(),
+                "ib": IBExecutionAdapter().health_check(),
+                "kis": KISExecutionAdapter().health_check()}
+    ex = _safe(_exec_adapters, {}) or {}
+    return {"read_only": ro, "execution_adapters": ex}
+
+
+@router.get("/monitor")
+def monitor() -> dict:
+    """집행 모니터 — P8 파이프라인 상세 + 최근 이벤트."""
+    p = pipeline()
+    return {**p, "capital": status()["capital"]}

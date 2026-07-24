@@ -77,3 +77,12 @@ def test_research_os_drilldown_modules():
             assert isinstance(it["modules"], list)
             total += len(it["modules"])
     assert total == research_os()["meta"]["module_count"]
+
+
+def test_research_os_module_edges():
+    from api_server.console_api import research_os
+    g = research_os()["graph"]
+    assert "module_edges" in g
+    assert len(g["module_edges"]) == g["edge_total"]
+    for e in g["module_edges"]:
+        assert {"source", "target", "sourceSection", "targetSection"} <= set(e)

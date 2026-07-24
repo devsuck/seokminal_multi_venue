@@ -626,7 +626,12 @@ def research_os() -> dict:
         graph_edges = [{"source": s, "target": t, "weight": w}
                        for (s, t), w in sorted(agg.items(), key=lambda x: -x[1])
                        if s != t]
-        return {"nodes": nodes, "edges": graph_edges, "edge_total": len(edges)}
+        # 모듈 단위 엣지(섹션 태그 포함) — 프론트에서 섹션 확대(드릴) 시 사용
+        module_edges = [{"source": a, "target": b,
+                         "sourceSection": section_for(a), "targetSection": section_for(b)}
+                        for a, b in edges]
+        return {"nodes": nodes, "edges": graph_edges, "edge_total": len(edges),
+                "module_edges": module_edges}
     graph = _safe(_graph, {}) or {}
 
     # P41 — 통합 감사

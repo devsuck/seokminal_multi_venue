@@ -54,3 +54,26 @@ def test_research_os_read_only_disclaimer():
     d = research_os()["disclaimer"]
     assert "READ ONLY" in d
     assert "workflow assistance" in d.lower()
+
+
+def test_research_os_dependency_graph():
+    from api_server.console_api import research_os
+    g = research_os()["graph"]
+    ids = {n["id"] for n in g["nodes"]}
+    assert ids == {"Research", "Knowledge", "Agents", "System"}
+    assert g["edge_total"] >= 1
+    for e in g["edges"]:
+        assert e["source"] in ids and e["target"] in ids
+        assert e["source"] != e["target"]      # 자기 루프는 node.internal 로 표현
+        assert e["weight"] >= 1
+
+
+def test_research_os_drilldown_modules():
+    from api_server.console_api import research_os
+    secs = research_os()["sections"]
+    total = 0
+    for s in secs:
+        for it in s["items"]:
+            assert isinstance(it["modules"], list)
+            total += len(it["modules"])
+    assert total == research_os()["meta"]["module_count"]

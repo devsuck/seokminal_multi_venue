@@ -597,7 +597,8 @@ def research_os() -> dict:
         eng = NavigationEngine()
         man = eng.build_manifest("")
         sections = [{"section": s["section"], "moduleCount": s["module_count"],
-                     "items": [{"item": i["item"], "moduleCount": i["module_count"]}
+                     "items": [{"item": i["item"], "moduleCount": i["module_count"],
+                                "modules": i.get("modules", [])}
                                for i in s["items"]]}
                     for s in man.sections]
         return {"sections": sections, "section_count": man.section_count,
@@ -605,6 +606,28 @@ def research_os() -> dict:
                 "coverage": man.coverage, "duplicate_page_count": man.duplicate_page_count,
                 "digest": man.digest}
     nav = _safe(_nav, {}) or {}
+
+    # P41 — 섹션 단위 의존성 그래프(모듈 import 엣지를 섹션으로 집계). 노드-엣지.
+    def _graph():
+        from jarvis.integration_audit import scanner
+        from jarvis.research_navigation.models import section_for
+        root = scanner.default_root()
+        edges = scanner.import_edges(root)
+        agg: dict = {}
+        for a, b in edges:
+            key = (section_for(a), section_for(b))
+            agg[key] = agg.get(key, 0) + 1
+        counts: dict = {}
+        for n in scanner.list_modules(root):
+            s = section_for(n)
+            counts[s] = counts.get(s, 0) + 1
+        nodes = [{"id": s, "moduleCount": counts.get(s, 0),
+                  "internal": agg.get((s, s), 0)} for s in sorted(counts)]
+        graph_edges = [{"source": s, "target": t, "weight": w}
+                       for (s, t), w in sorted(agg.items(), key=lambda x: -x[1])
+                       if s != t]
+        return {"nodes": nodes, "edges": graph_edges, "edge_total": len(edges)}
+    graph = _safe(_graph, {}) or {}
 
     # P41 — 통합 감사
     def _audit():
@@ -688,6 +711,7 @@ def research_os() -> dict:
                      "duplicate_families": audit.get("duplicate_cluster_count", 0),
                      "digest": nav.get("digest", "")},
             "sections": nav.get("sections", []),
+            "graph": graph,
             "audit": audit, "runtime": runtime, "assistant": assistant,
             "automation": automation, "capabilities": capabilities,
             "disclaimer": ("Research OS — READ ONLY. 분석·추천·요약만 하며 자동 거래·자동 배포·자동 자본 배분·"

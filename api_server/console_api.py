@@ -721,3 +721,23 @@ def research_os() -> dict:
             "automation": automation, "capabilities": capabilities,
             "disclaimer": ("Research OS — READ ONLY. 분석·추천·요약만 하며 자동 거래·자동 배포·자동 자본 배분·"
                            "전략 승인을 하지 않는다. P44 assistant analyzes · P45 automation = workflow assistance.")}
+
+
+# ── Assistant (C3 — 대화형 질의, READ ONLY) ───────────────────────
+@router.get("/assistant")
+def assistant(q: str = "") -> dict:
+    """Research Assistant — 자연어 질문 → 결정적 라우팅 → 기존 지식으로 응답. **분석·회상만, 결정/집행 없음.**
+
+    헌장 "The Assistant Is The Primary Interface". q 없으면 예시 질문만 반환.
+    """
+    def _run():
+        from jarvis.research_assistant.engine import ResearchAssistantEngine
+        eng = ResearchAssistantEngine()
+        suggestions = eng.suggested_questions()
+        if not (q or "").strip():
+            return {"question": "", "intent": "idle", "answer": "무엇이든 물어보세요.",
+                    "suggestions": suggestions, "is_advisory": True, "is_decision": False}
+        ans = eng.ask(q)
+        ans["suggestions"] = suggestions
+        return ans
+    return _safe(_run, {"intent": "error", "answer": "assistant 사용 불가", "suggestions": []}) or {}

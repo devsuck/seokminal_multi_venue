@@ -86,3 +86,18 @@ def test_research_os_module_edges():
     assert len(g["module_edges"]) == g["edge_total"]
     for e in g["module_edges"]:
         assert {"source", "target", "sourceSection", "targetSection"} <= set(e)
+
+
+def test_assistant_endpoint_idle():
+    from api_server.console_api import assistant
+    r = assistant("")
+    assert r["intent"] == "idle"
+    assert len(r["suggestions"]) == 5
+
+
+def test_assistant_endpoint_query():
+    from api_server.console_api import assistant
+    r = assistant("Have we tried momentum?")
+    assert r["intent"] in ("recall", "overview")
+    assert r["is_decision"] is False
+    assert "suggestions" in r

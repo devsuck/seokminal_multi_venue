@@ -56,6 +56,11 @@ def _cmd_progress(a) -> int:
     return 0
 
 
+def _cmd_ask(a) -> int:
+    _p(_eng().ask(a.q))
+    return 0
+
+
 def _cmd_recall(a) -> int:
     _p(_eng().recall(a.topic).to_dict())
     return 0
@@ -108,13 +113,15 @@ def main(argv=None) -> int:
     rc.add_argument("--topic", required=True)
     tr = sub.add_parser("tried")
     tr.add_argument("--topic", required=True)
+    ak = sub.add_parser("ask")
+    ak.add_argument("--q", required=True)
     for name in ("daily", "failures", "knowledge", "progress", "areas", "summary", "verify",
                  "replay"):
         sub.add_parser(name)
     args = ap.parse_args(argv)
     disp = {"daily": _cmd_daily, "experiments": _cmd_experiments, "failures": _cmd_failures,
             "knowledge": _cmd_knowledge, "progress": _cmd_progress, "areas": _cmd_areas,
-            "recall": _cmd_recall, "tried": _cmd_tried,
+            "recall": _cmd_recall, "tried": _cmd_tried, "ask": _cmd_ask,
             "report": _cmd_report, "summary": _cmd_summary, "verify": _cmd_verify,
             "replay": _cmd_replay}
     return disp[args.cmd](args)

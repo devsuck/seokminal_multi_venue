@@ -96,6 +96,28 @@ _META_KEYS = ("previous_hash", "record_hash", "report_hash", "input_hash", "cont
               "bundle_digest", "result_digest")
 
 
+# 질문에서 주제어를 뽑을 때 버릴 불용어(영/한 — 질문어·조사)
+_STOPWORDS = frozenset({
+    "have", "we", "i", "tried", "try", "did", "does", "do", "is", "are", "was", "the", "a", "an",
+    "this", "that", "idea", "already", "before", "why", "what", "when", "how", "should", "review",
+    "next", "learn", "learned", "about", "from", "research", "week", "recent", "recently", "changed",
+    "on", "in", "of", "to", "for", "our", "us", "me", "you", "it", "any", "some",
+    "예전에", "해봤어", "해봤", "했어", "했나", "왜", "실패", "실패했어", "이번", "주에", "최근", "다음",
+    "뭘", "봐야", "볼까", "우리", "이거", "이번주", "무슨", "일이", "있었어", "배운", "지식", "관련",
+})
+
+
+def extract_topic(question: str) -> str:
+    """질문에서 주제어(가장 긴 비불용어 토큰)를 결정적으로 추출. 없으면 ''."""
+    import re
+    toks = re.findall(r"[0-9A-Za-z가-힣_]+", question or "")
+    cand = [t for t in toks if t.lower() not in _STOPWORDS and len(t) >= 2]
+    if not cand:
+        return ""
+    # 가장 긴 토큰(동률이면 첫 등장) — 결정적
+    return max(cand, key=lambda t: (len(t), -toks.index(t)))
+
+
 def record_text(record: dict) -> str:
     """레코드의 검색 가능한 문자열/숫자 값을 이어붙인다(해시/메타 제외). recall 검색용."""
     parts = []

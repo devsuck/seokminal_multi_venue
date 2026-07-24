@@ -210,6 +210,75 @@ class ResearchAssistantEngine:
                 "where": r.sources_hit, "headline": r.headline,
                 "is_decision": False, "is_advisory": True}
 
+    # ══════════════ 어시스턴트 중심화(C3) — 질의 라우터 ══════════════
+    def ask(self, question) -> dict:
+        """자연어 질문 → 결정적 인텐트 라우팅 → 기존 능력으로 응답. **분석·회상만, 결정/승인/집행 없음.**
+
+        헌장 "The Assistant Is The Primary Interface". LLM/외부호출 없음 — 키워드 기반 결정적 라우팅.
+        지원 예: "예전에 X 해봤어?" · "왜 실패했어?" · "이번 주 뭐 바뀌었어?" · "다음에 뭘 볼까?" · "뭘 배웠어?"
+        """
+        q = (question or "").strip()
+        ql = q.lower()
+        topic = M.extract_topic(q)
+
+        def has(*kw):
+            return any(k in ql for k in kw)
+
+        def wrap(intent, answer, data):
+            return {"question": q, "intent": intent, "topic": topic, "answer": answer,
+                    "data": data, "is_advisory": True, "is_decision": False,
+                    "disclaimer": "어시스턴트는 분석·회상만 한다 — 투자 결정·전략 승인·집행 없음(사람이 결정)."}
+
+        if not q:
+            return wrap("empty", "질문이 비어 있습니다.", {})
+        # 1) 예전에 해봤나 / 이미 시도?
+        if has("tried", "already", "before", "예전", "해봤", "이미", "했나"):
+            r = self.have_we_tried(topic)
+            return wrap("recall", r["headline"], r)
+        # 2) 왜 실패?
+        if has("fail", "실패", "왜 안", "why did", "안 됐"):
+            fa = self.failure_analysis()
+            if topic:
+                fa_d = fa.to_dict()
+                fa_d["filtered_topic"] = topic
+                fa_d["topic_hits"] = self.recall(topic).source_hits.get("failures", [])
+                ans = (f"'{topic}' 실패 관련 {len(fa_d['topic_hits'])}건 + 전체 실패 {fa.failure_count}건. 사람 검토 필요."
+                       if topic else fa.findings)
+                return wrap("failure", ans, fa_d)
+            return wrap("failure", f"실패 {fa.failure_count}건 · 클러스터 {len(fa.clusters)}개.", fa.to_dict())
+        # 3) 이번 주/최근 뭐 바뀌었나
+        if has("this week", "이번", "recent", "최근", "changed", "바뀐", "무슨 일", "new"):
+            es = self.experiment_summary().to_dict()
+            d = self.daily_summary().to_dict()
+            return wrap("recent", f"활동: 실험 {es['run_count']} · 결과 {es['result_count']} · 총 기록 {d['total_records']}.",
+                        {"experiments": es, "daily": d})
+        # 4) 다음에 뭘 볼까
+        if has("next", "다음", "review", "검토", "봐야", "추천", "should i"):
+            pa = self.potential_areas()
+            ans = (f"가능한 다음 검토 {len(pa.areas)}건: " + ", ".join(a["area"] for a in pa.areas[:3])
+                   if pa.areas else "제안할 영역이 아직 없습니다(원장 비어 있음).")
+            return wrap("next_areas", ans, pa.to_dict())
+        # 5) 뭘 배웠나 / 지식
+        if has("learn", "배운", "배웠", "knowledge", "지식", "lesson"):
+            kr = self.knowledge_recap()
+            return wrap("knowledge", kr.headline, kr.to_dict())
+        # 6) 주제어가 있으면 회상, 없으면 개요
+        if topic:
+            r = self.recall(topic)
+            return wrap("recall", r.headline, r.to_dict())
+        d = self.daily_summary()
+        return wrap("overview", d.headline, d.to_dict())
+
+    def suggested_questions(self) -> list:
+        """어시스턴트 예시 질문(헌장 예시). 정적·결정적."""
+        return [
+            "What changed this week?",
+            "Have we already tried momentum?",
+            "Why did it fail?",
+            "What should I review next?",
+            "What did we learn?",
+        ]
+
     # ══════════════ 번들 리포트 + 기록 ══════════════
     def build_bundle(self) -> dict:
         return {

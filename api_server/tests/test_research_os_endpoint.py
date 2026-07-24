@@ -101,3 +101,10 @@ def test_assistant_endpoint_query():
     assert r["intent"] in ("recall", "overview")
     assert r["is_decision"] is False
     assert "suggestions" in r
+
+
+def test_research_os_workspaces():
+    from api_server.console_api import research_os
+    ws = research_os()["workspaces"]
+    names = [w["workspace"] for w in ws]
+    assert names == ["Home", "Research", "Experiments", "Knowledge", "Assistant", "System"]

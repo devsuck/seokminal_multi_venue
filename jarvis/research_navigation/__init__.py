@@ -10,10 +10,12 @@ from jarvis.research_navigation.models import (  # noqa: F401
     NAV_ITEMS,
     PANEL_TO_SECTION,
     SECTIONS,
+    WORKSPACES,
     DuplicatePage,
     NavItem,
     NavManifest,
     NavSection,
     item_for,
     section_for,
+    workspace_for,
 )

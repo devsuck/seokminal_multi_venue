@@ -36,6 +36,12 @@ def _cmd_sections(a) -> int:
     return 0
 
 
+def _cmd_workspaces(a) -> int:
+    eng = _eng()
+    _p({"workspaces": eng.workspaces(), "coverage": eng.workspace_coverage()})
+    return 0
+
+
 def _cmd_duplicates(a) -> int:
     _p([d.to_dict() for d in _eng().duplicate_pages()])
     return 0
@@ -67,14 +73,14 @@ def _cmd_render(a) -> int:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="jarvis.research_navigation")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("tree", "sections", "duplicates", "panels", "coverage", "summary"):
+    for name in ("tree", "sections", "workspaces", "duplicates", "panels", "coverage", "summary"):
         sub.add_parser(name)
     rp = sub.add_parser("render")
     rp.add_argument("--out", default="")
     args = ap.parse_args(argv)
-    disp = {"tree": _cmd_tree, "sections": _cmd_sections, "duplicates": _cmd_duplicates,
-            "panels": _cmd_panels, "coverage": _cmd_coverage, "summary": _cmd_summary,
-            "render": _cmd_render}
+    disp = {"tree": _cmd_tree, "sections": _cmd_sections, "workspaces": _cmd_workspaces,
+            "duplicates": _cmd_duplicates, "panels": _cmd_panels, "coverage": _cmd_coverage,
+            "summary": _cmd_summary, "render": _cmd_render}
     return disp[args.cmd](args)
 
 

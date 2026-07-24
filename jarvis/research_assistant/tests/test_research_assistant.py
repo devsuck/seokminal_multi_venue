@@ -679,3 +679,91 @@ def test_bundle_all_advisory(eng):
     for key in b:
         assert b[key]["is_advisory"] is True
         assert b[key]["is_decision"] is False
+
+
+# ──────────────────────── C2 메모리 등뼈: recall ────────────────────────
+def test_record_text_excludes_hashes():
+    txt = M.record_text({"topic": "momentum", "record_hash": "sha256:x", "value": 1.2})
+    assert "momentum" in txt and "1.2" in txt
+    assert "sha256" not in txt
+
+
+def test_recall_finds_across_sources(eng):
+    r = eng.recall("momentum")
+    # DATA: memories has {"topic":"momentum"}, failures has "momentum instability"
+    assert r.tried_before is True
+    assert r.total_hits >= 2
+    assert "memories" in r.sources_hit
+    assert "failures" in r.sources_hit
+
+
+def test_recall_headline(eng):
+    r = eng.recall("momentum")
+    assert "momentum" in r.headline
+    assert r.is_advisory is True and r.is_decision is False
+
+
+def test_recall_miss(eng):
+    r = eng.recall("nonexistent_topic_xyz")
+    assert r.tried_before is False
+    assert r.total_hits == 0
+    assert "없음" in r.headline
+
+
+def test_recall_empty_topic(eng):
+    r = eng.recall("")
+    assert r.total_hits == 0
+    assert "비어" in r.headline
+
+
+def test_recall_case_insensitive(eng):
+    assert eng.recall("MOMENTUM").total_hits == eng.recall("momentum").total_hits
+
+
+def test_recall_deterministic(eng):
+    assert eng.recall("momentum").to_dict() == eng.recall("momentum").to_dict()
+
+
+def test_recall_hit_shape(eng):
+    r = eng.recall("cost")
+    for src, hits in r.source_hits.items():
+        for h in hits:
+            assert "ref" in h and "text" in h
+
+
+def test_recall_limit(eng):
+    r = eng.recall("momentum", limit=1)
+    for hits in r.source_hits.values():
+        assert len(hits) <= 1
+
+
+def test_have_we_tried_yes(eng):
+    res = eng.have_we_tried("momentum")
+    assert res["tried_before"] is True
+    assert res["evidence"] >= 2
+    assert res["is_decision"] is False
+
+
+def test_have_we_tried_no(eng):
+    res = eng.have_we_tried("zzz_never")
+    assert res["tried_before"] is False
+    assert res["evidence"] == 0
+
+
+def test_recall_reads_only_sources(eng):
+    # recall 은 SOURCES(기존 원장)만 읽고 ras_ 원장엔 아무것도 쓰지 않는다
+    eng.recall("momentum")
+    assert ledger.read_reports() == []
+    assert ledger.read_notes() == []
+
+
+def test_cli_recall(tmp_path, monkeypatch, capsys):
+    rc, out = _cli(["recall", "--topic", "momentum"], tmp_path, monkeypatch, capsys)
+    assert rc == 0
+    assert "total_hits" in out
+
+
+def test_cli_tried(tmp_path, monkeypatch, capsys):
+    rc, out = _cli(["tried", "--topic", "momentum"], tmp_path, monkeypatch, capsys)
+    assert rc == 0
+    assert "tried_before" in out

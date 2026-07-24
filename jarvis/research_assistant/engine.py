@@ -165,6 +165,51 @@ class ResearchAssistantEngine:
         areas.sort(key=lambda a: (-a["evidence"], a["area"]))
         return PotentialAreas(areas=areas)
 
+    # ══════════════ 메모리 등뼈(C2) — 통합 회상 ══════════════
+    # 검색 시 각 소스 레코드의 참조 ID 후보
+    _REF_FIELDS = ("run_id", "experiment_id", "result_id", "memory_id", "lesson_id", "pattern_id",
+                   "failure_id", "success_id", "incident_id", "model_id", "validation_id", "id",
+                   "topic", "title", "name")
+
+    def recall(self, topic, limit: int = 5) -> "RecallResult":
+        """흩어진 지식 원장 전체(실험/결과/실패/교훈/기억/패턴/인시던트/모델/검증)에서 topic 을 결정적으로 검색.
+
+        헌장 "Memory Is The Competitive Advantage" — '모멘텀 예전에 해봤어? 왜 실패했지?'의 답.
+        **READ ONLY 분석·회상만.** 결정/승인/집행 없음.
+        """
+        t = (topic or "").strip().lower()
+        source_hits: dict = {}
+        total = 0
+        if t:
+            for name in sorted(M.SOURCES):
+                hits = []
+                for rec in self._read(name):
+                    blob = M.record_text(rec).lower()
+                    if t in blob:
+                        hits.append({"ref": M.first_field(rec, self._REF_FIELDS) or "?",
+                                     "text": M.record_text(rec)[:140]})
+                if hits:
+                    source_hits[name] = hits[:limit]
+                    total += len(hits)
+        tried = total > 0
+        if not t:
+            headline = "검색어가 비어 있습니다."
+        elif tried:
+            where = ", ".join(f"{k}({len(v)})" for k, v in sorted(source_hits.items()))
+            headline = f"'{topic}' 관련 {total}건 발견 — {where}. 사람 검토 필요."
+        else:
+            headline = f"'{topic}' 관련 축적 기록 없음 — 아직 시도 안 함(또는 원장 비어 있음)."
+        return M.RecallResult(topic=topic, total_hits=total, tried_before=tried,
+                              source_hits=dict(sorted(source_hits.items())),
+                              sources_hit=sorted(source_hits), headline=headline)
+
+    def have_we_tried(self, topic) -> dict:
+        """'이 아이디어 예전에 해봤어?' 예/아니오 + 근거 요약. 결정 아님."""
+        r = self.recall(topic)
+        return {"topic": topic, "tried_before": r.tried_before, "evidence": r.total_hits,
+                "where": r.sources_hit, "headline": r.headline,
+                "is_decision": False, "is_advisory": True}
+
     # ══════════════ 번들 리포트 + 기록 ══════════════
     def build_bundle(self) -> dict:
         return {

@@ -91,6 +91,24 @@ def first_field(record: dict, fields) -> str:
     return ""
 
 
+# 검색 텍스트에서 제외할 메타 키(해시/인풋해시 등 — 노이즈·오탐 방지)
+_META_KEYS = ("previous_hash", "record_hash", "report_hash", "input_hash", "content_hash",
+              "bundle_digest", "result_digest")
+
+
+def record_text(record: dict) -> str:
+    """레코드의 검색 가능한 문자열/숫자 값을 이어붙인다(해시/메타 제외). recall 검색용."""
+    parts = []
+    for k, v in record.items():
+        if k in _META_KEYS:
+            continue
+        if isinstance(v, str):
+            parts.append(v)
+        elif isinstance(v, (int, float, bool)):
+            parts.append(str(v))
+    return " ".join(parts)
+
+
 def numeric_stats(values) -> dict:
     """숫자 목록 통계(count/min/max/mean, 결정적 반올림). 빈 목록이면 0."""
     nums = []
@@ -216,6 +234,22 @@ class AdvisoryNoteRecord:
     input_hash: str = ""
     record_hash: str = ""
     previous_hash: str = GENESIS
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class RecallResult:
+    """메모리 등뼈(C2) — 흩어진 지식 원장 통합 검색 결과. '예전에 해봤어?'의 답. 분석만."""
+    topic: str
+    total_hits: int
+    tried_before: bool
+    source_hits: dict        # {source: [{ref, text}]}
+    sources_hit: list
+    headline: str
+    is_advisory: bool = True
+    is_decision: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)

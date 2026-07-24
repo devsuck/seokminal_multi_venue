@@ -56,6 +56,16 @@ def _cmd_progress(a) -> int:
     return 0
 
 
+def _cmd_recall(a) -> int:
+    _p(_eng().recall(a.topic).to_dict())
+    return 0
+
+
+def _cmd_tried(a) -> int:
+    _p(_eng().have_we_tried(a.topic))
+    return 0
+
+
 def _cmd_areas(a) -> int:
     _p({**_eng().potential_areas().to_dict(),
         "note": "가능한 다음 검토 제안일 뿐 — 결정/승인 아님, 사람 검토 필요"})
@@ -94,12 +104,17 @@ def main(argv=None) -> int:
     rp = sub.add_parser("report")
     rp.add_argument("--scope", default="DAILY")
     rp.add_argument("--commit", action="store_true")
+    rc = sub.add_parser("recall")
+    rc.add_argument("--topic", required=True)
+    tr = sub.add_parser("tried")
+    tr.add_argument("--topic", required=True)
     for name in ("daily", "failures", "knowledge", "progress", "areas", "summary", "verify",
                  "replay"):
         sub.add_parser(name)
     args = ap.parse_args(argv)
     disp = {"daily": _cmd_daily, "experiments": _cmd_experiments, "failures": _cmd_failures,
             "knowledge": _cmd_knowledge, "progress": _cmd_progress, "areas": _cmd_areas,
+            "recall": _cmd_recall, "tried": _cmd_tried,
             "report": _cmd_report, "summary": _cmd_summary, "verify": _cmd_verify,
             "replay": _cmd_replay}
     return disp[args.cmd](args)

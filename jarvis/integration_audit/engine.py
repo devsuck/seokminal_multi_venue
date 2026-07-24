@@ -111,6 +111,33 @@ class IntegrationAuditEngine:
             duplicate_clusters=[c.to_dict() for c in clusters],
             proposals=[p.to_dict() for p in proposals])
 
+    # ── 헌장 게이트(C0) — 과분할 임계 + 5문항 체크리스트 ──
+    def constitution_gate(self, max_family: int = 5) -> dict:
+        """헌장(Constitution) 준수 게이트. 계열 과분할이 임계를 넘으면 위반으로 표시. 결정적·읽기전용.
+
+        max_family: 동일 이름 계열이 이 수를 넘으면 '통합 검토 필요' 위반. CI 게이트로 승격 가능.
+        헌장 "Simplicity Over Complexity / Integration Before Expansion" 강제.
+        """
+        violations = []
+        for c in self.duplicate_clusters():
+            if c.size > max_family:
+                violations.append({"family": f"{c.family}_*", "size": c.size,
+                                   "category": c.category,
+                                   "rule": "over-fragmentation (Integration Before Expansion)"})
+        violations.sort(key=lambda v: -v["size"])
+        questions = [
+            "1. Does this improve research quality?",
+            "2. Does this simplify the researcher workflow?",
+            "3. Does this reduce duplicated work?",
+            "4. Does this strengthen institutional memory?",
+            "5. Does this preserve human control?",
+        ]
+        return {"ok": not violations, "max_family": max_family,
+                "violation_count": len(violations), "violations": violations,
+                "checklist": questions,
+                "note": ("헌장 우선. 새 모듈 만들기 전 이 5문항이 모두 Yes 여야 한다. "
+                         "위반 계열은 새 패키지 대신 파사드 통합을 검토하라.")}
+
     def summary(self, generated_at: str = "") -> dict:
         r = self.build_report(generated_at)
         return {"module_count": r.module_count, "category_distribution": r.category_distribution,

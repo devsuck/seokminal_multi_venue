@@ -63,6 +63,12 @@ def _cmd_summary(a) -> int:
     return 0
 
 
+def _cmd_gate(a) -> int:
+    res = _eng().constitution_gate(max_family=a.max_family)
+    _p(res)
+    return 0 if res["ok"] else 1
+
+
 def _cmd_render(a) -> int:
     out = a.out or os.path.join(os.getcwd(), "docs", "integration_audit")
     written = _eng().render_docs(out)
@@ -77,10 +83,12 @@ def main(argv=None) -> int:
         sub.add_parser(name)
     rp = sub.add_parser("render")
     rp.add_argument("--out", default="")
+    ga = sub.add_parser("gate")
+    ga.add_argument("--max-family", dest="max_family", type=int, default=5)
     args = ap.parse_args(argv)
     disp = {"inventory": _cmd_inventory, "graph": _cmd_graph, "duplicates": _cmd_duplicates,
             "orphans": _cmd_orphans, "ui": _cmd_ui, "proposal": _cmd_proposal,
-            "summary": _cmd_summary, "render": _cmd_render}
+            "summary": _cmd_summary, "render": _cmd_render, "gate": _cmd_gate}
     return disp[args.cmd](args)
 
 

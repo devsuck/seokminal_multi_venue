@@ -461,3 +461,43 @@ def test_cli_render(tmp_path, capsys):
     rc, out = _cli(["render", "--out", str(tmp_path / "d")], capsys)
     assert rc == 0
     assert "written" in out
+
+
+# ──────────────────────── 헌장 게이트(C0) ────────────────────────
+def test_gate_synthetic_ok(eng):
+    # 합성 트리엔 크기 5 넘는 계열이 없음 → 통과
+    g = eng.constitution_gate(max_family=5)
+    assert g["ok"] is True
+    assert g["violation_count"] == 0
+    assert len(g["checklist"]) == 5
+
+
+def test_gate_flags_over_fragmentation(eng):
+    # 임계를 1로 낮추면 'research'(size 2) 계열이 위반
+    g = eng.constitution_gate(max_family=1)
+    assert g["ok"] is False
+    assert g["violation_count"] >= 1
+    assert any(v["family"].startswith("research") for v in g["violations"])
+
+
+def test_gate_real_tree_flags_research(real):
+    # 실제 트리: research_* 대형 계열이 임계 5에서 위반으로 잡혀야 함
+    g = real.constitution_gate(max_family=5)
+    assert g["ok"] is False
+    fams = {v["family"] for v in g["violations"]}
+    assert any("research" in f for f in fams)
+
+
+def test_gate_checklist_is_five_questions(real):
+    g = real.constitution_gate()
+    assert len(g["checklist"]) == 5
+    assert all(q[0].isdigit() for q in g["checklist"])
+
+
+def test_cli_gate(capsys):
+    # 실제 트리 게이트 → 위반 있으므로 rc=1
+    from jarvis.integration_audit import __main__ as cli
+    rc = cli.main(["gate", "--max-family", "5"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "violations" in out

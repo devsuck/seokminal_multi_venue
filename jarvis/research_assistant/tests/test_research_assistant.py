@@ -767,3 +767,87 @@ def test_cli_tried(tmp_path, monkeypatch, capsys):
     rc, out = _cli(["tried", "--topic", "momentum"], tmp_path, monkeypatch, capsys)
     assert rc == 0
     assert "tried_before" in out
+
+
+# ──────────────────────── C3 어시스턴트 ask() ────────────────────────
+@pytest.mark.parametrize("q,topic", [
+    ("Have we already tried momentum?", "momentum"),
+    ("모멘텀 예전에 해봤어?", "모멘텀"),
+    ("why did volatility fail?", "volatility"),
+    ("what changed this week?", ""),
+])
+def test_extract_topic(q, topic):
+    assert M.extract_topic(q) == topic
+
+
+def test_ask_recall_intent(eng):
+    a = eng.ask("Have we already tried momentum?")
+    assert a["intent"] == "recall"
+    assert a["topic"] == "momentum"
+    assert a["data"]["tried_before"] is True
+    assert a["is_decision"] is False
+
+
+def test_ask_failure_intent(eng):
+    a = eng.ask("why did it fail?")
+    assert a["intent"] == "failure"
+    assert "data" in a
+
+
+def test_ask_recent_intent(eng):
+    a = eng.ask("what changed this week?")
+    assert a["intent"] == "recent"
+    assert "experiments" in a["data"]
+
+
+def test_ask_next_intent(eng):
+    a = eng.ask("what should I review next?")
+    assert a["intent"] == "next_areas"
+
+
+def test_ask_knowledge_intent(eng):
+    a = eng.ask("what did we learn?")
+    assert a["intent"] == "knowledge"
+
+
+def test_ask_topic_fallback_recall(eng):
+    a = eng.ask("momentum")
+    assert a["intent"] == "recall"
+    assert a["topic"] == "momentum"
+
+
+def test_ask_overview_fallback(eng):
+    a = eng.ask("hi")
+    assert a["intent"] in ("overview", "recall")
+
+
+def test_ask_empty(eng):
+    a = eng.ask("")
+    assert a["intent"] == "empty"
+
+
+def test_ask_always_advisory(eng):
+    for q in ("Have we tried momentum?", "why did it fail?", "what next?", "what changed?"):
+        a = eng.ask(q)
+        assert a["is_advisory"] is True and a["is_decision"] is False
+        assert "결정" in a["disclaimer"] or "사람" in a["disclaimer"]
+
+
+def test_ask_deterministic(eng):
+    assert eng.ask("Have we tried momentum?") == eng.ask("Have we tried momentum?")
+
+
+def test_suggested_questions(eng):
+    qs = eng.suggested_questions()
+    assert len(qs) == 5
+
+
+def test_ask_no_write(eng):
+    eng.ask("Have we tried momentum?")
+    assert ledger.read_reports() == [] and ledger.read_notes() == []
+
+
+def test_cli_ask(tmp_path, monkeypatch, capsys):
+    rc, out = _cli(["ask", "--q", "Have we tried momentum?"], tmp_path, monkeypatch, capsys)
+    assert rc == 0
+    assert "intent" in out

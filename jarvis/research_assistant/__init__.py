@@ -19,6 +19,7 @@ from jarvis.research_assistant.models import (  # noqa: F401
     PotentialAreas,
     ProgressSummary,
     RecallResult,
+    extract_topic,
     is_failure_signal,
     numeric_stats,
     record_text,

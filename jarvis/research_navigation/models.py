@@ -80,6 +80,46 @@ PANEL_TO_SECTION = {
     "MONITORING": SEC_SYSTEM,
 }
 
+# ── 헌장 목표 워크스페이스(C4) — 6개. "Navigation should become simpler over time." ──
+WS_HOME = "Home"
+WS_RESEARCH = "Research"
+WS_EXPERIMENTS = "Experiments"
+WS_KNOWLEDGE = "Knowledge"
+WS_ASSISTANT = "Assistant"
+WS_SYSTEM = "System"
+WORKSPACES = (WS_HOME, WS_RESEARCH, WS_EXPERIMENTS, WS_KNOWLEDGE, WS_ASSISTANT, WS_SYSTEM)
+
+WORKSPACE_DESC = {
+    WS_HOME: "홈 · 상태 개요(모듈 없음, 진입점)",
+    WS_RESEARCH: "연구 · 알파/전략/분석",
+    WS_EXPERIMENTS: "실험 · 시뮬레이션/백테스트/실험추적",
+    WS_KNOWLEDGE: "지식 · 기억/그래프/인사이트/문헌",
+    WS_ASSISTANT: "어시스턴트 · 대화형 진입점(회상/질의)",
+    WS_SYSTEM: "시스템 · 거버넌스/모니터링/설정/에이전트/인프라",
+}
+
+# 카테고리 → 워크스페이스 매핑(P41 카테고리 재사용)
+_CATEGORY_TO_WORKSPACE = {
+    CAT_RESEARCH: WS_RESEARCH,
+    CAT_SIMULATION: WS_EXPERIMENTS,
+    CAT_KNOWLEDGE: WS_KNOWLEDGE,
+    CAT_AGENTS: WS_SYSTEM,       # 연구 인프라
+    CAT_MONITORING: WS_SYSTEM,
+    CAT_SYSTEM: WS_SYSTEM,
+    CAT_EXECUTION: WS_SYSTEM,
+    CAT_OTHER: WS_SYSTEM,
+}
+# 어시스턴트 워크스페이스에 귀속되는 모듈(특례)
+_ASSISTANT_MODULES = frozenset({"research_assistant"})
+
+
+def workspace_for(name: str) -> str:
+    """모듈 이름 → 헌장 6워크스페이스 중 하나. 결정적. (Home 은 모듈 없음.)"""
+    if name in _ASSISTANT_MODULES:
+        return WS_ASSISTANT
+    return _CATEGORY_TO_WORKSPACE.get(categorize(name), WS_SYSTEM)
+
+
 FORBIDDEN_VERBS = frozenset({
     "EXECUTE_TRADE", "PLACE_ORDER", "ALLOCATE_CAPITAL", "DEPLOY_STRATEGY", "ACTIVATE_LIVE",
     "APPROVE_FOR_TRADING", "EXECUTE", "DEPLOY", "TRADE", "ALLOCATE", "APPROVE", "DECIDE",

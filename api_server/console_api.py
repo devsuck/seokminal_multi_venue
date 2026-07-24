@@ -601,10 +601,12 @@ def research_os() -> dict:
                                 "modules": i.get("modules", [])}
                                for i in s["items"]]}
                     for s in man.sections]
+        workspaces = [{"workspace": w["workspace"], "description": w["description"],
+                       "moduleCount": w["moduleCount"]} for w in eng.workspaces()]
         return {"sections": sections, "section_count": man.section_count,
                 "item_count": man.item_count, "module_count": man.module_count,
                 "coverage": man.coverage, "duplicate_page_count": man.duplicate_page_count,
-                "digest": man.digest}
+                "digest": man.digest, "workspaces": workspaces}
     nav = _safe(_nav, {}) or {}
 
     # P41 — 섹션 단위 의존성 그래프(모듈 import 엣지를 섹션으로 집계). 노드-엣지.
@@ -716,6 +718,7 @@ def research_os() -> dict:
                      "duplicate_families": audit.get("duplicate_cluster_count", 0),
                      "digest": nav.get("digest", "")},
             "sections": nav.get("sections", []),
+            "workspaces": nav.get("workspaces", []),
             "graph": graph,
             "audit": audit, "runtime": runtime, "assistant": assistant,
             "automation": automation, "capabilities": capabilities,

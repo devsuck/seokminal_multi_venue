@@ -357,6 +357,62 @@ def test_manifest_to_dict(eng):
     assert isinstance(d["sections"], list)
 
 
+# ──────────────────────── C4 6워크스페이스 ────────────────────────
+def test_six_workspaces_defined():
+    assert M.WORKSPACES == ("Home", "Research", "Experiments", "Knowledge", "Assistant", "System")
+
+
+@pytest.mark.parametrize("name,ws", [
+    ("research_strategy_generation", "Research"),
+    ("alpha_intelligence", "Research"),
+    ("experiment_tracking", "Experiments"),
+    ("simulation_environment", "Experiments"),
+    ("research_memory_intelligence", "Knowledge"),
+    ("research_kg", "Knowledge"),
+    ("research_assistant", "Assistant"),
+    ("agent_runtime", "System"),
+    ("access_governance", "System"),
+    ("research_observability", "System"),
+    ("execution_cost", "System"),
+    ("zzz_unknown", "System"),
+])
+def test_workspace_for(name, ws):
+    assert M.workspace_for(name) == ws
+
+
+def test_engine_workspaces(eng):
+    wss = eng.workspaces()
+    assert [w["workspace"] for w in wss] == list(M.WORKSPACES)
+    home = next(w for w in wss if w["workspace"] == "Home")
+    assert home["moduleCount"] == 0   # Home 은 진입점(모듈 없음)
+
+
+def test_workspace_modules_sorted(eng):
+    for w in eng.workspaces():
+        assert w["modules"] == sorted(w["modules"])
+
+
+def test_real_workspace_coverage(real):
+    # Home 제외 모든 모듈이 5개 워크스페이스에 배치 → 커버리지 100%
+    assert real.workspace_coverage() == 1.0
+
+
+def test_real_assistant_workspace(real):
+    wss = {w["workspace"]: w for w in real.workspaces()}
+    assert "research_assistant" in wss["Assistant"]["modules"]
+
+
+def test_real_experiments_workspace(real):
+    wss = {w["workspace"]: w for w in real.workspaces()}
+    assert wss["Experiments"]["moduleCount"] >= 1
+
+
+def test_cli_workspaces(capsys):
+    rc, out = _cli(["workspaces"], capsys)
+    assert rc == 0
+    assert "Assistant" in out and "Experiments" in out
+
+
 # ──────────────────────── 안전 스캔 ────────────────────────
 _SRC_FILES = [str(SRC / f) for f in ("engine.py", "models.py", "__main__.py", "__init__.py")]
 _FORBIDDEN_IMPORTS = ("jarvis.execution", "jarvis.broker", "jarvis.live_execution",

@@ -59,6 +59,21 @@ class NavigationEngine:
         return {"Home": {s.section: {i["item"]: i["modules"] for i in s.items}
                          for s in self.nav_sections()}}
 
+    # ── 헌장 6워크스페이스(C4) ──
+    def workspaces(self) -> list:
+        """모듈을 헌장 6워크스페이스(Home/Research/Experiments/Knowledge/Assistant/System)로 매핑. 결정적."""
+        buckets: dict = {w: [] for w in M.WORKSPACES}
+        for name in self.modules():
+            buckets[M.workspace_for(name)].append(name)
+        return [{"workspace": w, "description": M.WORKSPACE_DESC[w],
+                 "moduleCount": len(buckets[w]), "modules": sorted(buckets[w])}
+                for w in M.WORKSPACES]
+
+    def workspace_coverage(self) -> float:
+        placed = sum(len(w["modules"]) for w in self.workspaces())
+        total = len(self.modules())
+        return round(placed / total, 6) if total else 1.0
+
     # ── 커버리지·중복 ──
     def coverage(self) -> float:
         total = len(self.modules())

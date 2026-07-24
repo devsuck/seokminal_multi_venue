@@ -580,3 +580,115 @@ def monitor() -> dict:
     """집행 모니터 — P8 파이프라인 상세 + 최근 이벤트."""
     p = pipeline()
     return {**p, "capital": status()["capital"]}
+
+
+# ── Research OS (P41~P45 로컬 연구 환경 통합 — READ ONLY) ──────────
+@router.get("/research-os")
+def research_os() -> dict:
+    """Research OS — Jarvis 로컬 연구 환경(P41~P45) 라이브 집계. **읽기전용, 결정/거래/집행 없음.**
+
+    P41 integration_audit(감사) · P42 local_runtime(런타임/헬스) · P43 research_navigation(IA) ·
+    P44 research_assistant(요약) · P45 local_automation(자동화) 엔진을 실행해 실데이터를 반환한다.
+    어떤 것도 변경/집행하지 않으며, 실패한 하위 항목은 안전하게 비워둔다.
+    """
+    # P43 — 통합 네비게이션 IA(실측 모듈 수)
+    def _nav():
+        from jarvis.research_navigation.engine import NavigationEngine
+        eng = NavigationEngine()
+        man = eng.build_manifest("")
+        sections = [{"section": s["section"], "moduleCount": s["module_count"],
+                     "items": [{"item": i["item"], "moduleCount": i["module_count"]}
+                               for i in s["items"]]}
+                    for s in man.sections]
+        return {"sections": sections, "section_count": man.section_count,
+                "item_count": man.item_count, "module_count": man.module_count,
+                "coverage": man.coverage, "duplicate_page_count": man.duplicate_page_count,
+                "digest": man.digest}
+    nav = _safe(_nav, {}) or {}
+
+    # P41 — 통합 감사
+    def _audit():
+        from jarvis.integration_audit.engine import IntegrationAuditEngine
+        s = IntegrationAuditEngine().summary()
+        return {"module_count": s["module_count"],
+                "category_distribution": s["category_distribution"],
+                "pattern_distribution": s["pattern_distribution"],
+                "duplicate_cluster_count": s["duplicate_cluster_count"],
+                "orphan_count": s["orphan_count"], "digest": s["digest"]}
+    audit = _safe(_audit, {}) or {}
+
+    # P42 — 로컬 런타임(환경/헬스/모듈 발견)
+    def _runtime():
+        from jarvis.local_runtime.engine import LocalRuntimeEngine
+        eng = LocalRuntimeEngine()
+        disc = eng.discover_modules()
+        return {"env_status": eng.environment_status(),
+                "health_status": eng.health_status(),
+                "module_count": disc.module_count,
+                "category_counts": disc.category_counts,
+                "runtime_state": eng.runtime_state(),
+                "checks": [c.to_dict() for c in eng.health_checks()]}
+    runtime = _safe(_runtime, {}) or {}
+
+    # P44 — 개인 연구 어시스턴트(기존 원장 READ ONLY 요약)
+    def _assistant():
+        from jarvis.research_assistant.engine import ResearchAssistantEngine
+        eng = ResearchAssistantEngine()
+        daily = eng.daily_summary()
+        fa = eng.failure_analysis()
+        kn = eng.knowledge_recap()
+        es = eng.experiment_summary()
+        pa = eng.potential_areas()
+        return {"total_records": daily.total_records, "active_sources": daily.active_sources,
+                "source_counts": daily.source_counts, "failure_count": fa.failure_count,
+                "knowledge_count": kn.memory_count + kn.lesson_count + kn.pattern_count,
+                "experiment_run_count": es.run_count,
+                "potential_areas": pa.areas[:6],
+                "is_advisory": True, "is_decision": False}
+    assistant = _safe(_assistant, {}) or {}
+
+    # P45 — 로컬 자동화(잡/실행 집계)
+    def _automation():
+        from jarvis.local_automation.engine import LocalAutomationEngine
+        eng = LocalAutomationEngine()
+        rep = eng.generate_report("SYSTEM", "", commit=False)
+        return {"job_count": rep.job_count, "enabled_job_count": rep.enabled_job_count,
+                "run_count": rep.run_count, "success_count": rep.success_count,
+                "failed_count": rep.failed_count, "schedule_count": rep.schedule_count,
+                "kind_distribution": rep.kind_distribution}
+    automation = _safe(_automation, {}) or {}
+
+    capabilities = [
+        {"phase": "P41", "name": "Integration Audit",
+         "summary": "기존 아키텍처 결정적 감사 — 인벤토리·의존성·중복·미사용.",
+         "metric": (f"{audit.get('module_count', 0)} modules · "
+                    f"{audit.get('duplicate_cluster_count', 0)} dup families")},
+        {"phase": "P42", "name": "Local Runtime",
+         "summary": "로컬 단일 진입점 — 시작·모듈 발견·헬스 체크(클라우드 없음).",
+         "metric": (f"health {runtime.get('health_status', '?')} · "
+                    f"{runtime.get('module_count', 0)} modules")},
+        {"phase": "P43", "name": "Unified Navigation",
+         "summary": "기존 페이지를 Research/Knowledge/Agents/System 로 재배치.",
+         "metric": (f"{nav.get('section_count', 0)} sections · "
+                    f"{int(round(nav.get('coverage', 0) * 100))}% coverage")},
+        {"phase": "P44", "name": "Research Assistant",
+         "summary": "일일·실험·실패·지식 요약(분석만 · 결정/승인/집행 없음).",
+         "metric": (f"{assistant.get('total_records', 0)} records · "
+                    f"{assistant.get('failure_count', 0)} failures")},
+        {"phase": "P45", "name": "Local Automation",
+         "summary": "반복 연구 작업 워크플로 보조(자동 거래·배포·배분 없음).",
+         "metric": (f"{automation.get('job_count', 0)} jobs · "
+                    f"{automation.get('run_count', 0)} runs")},
+    ]
+
+    return {"meta": {"section_count": nav.get("section_count", 0),
+                     "item_count": nav.get("item_count", 0),
+                     "module_count": nav.get("module_count", 0),
+                     "coverage": nav.get("coverage", 0.0),
+                     "duplicate_families": audit.get("duplicate_cluster_count", 0),
+                     "digest": nav.get("digest", "")},
+            "sections": nav.get("sections", []),
+            "audit": audit, "runtime": runtime, "assistant": assistant,
+            "automation": automation, "capabilities": capabilities,
+            "disclaimer": ("Research OS — READ ONLY. 분석·추천·요약만 하며 자동 거래·자동 배포·자동 자본 배분·"
+                           "전략 승인을 하지 않는다. P44 assistant analyzes · P45 automation = workflow assistance.")}

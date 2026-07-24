@@ -1,0 +1,27 @@
+# Jarvis Research Platform — Architecture Summary (v1.0.0-rc.1)
+
+## Research layers (P21–P34)
+
+- **P21** `production_readiness` (`pd_`)
+- **P22** `research_automation` (`ra_`)
+- **P23** `research_monitoring` (`rmon_`)
+- **P24** `research_reliability` (`rel_`)
+- **P25** `autonomous_research` (`ar_`)
+- **P26** `research_agent_coordination` (`racd_`)
+- **P27** `research_memory_intelligence` (`rmi_`)
+- **P28** `research_insight_intelligence` (`rii_`)
+- **P29** `research_strategy_generation` (`rsg_`)
+- **P30** `meta_research_intelligence` (`mri_`)
+- **P31** `experiment_orchestration` (`exo_`)
+- **P32** `research_resource_manager` (`rrm_`)
+- **P33** `research_api_gateway` (`rgw_`)
+- **P34** `research_dashboard_backend` (`rdb_`)
+
+## Finalization layers (P35–P40)
+
+- system_integration (P35)
+- architecture_docs (P36)
+- performance (P37)
+- security_audit (P38)
+- production_review (P39)
+- release_candidate (P40)

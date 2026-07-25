@@ -262,3 +262,26 @@ def test_operational_validation_endpoint():
 def test_cockpit_has_data_health():
     from api_server.console_api import cockpit
     assert "data_health" in cockpit()
+
+
+# ── P121-130 Research Agent OS ──
+def test_agent_capability_map_endpoint():
+    from api_server.console_api import agent_capability_map_endpoint
+    c = agent_capability_map_endpoint()
+    assert c["count"] == 6 and c["role_hierarchy"] == ["director", "specialist", "critic", "report"]
+
+
+def test_agent_validation_endpoint():
+    from api_server.console_api import agent_validation_endpoint
+    v = agent_validation_endpoint()
+    assert v["validated"] is True and v["safety"]["safe"] is True
+
+
+def test_agent_workspace_endpoint():
+    from api_server.console_api import agent_workspace
+    w = agent_workspace()
+    assert set(w) >= {"agents", "active_research", "agent_status", "current_tasks",
+                      "generated_reports", "critic_feedback", "human_review_queue"}
+    assert w["active_research"]["pipeline"] == ["Director", "Analyst", "StrategyResearcher",
+                                                "Critic", "Writer"]
+    assert w["is_decision"] is False

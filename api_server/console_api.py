@@ -1357,3 +1357,54 @@ def operational_validation() -> dict:
     """P120 — 외부데이터→메모리 체인 검증 + 아키텍처 안전(새 DB/원장/실행엔진 없음). READ ONLY."""
     from jarvis.research_workflow.operational_validation import validate_operations
     return _safe(validate_operations, {"operational": False, "checks": []}) or {}
+
+
+# ══════════════ Research Agent Operating System (P121-130) — READ ONLY, ANALYSIS ONLY ══════════════
+@router.get("/agent-capability-map")
+def agent_capability_map_endpoint() -> dict:
+    """P121 — AgentCapabilityMap(역할 계층·목적·입출력·사용엔진). 분석 전용 에이전트. READ ONLY."""
+    from jarvis.research_workflow.agent_capability import capability_map
+    return _safe(capability_map, {"agents": [], "count": 0}) or {}
+
+
+@router.get("/agent-validation")
+def agent_validation_endpoint() -> dict:
+    """P130 — 에이전트 시스템 검증(기존 엔진·중복없음·자율결정없음·메모리·대시보드) + 안전. READ ONLY."""
+    from jarvis.research_workflow.agent_validation import validate_agents
+    return _safe(validate_agents, {"validated": False, "checks": []}) or {}
+
+
+@router.get("/agent-workspace")
+def agent_workspace(objective: str = "", company: str = "") -> dict:
+    """P129 통합 — Research Agents Workspace: active research·agent status·tasks·reports·critic·review queue.
+
+    objective 있으면 다중 에이전트 연구 데모 실행(읽기전용, commit=False). 없으면 capability map + 데모 목표.
+    자동 거래·집행·투자결정 없음 — 분석만, 사람이 모든 결정.
+    """
+    from jarvis.research_workflow.agent_capability import capability_map
+    cap = _safe(capability_map, {"agents": []}) or {}
+    obj = (objective or "").strip() or "momentum in KR equities under high volatility"
+    wf = _safe(lambda: __import__("jarvis.research_workflow.multi_agent_workflow", fromlist=["run"])
+               .run(obj, company=company), {}) or {}
+    report = wf.get("report", {})
+    review = wf.get("review", {})
+    return {"agents": cap.get("agents", []), "role_hierarchy": cap.get("role_hierarchy", []),
+            "active_research": {"objective": obj,
+                                "pipeline": wf.get("pipeline", []),
+                                "director_plan": wf.get("director_plan", {})},
+            "agent_status": wf.get("stages", []),
+            "current_tasks": (wf.get("director_plan", {}) or {}).get("assigned_agents", []),
+            "generated_reports": [{"objective": obj, "confidence": report.get("confidence"),
+                                   "sections": list(report.get("report", {})),
+                                   "limitations": report.get("limitations", [])}] if report else [],
+            "critic_feedback": {"verdict": review.get("verdict"), "blocks": review.get("blocks"),
+                                "dimensions": review.get("dimensions", {}),
+                                "quality": review.get("quality", {})},
+            "human_review_queue": wf.get("human_review_queue", []),
+            "specialist_memos": {k: v.get("memo_type", k) for k, v in
+                                 (wf.get("specialist_memos", {}) or {}).items()},
+            "is_demo": not objective,
+            "is_advisory": True, "is_decision": False,
+            "disclaimer": ("Research Agents — READ ONLY. Director→Analyst→Strategy→Critic→Writer. "
+                           "분석 전용 에이전트(트레이딩/집행/결정 아님). 기존 엔진 재사용, 새 메모리 없음. "
+                           "자동 거래·집행·자본배분 없음. 사람이 모든 투자 결정.")}

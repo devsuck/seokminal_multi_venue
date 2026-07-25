@@ -43,6 +43,15 @@ from jarvis.research_workflow.research_feed import ResearchFeedPipeline, collect
 from jarvis.research_workflow.data_quality import DataQualityMonitor, build_data_health  # noqa: F401
 from jarvis.research_workflow.live_intelligence import build_live_intelligence  # noqa: F401
 from jarvis.research_workflow.operational_validation import validate_operations, architecture_safety  # noqa: F401
+from jarvis.research_workflow.agent_capability import capability_map as agent_capability_map  # noqa: F401
+from jarvis.research_workflow.research_director import ResearchDirector  # noqa: F401
+from jarvis.research_workflow.market_analyst import MarketAnalyst  # noqa: F401
+from jarvis.research_workflow.company_analyst import CompanyAnalyst  # noqa: F401
+from jarvis.research_workflow.strategy_researcher import StrategyResearcher  # noqa: F401
+from jarvis.research_workflow.research_reviewer import ResearchReviewer  # noqa: F401
+from jarvis.research_workflow.research_writer import ResearchWriter  # noqa: F401
+from jarvis.research_workflow.multi_agent_workflow import run as run_agent_workflow  # noqa: F401
+from jarvis.research_workflow.agent_validation import validate_agents, agent_safety  # noqa: F401
 from jarvis.research_workflow.earnings_intelligence import analyze_earnings  # noqa: F401
 from jarvis.research_workflow.insider_flow import analyze_transaction  # noqa: F401
 from jarvis.research_workflow.market_data_adapter import MarketEvent, normalize  # noqa: F401

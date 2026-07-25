@@ -284,6 +284,104 @@ class ResearchAssistantEngine:
                 "by_category": cats, "headline": headline,
                 "is_advisory": True, "is_decision": False}
 
+    # ══════════════ 다관점 비평(Agent Collaboration / Critic) ══════════════
+    def perspectives(self, topic) -> dict:
+        """한 주제를 여러 연구 관점(Macro/Quant/Risk/Supply/News/Critic)으로 결정적 평가 + 상충 종합.
+
+        문서 "Agents should provide different perspectives ... consider conflicting views."
+        **새 에이전트 모듈이 아니라 기존 데이터(recall/failure_intelligence)에 대한 관점 렌즈.** 결정 아님.
+        """
+        t = (topic or "").strip()
+        rc = self.recall(t) if t else None
+        mc = self.mistake_check(t) if t else {"failure_count": 0, "by_category": {}}
+        by_src = rc.source_hits if rc else {}
+
+        def hits(*srcs):
+            return sum(len(by_src.get(s, [])) for s in srcs)
+
+        lenses = []
+
+        def lens(name, stance, rationale, evidence):
+            lenses.append({"lens": name, "stance": stance, "rationale": rationale,
+                           "evidence": evidence})
+
+        # QUANT — 축적 실험 근거
+        exp = hits("experiment_runs", "experiment_results", "experiments")
+        lens("Quant", "SUPPORT" if exp else "NEUTRAL",
+             f"관련 실험/결과 {exp}건" if exp else "관련 실험 기록 없음", exp)
+        # RISK — 리스크 집중/파라미터 불안정 실패
+        risk_fail = sum(n for c, n in mc["by_category"].items()
+                        if c in (M.FAIL_RISK_CONCENTRATION, M.FAIL_PARAMETER_INSTABILITY))
+        lens("Risk", "CAUTION" if risk_fail else "NEUTRAL",
+             f"리스크/파라미터 실패 {risk_fail}건" if risk_fail else "리스크 관련 과거 실패 없음", risk_fail)
+        # MACRO — 레짐 실패
+        regime_fail = mc["by_category"].get(M.FAIL_REGIME_CHANGE, 0)
+        lens("Macro", "CAUTION" if regime_fail else "NEUTRAL",
+             f"레짐 변화 실패 {regime_fail}건" if regime_fail else "레짐 관련 과거 실패 없음", regime_fail)
+        # SUPPLY — 지식/패턴 참조
+        sup = hits("memories", "patterns", "lessons")
+        lens("Supply", "INFO" if sup else "NEUTRAL",
+             f"관련 지식/패턴 {sup}건" if sup else "관련 지식 없음", sup)
+        # NEWS — 최근 활동
+        recent = self.daily_summary().total_records
+        lens("News", "INFO", f"전체 축적 기록 {recent}건", recent)
+        # CRITIC — 과거 실패(회의론자)
+        past_fail = mc["failure_count"]
+        lens("Critic", "OPPOSE" if past_fail >= 2 else "CAUTION" if past_fail == 1 else "NEUTRAL",
+             (f"'{t}' 관련 과거 실패 {past_fail}건 — 반복 위험" if past_fail
+              else "과거 실패 없음(하지만 신규 아이디어는 검증 필요)"), past_fail)
+
+        stances = {ln["stance"] for ln in lenses}
+        conflicting = "SUPPORT" in stances and (stances & {"OPPOSE", "CAUTION"})
+        if conflicting:
+            conclusion = "관점 상충 — Quant 근거 vs Risk/Critic 경고. 사람 판단 필요(자동 결정 아님)."
+        elif "OPPOSE" in stances or past_fail >= 2:
+            conclusion = "주의 — 과거 실패 반복 위험. 사람 검토 권장."
+        elif exp:
+            conclusion = "근거 있음 — 다만 out-of-sample·비용·레짐 로버스트니스 확인 후 사람 결정."
+        else:
+            conclusion = "근거 부족 — 가설/실험부터. 사람 결정."
+        return {"topic": topic, "lenses": lenses, "conflicting": bool(conflicting),
+                "conclusion": conclusion, "requires_human_judgment": True,
+                "is_advisory": True, "is_decision": False}
+
+    # ══════════════ 리서치 메모리 그래프(연결) ══════════════
+    def memory_graph(self, limit: int = 40) -> dict:
+        """실험→실패유형→교훈, 지식 노드를 연결한 리서치 메모리 그래프(노드-엣지). 기존 원장 통합 뷰.
+
+        문서 "Research Memory Graph: Experiment → Outcome → Knowledge." **신규 지능 계층 아님 — 연결 뷰.**
+        """
+        nodes: dict = {}
+        edges: list = []
+
+        def node(nid, ntype, label):
+            if nid not in nodes:
+                nodes[nid] = {"id": nid, "type": ntype, "label": label[:40]}
+            return nid
+
+        def edge(a, b, kind):
+            edges.append({"source": a, "target": b, "kind": kind})
+
+        # 실패 → 카테고리(분류) → 교훈
+        fi = self.failure_intelligence()
+        cat_present = set()
+        for r in fi.records[:limit]:
+            exp = node(f"E:{r['ref']}", "EXPERIMENT", str(r["ref"]))
+            cat = node(f"C:{r['category']}", "CATEGORY", r["category"])
+            cat_present.add(r["category"])
+            edge(exp, cat, "failed_as")
+        for c in sorted(cat_present):
+            kid = node(f"K:{c}", "KNOWLEDGE", self._LESSONS.get(c, c)[:36])
+            edge(f"C:{c}", kid, "lesson")
+        # 지식 자산(교훈/기억) 노드
+        for rec in (self._read("lessons") + self._read("memories"))[:limit]:
+            t = M.first_field(rec, ("topic", "title", "summary", "name", "key"))
+            if t:
+                node(f"T:{t}", "KNOWLEDGE", t)
+        return {"nodes": list(nodes.values()), "edges": edges,
+                "node_count": len(nodes), "edge_count": len(edges),
+                "note": "Experiment → Failure Category → Lesson (기존 원장 연결 뷰, 읽기전용)"}
+
     # ══════════════ 어시스턴트 중심화(C3) — 질의 라우터 ══════════════
     def ask(self, question) -> dict:
         """자연어 질문 → 결정적 인텐트 라우팅 → 기존 능력으로 응답. **분석·회상만, 결정/승인/집행 없음.**
@@ -305,6 +403,10 @@ class ResearchAssistantEngine:
 
         if not q:
             return wrap("empty", "질문이 비어 있습니다.", {})
+        # 0.5) 다관점/비평
+        if has("perspective", "opinion", "critique", "관점", "비평", "다각도", "여러 시각"):
+            p = self.perspectives(topic)
+            return wrap("perspectives", p["conclusion"], p)
         # 1) 같은 실수 반복? (재발 방지) — 'mistake' 신호는 recall 보다 우선
         if has("mistake", "repeat", "같은 실수", "반복", "실수 했"):
             r = self.mistake_check(topic)

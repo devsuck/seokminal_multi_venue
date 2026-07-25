@@ -108,3 +108,19 @@ def test_research_os_workspaces():
     ws = research_os()["workspaces"]
     names = [w["workspace"] for w in ws]
     assert names == ["Home", "Research", "Experiments", "Knowledge", "Assistant", "System"]
+
+
+def test_failure_intel_endpoint():
+    from api_server.console_api import failure_intel
+    r = failure_intel("momentum")
+    assert "failure_intelligence" in r and "memory_graph" in r
+    assert r["is_decision"] is False
+    assert [l["lens"] for l in r["perspectives"]["lenses"]] == \
+        ["Quant", "Risk", "Macro", "Supply", "News", "Critic"]
+
+
+def test_failure_intel_endpoint_no_q():
+    from api_server.console_api import failure_intel
+    r = failure_intel("")
+    assert "failure_intelligence" in r
+    assert "perspectives" not in r

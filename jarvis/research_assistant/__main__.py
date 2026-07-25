@@ -71,6 +71,16 @@ def _cmd_mistake(a) -> int:
     return 0
 
 
+def _cmd_perspectives(a) -> int:
+    _p(_eng().perspectives(a.topic))
+    return 0
+
+
+def _cmd_graph(a) -> int:
+    _p(_eng().memory_graph())
+    return 0
+
+
 def _cmd_recall(a) -> int:
     _p(_eng().recall(a.topic).to_dict())
     return 0
@@ -128,6 +138,9 @@ def main(argv=None) -> int:
     sub.add_parser("failintel")
     mk = sub.add_parser("mistake")
     mk.add_argument("--topic", required=True)
+    pv = sub.add_parser("perspectives")
+    pv.add_argument("--topic", required=True)
+    sub.add_parser("graph")
     for name in ("daily", "failures", "knowledge", "progress", "areas", "summary", "verify",
                  "replay"):
         sub.add_parser(name)
@@ -136,6 +149,7 @@ def main(argv=None) -> int:
             "knowledge": _cmd_knowledge, "progress": _cmd_progress, "areas": _cmd_areas,
             "recall": _cmd_recall, "tried": _cmd_tried, "ask": _cmd_ask,
             "failintel": _cmd_failintel, "mistake": _cmd_mistake,
+            "perspectives": _cmd_perspectives, "graph": _cmd_graph,
             "report": _cmd_report, "summary": _cmd_summary, "verify": _cmd_verify,
             "replay": _cmd_replay}
     return disp[args.cmd](args)

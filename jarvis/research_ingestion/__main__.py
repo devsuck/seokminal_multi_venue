@@ -3,6 +3,8 @@
   ingest --file backtest.json [--commit]                 P53 스키마 JSON 1건 수집
   ingest-backtest --file raw_backtest.json               backtest_runner 원본 출력 1건 수집(P54)
       [--context ctx.json] [--commit]                     (스키마 검증·중복탐지·수집 감사 포함)
+  import-history --file archive.jsonl [--commit|--dry-run]  과거 연구 파일 백필(P55: JSON/JSONL/CSV)
+      [--field-map map.json]                                (별칭 매핑·중복보호·provenance·INCOMPLETE 보존)
   validate --file backtest.json                           스키마·검증지표 확인
   summary / verify / replay
 
@@ -53,6 +55,16 @@ def _cmd_ingest_backtest(a) -> int:
     return 0
 
 
+def _cmd_import_history(a) -> int:
+    from jarvis.research_ingestion.history_importer import HistoricalResearchImporter
+    fmap = _load(a.field_map) if a.field_map else None
+    commit = bool(a.commit) and not a.dry_run    # --dry-run 이 항상 우선(안전)
+    imp = HistoricalResearchImporter()
+    summ = imp.import_file(a.file, now=_now(), commit=commit, field_map=fmap)
+    _p({"committed": commit, "dry_run": (not commit), "summary": summ.to_dict()})
+    return 0
+
+
 def _cmd_validate(a) -> int:
     _p(_eng().validate(_load(a.file)))
     return 0
@@ -86,12 +98,19 @@ def main(argv=None) -> int:
     ib.add_argument("--file", required=True, help="backtest_runner 원본 출력 JSON")
     ib.add_argument("--context", help="연구 메타·검증지표 보강 JSON(선택)")
     ib.add_argument("--commit", action="store_true")
+    ih = sub.add_parser("import-history")
+    ih.add_argument("--file", required=True, help="과거 연구 파일(JSON/JSONL/CSV)")
+    ih.add_argument("--field-map", dest="field_map", help="별칭 매핑 오버라이드 JSON(선택)")
+    ih.add_argument("--commit", action="store_true")
+    ih.add_argument("--dry-run", dest="dry_run", action="store_true",
+                    help="기록 없이 매핑·판정만(안전; --commit 보다 우선)")
     va = sub.add_parser("validate")
     va.add_argument("--file", required=True)
     for name in ("summary", "verify", "replay"):
         sub.add_parser(name)
     args = ap.parse_args(argv)
     disp = {"ingest": _cmd_ingest, "ingest-backtest": _cmd_ingest_backtest,
+            "import-history": _cmd_import_history,
             "validate": _cmd_validate, "summary": _cmd_summary,
             "verify": _cmd_verify, "replay": _cmd_replay}
     return disp[args.cmd](args)

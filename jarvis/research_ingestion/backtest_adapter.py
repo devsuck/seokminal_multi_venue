@@ -118,20 +118,21 @@ def adapt(backtest_output: dict, *, context: dict | None = None) -> dict:
 
 def ingest_backtest(backtest_output: dict, *, context: dict | None = None,
                     engine=None, now: str = "", commit: bool = False,
-                    strict: bool = False) -> IngestionResult:
+                    strict: bool = False, provenance: dict | None = None) -> IngestionResult:
     """완료된 백테스트 1건 → 연구 메모리 **자동 수집 훅**. 얇은 어댑터 → 기존 P53 ingest().
 
     이것이 '백테스트 완료 → 연구 기억' 자동 연결의 단일 진입점이다.
     · 완료-시점 dict 를 P53 스키마로 매핑(adapt) 후 ResearchIngestionEngine.ingest() 호출.
     · **멱등** — 동일 백테스트 재호출은 no-op(deduplicated=True). append-only 해시체인 보존.
     · commit=False = 드라이런(판정 프리뷰, 기록 없음). commit=True = 기존 원장에 기록.
+    · provenance(선택): {source_type, source_file, import_timestamp} — 해시 미포함, 추적용(P55).
     · 실행·집행·배포 없음. 반환은 자문(is_advisory=True). 사람 판단 필수.
     """
     if engine is None:
         from jarvis.research_ingestion.engine import ResearchIngestionEngine
         engine = ResearchIngestionEngine()
     schema = adapt(backtest_output, context=context)
-    return engine.ingest(schema, now, commit=commit, strict=strict)
+    return engine.ingest(schema, now, commit=commit, strict=strict, provenance=provenance)
 
 
 def ingest_backtests(backtest_outputs, *, contexts=None, engine=None,

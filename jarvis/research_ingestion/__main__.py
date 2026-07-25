@@ -5,6 +5,9 @@
       [--context ctx.json] [--commit]                     (스키마 검증·중복탐지·수집 감사 포함)
   import-history --file archive.jsonl [--commit|--dry-run]  과거 연구 파일 백필(P55: JSON/JSONL/CSV)
       [--field-map map.json]                                (별칭 매핑·중복보호·provenance·INCOMPLETE 보존)
+  discover [--root DIR ...] [--all]                         과거 연구 자산 발견(P56: Manifest, 임포트 안 함)
+  revalidate --file record.json                            불완전 검증 진단(P57: 누락 검증 목록·조작 없음)
+      | backlog                                             (backlog: 원장의 INCOMPLETE 목록)
   validate --file backtest.json                           스키마·검증지표 확인
   summary / verify / replay
 
@@ -65,6 +68,30 @@ def _cmd_import_history(a) -> int:
     return 0
 
 
+def _cmd_discover(a) -> int:
+    from jarvis.research_ingestion.archive_discovery import discover
+    roots = a.root or None
+    man = discover(roots, include_empty=bool(a.all))
+    _p(man.to_dict())
+    return 0
+
+
+def _cmd_revalidate(a) -> int:
+    from jarvis.research_ingestion.revalidation import ResearchRevalidationEngine
+    eng = ResearchRevalidationEngine()
+    if a.backlog:
+        _p(eng.incomplete_backlog().to_dict())
+        return 0
+    if not a.file:
+        _p({"error": "--file 또는 backlog 필요"})
+        return 1
+    # CLI 는 하네스 없이 진단(plan)만 — 실제 재실행은 프로그램에서 하네스 주입 필요(조작 방지)
+    plan = eng.plan(_load(a.file))
+    res = eng.revalidate(_load(a.file), harness=None)
+    _p({"plan": plan.to_dict(), "result": res.to_dict()})
+    return 0
+
+
 def _cmd_validate(a) -> int:
     _p(_eng().validate(_load(a.file)))
     return 0
@@ -104,13 +131,20 @@ def main(argv=None) -> int:
     ih.add_argument("--commit", action="store_true")
     ih.add_argument("--dry-run", dest="dry_run", action="store_true",
                     help="기록 없이 매핑·판정만(안전; --commit 보다 우선)")
+    dc = sub.add_parser("discover")
+    dc.add_argument("--root", action="append", help="탐색 디렉터리(반복 지정; 없으면 기본 위치)")
+    dc.add_argument("--all", action="store_true", help="감지 실패 파일도 포함")
+    rv = sub.add_parser("revalidate")
+    rv.add_argument("--file", help="재검증 진단할 레코드 JSON")
+    rv.add_argument("--backlog", action="store_true", help="원장의 INCOMPLETE 목록")
     va = sub.add_parser("validate")
     va.add_argument("--file", required=True)
     for name in ("summary", "verify", "replay"):
         sub.add_parser(name)
     args = ap.parse_args(argv)
     disp = {"ingest": _cmd_ingest, "ingest-backtest": _cmd_ingest_backtest,
-            "import-history": _cmd_import_history,
+            "import-history": _cmd_import_history, "discover": _cmd_discover,
+            "revalidate": _cmd_revalidate,
             "validate": _cmd_validate, "summary": _cmd_summary,
             "verify": _cmd_verify, "replay": _cmd_replay}
     return disp[args.cmd](args)

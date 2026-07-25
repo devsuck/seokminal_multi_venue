@@ -1211,3 +1211,110 @@ def market_intel_feed(q: str = "", entity: str = "") -> dict:
             "is_advisory": True, "is_decision": False,
             "disclaimer": ("Market Intelligence Feed — READ ONLY. 데이터→이벤트→연구컨텍스트→사람검토. "
                            "데이터 소스 미연결 시 빈 피드(정직). 자동 거래·집행·자본배분 없음. 사람이 모든 결정.")}
+
+
+# ══════════════ Research Validation Loop & Operational v2.0 (P101-110) — READ ONLY ══════════════
+# 데모용 백테스트 vs 페이퍼(교육용 예시 — 백테스트 성공/페이퍼 실패). 라이브 데이터 연결 전 검증 패널 시연.
+_DEMO_BT = {"strategy_name": "tsmom", "universe": "US KOSPI", "hypothesis": "trend persists",
+            "entry_rules": "12-1 momentum cross", "source": "demo",
+            "metrics": {"return": 0.22, "sharpe": 1.5, "max_drawdown": -0.11, "volatility": 0.14,
+                        "walk_forward": 0.6, "out_of_sample": 0.5, "cost_impact": 0.02,
+                        "random_baseline": 0.1, "turnover": 0.3, "parameter_stability": 0.7,
+                        "n_obs": 900, "exposure": 0.9}}
+_DEMO_PAPER = {"strategy_name": "tsmom", "regime": "HIGH_VOL",
+               "metrics": {"return": 0.05, "sharpe": 0.4, "max_drawdown": -0.19, "volatility": 0.21,
+                           "cost_impact": 0.09, "turnover": 0.62, "exposure": 0.7}}
+
+
+@router.get("/research-trigger")
+def research_trigger_endpoint(q: str = "", entity: str = "", kind: str = "") -> dict:
+    """P101 — 시장 이벤트 → 연구 트리거 → Opportunity → 가설(연구 태스크 체인). **트레이드 신호 아님.**"""
+    def _run():
+        if not (q or entity):
+            return {"note": "이벤트/개체(q 또는 entity)를 입력하세요.", "trigger": {}}
+        from jarvis.research_workflow.research_trigger import dispatch
+        return dispatch({"kind": kind or "news", "entity": entity, "text": q})
+    return _safe(_run, {"trigger": {}}) or {}
+
+
+@router.get("/strategy-lifecycle")
+def strategy_lifecycle_endpoint() -> dict:
+    """P105 — 전략 연구 생애주기 보드(DISCOVERED→…→ARCHIVED). 기존 원장 파생. **연구 상태만.**"""
+    from jarvis.research_workflow.strategy_lifecycle import board
+    return _safe(board, {"strategies": [], "lifecycle": []}) or {}
+
+
+@router.get("/research-ops-events")
+def research_ops_events_endpoint() -> dict:
+    """P107 — 연구 운영 이벤트(가설·백테스트·검증실패·페이퍼괴리·사람검토). 기존 이벤트 계층 파생."""
+    from jarvis.research_workflow.ops_events import ops_events
+    return _safe(lambda: ops_events(), {"events": [], "count": 0}) or {}
+
+
+@router.get("/research-audit")
+def research_audit_endpoint(strategy: str = "") -> dict:
+    """P109 — 전략 연구 감사(origin·가설·실험·결과·실패·교훈). 기존 append-only 원장 재구성."""
+    def _run():
+        if not (strategy or "").strip():
+            from jarvis.research_workflow.research_audit import audit_coverage
+            return audit_coverage()
+        from jarvis.research_workflow.research_audit import audit_strategy
+        return audit_strategy(strategy)
+    return _safe(_run, {"sections": {}}) or {}
+
+
+@router.get("/v2-release")
+def v2_release_endpoint() -> dict:
+    """P110 — Jarvis v2.0 릴리스 검증: 완전 루프 + 안전 점검(거래·집행 없음). READ ONLY."""
+    from jarvis.research_workflow.release_validation import validate_release
+    return _safe(validate_release, {"release_ready": False, "loop_steps": []}) or {}
+
+
+@router.get("/validation-loop")
+def validation_loop(strategy: str = "") -> dict:
+    """P101-110 통합 — Research Validation Dashboard 표면. 생애주기·검증·품질·리뷰큐. **READ ONLY.**
+
+    lifecycle_board·ops events·audit 는 기존 원장에서 실데이터 파생. validation/quality 패널은 데이터
+    소스 연결 전이라 교육용 데모(백테스트 성공/페이퍼 실패)로 시연. 자동 거래·집행 없음 — 사람이 모든 결정.
+    """
+    board = _safe(lambda: __import__("jarvis.research_workflow.strategy_lifecycle",
+                                     fromlist=["board"]).board(), {"strategies": []}) or {}
+    ops = _safe(lambda: __import__("jarvis.research_workflow.ops_events",
+                                   fromlist=["ops_events"]).ops_events(), {"events": [], "review_queue": []}) or {}
+    validation = _safe(lambda: __import__("jarvis.research_workflow.paper_validation",
+                                          fromlist=["validate"]).validate(_DEMO_BT, _DEMO_PAPER), {}) or {}
+    gap = _safe(lambda: __import__("jarvis.research_workflow.validation_gap",
+                                   fromlist=["analyze_gap"]).analyze_gap(_DEMO_BT, _DEMO_PAPER), {}) or {}
+    quality = _safe(lambda: __import__("jarvis.research_workflow.quality_monitor",
+                                       fromlist=["evaluate"]).evaluate(_DEMO_BT), {}) or {}
+    release = _safe(lambda: __import__("jarvis.research_workflow.release_validation",
+                                       fromlist=["validate_release"]).validate_release(),
+                    {"release_ready": False}) or {}
+    audit = None
+    if (strategy or "").strip():
+        audit = _safe(lambda: __import__("jarvis.research_workflow.research_audit",
+                                         fromlist=["audit_strategy"]).audit_strategy(strategy), None)
+    return {"lifecycle_board": board,
+            "validation_panel": {"backtest": _DEMO_BT["metrics"], "paper": _DEMO_PAPER["metrics"],
+                                 "tracked_metrics": validation.get("tracked_metrics", {}),
+                                 "status": validation.get("status"),
+                                 "divergence_detected": validation.get("divergence_detected"),
+                                 "cause": validation.get("cause"),
+                                 "gaps": gap.get("gaps", {}), "possible_causes": gap.get("possible_causes", []),
+                                 "is_demo": True},
+            "quality_panel": {"quality_score": quality.get("quality_score"), "grade": quality.get("grade"),
+                              "core_dimensions": quality.get("core_dimensions", {}),
+                              "weaknesses": quality.get("weaknesses", []),
+                              "missing_validations": quality.get("missing_validations", []),
+                              "gate": quality.get("gate"), "is_demo": True},
+            "review_queue": ops.get("review_queue", []),
+            "ops_events": ops.get("events", [])[:20], "ops_by_type": ops.get("by_type", {}),
+            "loop_status": {"loop_complete": release.get("loop_complete"),
+                            "release_ready": release.get("release_ready"),
+                            "safe": (release.get("safety") or {}).get("safe"),
+                            "capabilities": release.get("capabilities", [])},
+            "audit": audit,
+            "is_advisory": True, "is_decision": False,
+            "disclaimer": ("Research Validation Loop — READ ONLY. Market Event→Trigger→Hypothesis→"
+                           "Experiment→Backtest→Paper→Validation→Risk→Memory. 검증/품질 패널은 데이터 소스 "
+                           "연결 전 데모. 자동 거래·집행·자본배분 없음. 사람이 모든 투자 결정.")}

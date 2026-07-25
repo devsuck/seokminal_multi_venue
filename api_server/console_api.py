@@ -1318,3 +1318,42 @@ def validation_loop(strategy: str = "") -> dict:
             "disclaimer": ("Research Validation Loop — READ ONLY. Market Event→Trigger→Hypothesis→"
                            "Experiment→Backtest→Paper→Validation→Risk→Memory. 검증/품질 패널은 데이터 소스 "
                            "연결 전 데모. 자동 거래·집행·자본배분 없음. 사람이 모든 투자 결정.")}
+
+
+# ══════════════ Live Data Infrastructure & Autonomous Research Ops (P111-120) — READ ONLY ══════════════
+@router.get("/data-capability-map")
+def data_capability_map() -> dict:
+    """P111/P112 — 데이터 역량 카탈로그 + provider 헬스(기존 벤더 클라이언트 재사용). READ ONLY."""
+    from jarvis.research_workflow.providers import provider_registry
+    return _safe(provider_registry, {"providers": [], "count": 0}) or {}
+
+
+@router.get("/data-health")
+def data_health() -> dict:
+    """P118 — DataHealthReport(API availability·freshness·schema·missing·abnormal). 기존 품질 재사용."""
+    from jarvis.research_workflow.data_quality import build_data_health
+    return _safe(lambda: build_data_health(), {"overall_status": "LIMITED"}) or {}
+
+
+@router.get("/research-feed")
+def research_feed() -> dict:
+    """P117 — 연구 피드 수집(데모): Source→Event→Trigger→Opportunity Queue. 중복 방지·health. 자동 투자 없음."""
+    demo = {"market": [{"asset": "AAPL", "return": 0.08, "timestamp": "2026-01-03T09:30:00Z",
+                        "source": "yfinance"}],
+            "news": [{"text": "TSMC supplier expands production capacity", "entity": "TSMC"}]}
+    from jarvis.research_workflow.research_feed import collect
+    return _safe(lambda: collect(demo), {"collected": [], "opportunity_queue": []}) or {}
+
+
+@router.get("/live-intelligence")
+def live_intelligence() -> dict:
+    """P119 — Live Intelligence 표면: Data Sources·Market Feed·Research Queue·Data Health. READ ONLY."""
+    from jarvis.research_workflow.live_intelligence import build_live_intelligence
+    return _safe(lambda: build_live_intelligence(demo=True), {"data_sources": {}, "market_feed": []}) or {}
+
+
+@router.get("/operational-validation")
+def operational_validation() -> dict:
+    """P120 — 외부데이터→메모리 체인 검증 + 아키텍처 안전(새 DB/원장/실행엔진 없음). READ ONLY."""
+    from jarvis.research_workflow.operational_validation import validate_operations
+    return _safe(validate_operations, {"operational": False, "checks": []}) or {}

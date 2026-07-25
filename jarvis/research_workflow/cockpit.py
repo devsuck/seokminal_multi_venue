@@ -90,9 +90,17 @@ def build_cockpit() -> dict:
                                         fromlist=["ResearchSessionManager"])
                      .ResearchSessionManager().list_sessions()[:6], [])
 
+    # P118 — 데이터 소스 헬스(DataHealthReport)를 콕핏에 통합(기존 provider registry 재사용)
+    data_health = _safe(lambda: __import__("jarvis.research_workflow.data_quality",
+                                           fromlist=["build_data_health"]).build_data_health(),
+                        {"overall_status": "LIMITED", "api_availability": {}})
+
     return {
         "research": research, "current_loop": current_loop, "top_opportunities": opportunities,
         "highest_risks": risks, "portfolio_exposure": exposure, "research_health": health,
+        "data_health": {"overall_status": data_health.get("overall_status"),
+                        "api_availability": data_health.get("api_availability", {}),
+                        "issue_count": data_health.get("issue_count", 0)},
         "knowledge_growth": {"total": learning.get("total", 0), "channels": learning.get("channels", {}),
                              "graph_nodes": graph.get("node_count", 0), "graph_edges": graph.get("edge_count", 0)},
         "timeline": timeline.get("entries", []),

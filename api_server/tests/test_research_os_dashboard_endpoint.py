@@ -226,3 +226,39 @@ def test_validation_loop_shape():
                        "ops_events", "loop_status"}
     assert vl["validation_panel"]["status"] == "BACKTEST_SUCCESS_PAPER_FAILURE"
     assert vl["is_decision"] is False
+
+
+# ── P111-120 Live Data Infrastructure ──
+def test_data_capability_map_endpoint():
+    from api_server.console_api import data_capability_map
+    r = data_capability_map()
+    assert r["count"] >= 15 and "providers" in r
+    assert set(r["interface"]) == {"fetch", "normalize", "validate", "health_check"}
+
+
+def test_data_health_endpoint():
+    from api_server.console_api import data_health
+    assert data_health()["overall_status"] in ("HEALTHY", "DEGRADED", "LIMITED")
+
+
+def test_research_feed_endpoint():
+    from api_server.console_api import research_feed
+    r = research_feed()
+    assert "collected" in r and "opportunity_queue" in r
+
+
+def test_live_intelligence_endpoint():
+    from api_server.console_api import live_intelligence
+    x = live_intelligence()
+    assert set(x) >= {"data_sources", "market_feed", "research_queue", "data_health"}
+
+
+def test_operational_validation_endpoint():
+    from api_server.console_api import operational_validation
+    r = operational_validation()
+    assert r["operational"] is True and r["architecture_safety"]["safe"] is True
+
+
+def test_cockpit_has_data_health():
+    from api_server.console_api import cockpit
+    assert "data_health" in cockpit()

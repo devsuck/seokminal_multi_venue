@@ -210,6 +210,80 @@ class ResearchAssistantEngine:
                 "where": r.sources_hit, "headline": r.headline,
                 "is_decision": False, "is_advisory": True}
 
+    # ══════════════ Failure Intelligence — 실패 분류·근본원인·재발방지 ══════════════
+    # 카테고리별 교훈(문서 "Lessons Learned" — 정적·결정적)
+    _LESSONS = {
+        M.FAIL_OVERFITTING: "인샘플 과적합 의심 — walk-forward·out-of-sample 우선, 파라미터 수 최소화.",
+        M.FAIL_DATA_LEAKAGE: "룩어헤드/데이터 누설 의심 — 피처 시점 정합·미래정보 차단 재점검.",
+        M.FAIL_REGIME_CHANGE: "레짐 변화에 취약 — regime-robust 검증·기간 분할 재평가.",
+        M.FAIL_COST_SENSITIVITY: "거래비용 민감 — 비용 반영 백테스트·회전율 축소 검토.",
+        M.FAIL_LIQUIDITY: "유동성 문제 — 체결 가능 규모·거래량 필터 재설정.",
+        M.FAIL_POOR_HYPOTHESIS: "가설 자체가 약함 — 랜덤 베이스라인 대비 엣지 재확인, 신호 재정의.",
+        M.FAIL_TIMING: "타이밍/지연 문제 — 진입 시점·지연 가정 재검토.",
+        M.FAIL_RISK_CONCENTRATION: "리스크 집중 — 상관·편중 제한, 분산 제약 추가.",
+        M.FAIL_PARAMETER_INSTABILITY: "파라미터 불안정 — 민감도 분석·안정 구간만 채택.",
+        M.FAIL_UNCLASSIFIED: "미분류 — 실패 사유를 구조화해 재기록 필요.",
+    }
+
+    def _failure_records(self) -> list:
+        """실패 소스(실패 원장·인시던트·실패 신호 결과)를 모아 분류체계로 태깅."""
+        out = []
+        for src in ("failures", "incidents"):
+            for rec in self._read(src):
+                text = M.record_text(rec)
+                out.append({"ref": M.first_field(rec, self._REF_FIELDS) or "?",
+                            "category": M.classify_failure(text), "text": text[:160], "source": src})
+        for r in self._read("experiment_results"):
+            status = M.first_field(r, ("status", "outcome", "passed"))
+            if status and (M.is_failure_signal(status) or str(status).lower() == "false"):
+                text = M.record_text(r)
+                out.append({"ref": M.first_field(r, self._REF_FIELDS) or "?",
+                            "category": M.classify_failure(text), "text": text[:160],
+                            "source": "experiment_results"})
+        return out
+
+    def failure_intelligence(self) -> "FailureIntelligenceResult":
+        """실패를 9종 분류체계로 구조화 — '왜 실패했나' + 카테고리별 교훈. **분석만, 결정 아님.**
+
+        Agentic Research Evolution 문서: "Learn Why did this fail, not only Did this fail."
+        """
+        recs = self._failure_records()
+        by_cat: dict = {}
+        for r in recs:
+            by_cat[r["category"]] = by_cat.get(r["category"], 0) + 1
+        by_cat = dict(sorted(by_cat.items(), key=lambda kv: (-kv[1], kv[0])))
+        top = next(iter(by_cat), M.FAIL_UNCLASSIFIED) if by_cat else M.FAIL_UNCLASSIFIED
+        lessons = [f"{cat}: {self._LESSONS.get(cat, '')} ({n}건)" for cat, n in by_cat.items()]
+        return M.FailureIntelligenceResult(
+            total_failures=len(recs), by_category=by_cat, records=recs[:50],
+            top_category=top, lessons=lessons)
+
+    def mistake_check(self, topic) -> dict:
+        """'이 아이디어, 예전에 같은 실수 했나?' — 주제 관련 과거 실패를 분류체계로 회수. 재발 방지.
+
+        문서: "avoid repeating previous mistakes". **결정 아님 — 사람 검토용.**
+        """
+        t = (topic or "").strip()
+        hits = []
+        cats: dict = {}
+        for r in self._failure_records():
+            if t and t.lower() in r["text"].lower():
+                hits.append(r)
+                cats[r["category"]] = cats.get(r["category"], 0) + 1
+        cats = dict(sorted(cats.items(), key=lambda kv: (-kv[1], kv[0])))
+        made = len(hits) > 0
+        if not t:
+            headline = "검색어가 비어 있습니다."
+        elif made:
+            where = ", ".join(f"{c}({n})" for c, n in cats.items())
+            headline = (f"'{topic}' 관련 과거 실패 {len(hits)}건 — 유형: {where}. "
+                        "같은 실수 반복 주의(사람 검토).")
+        else:
+            headline = f"'{topic}' 관련 과거 실패 기록 없음(또는 원장 비어 있음)."
+        return {"topic": topic, "made_this_mistake": made, "failure_count": len(hits),
+                "by_category": cats, "headline": headline,
+                "is_advisory": True, "is_decision": False}
+
     # ══════════════ 어시스턴트 중심화(C3) — 질의 라우터 ══════════════
     def ask(self, question) -> dict:
         """자연어 질문 → 결정적 인텐트 라우팅 → 기존 능력으로 응답. **분석·회상만, 결정/승인/집행 없음.**
@@ -231,21 +305,26 @@ class ResearchAssistantEngine:
 
         if not q:
             return wrap("empty", "질문이 비어 있습니다.", {})
-        # 1) 예전에 해봤나 / 이미 시도?
+        # 1) 같은 실수 반복? (재발 방지) — 'mistake' 신호는 recall 보다 우선
+        if has("mistake", "repeat", "같은 실수", "반복", "실수 했"):
+            r = self.mistake_check(topic)
+            return wrap("mistake", r["headline"], r)
+        # 2) 예전에 해봤나 / 이미 시도?
         if has("tried", "already", "before", "예전", "해봤", "이미", "했나"):
             r = self.have_we_tried(topic)
             return wrap("recall", r["headline"], r)
-        # 2) 왜 실패?
+        # 2) 왜 실패? — 분류체계(Failure Intelligence) 포함
         if has("fail", "실패", "왜 안", "why did", "안 됐"):
-            fa = self.failure_analysis()
+            fi = self.failure_intelligence()
+            data = fi.to_dict()
             if topic:
-                fa_d = fa.to_dict()
-                fa_d["filtered_topic"] = topic
-                fa_d["topic_hits"] = self.recall(topic).source_hits.get("failures", [])
-                ans = (f"'{topic}' 실패 관련 {len(fa_d['topic_hits'])}건 + 전체 실패 {fa.failure_count}건. 사람 검토 필요."
-                       if topic else fa.findings)
-                return wrap("failure", ans, fa_d)
-            return wrap("failure", f"실패 {fa.failure_count}건 · 클러스터 {len(fa.clusters)}개.", fa.to_dict())
+                data["mistake_check"] = self.mistake_check(topic)
+                ans = (f"'{topic}' 관련 실패 {data['mistake_check']['failure_count']}건 · "
+                       f"전체 실패 {fi.total_failures}건 · 상위 유형 {fi.top_category}. 사람 검토 필요.")
+            else:
+                ans = (f"실패 {fi.total_failures}건 · 상위 유형 {fi.top_category} · "
+                       f"유형 {len(fi.by_category)}종.")
+            return wrap("failure", ans, data)
         # 3) 이번 주/최근 뭐 바뀌었나
         if has("this week", "이번", "recent", "최근", "changed", "바뀐", "무슨 일", "new"):
             es = self.experiment_summary().to_dict()

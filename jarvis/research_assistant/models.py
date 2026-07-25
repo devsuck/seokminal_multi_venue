@@ -91,6 +91,45 @@ def first_field(record: dict, fields) -> str:
     return ""
 
 
+# ── 연구 실패 분류체계(Failure Intelligence) — Agentic Research Evolution 문서 9종 + 미분류 ──
+FAIL_OVERFITTING = "OVERFITTING"
+FAIL_DATA_LEAKAGE = "DATA_LEAKAGE"
+FAIL_REGIME_CHANGE = "REGIME_CHANGE"
+FAIL_COST_SENSITIVITY = "COST_SENSITIVITY"
+FAIL_LIQUIDITY = "LIQUIDITY"
+FAIL_POOR_HYPOTHESIS = "POOR_HYPOTHESIS"
+FAIL_TIMING = "TIMING"
+FAIL_RISK_CONCENTRATION = "RISK_CONCENTRATION"
+FAIL_PARAMETER_INSTABILITY = "PARAMETER_INSTABILITY"
+FAIL_UNCLASSIFIED = "UNCLASSIFIED"
+FAILURE_TAXONOMY = (
+    FAIL_OVERFITTING, FAIL_DATA_LEAKAGE, FAIL_REGIME_CHANGE, FAIL_COST_SENSITIVITY, FAIL_LIQUIDITY,
+    FAIL_POOR_HYPOTHESIS, FAIL_TIMING, FAIL_RISK_CONCENTRATION, FAIL_PARAMETER_INSTABILITY,
+    FAIL_UNCLASSIFIED,
+)
+# 분류 키워드(우선순위 순서대로 첫 일치; 영/한). 결정적.
+_FAILURE_RULES = (
+    (FAIL_DATA_LEAKAGE, ("leak", "lookahead", "look-ahead", "look ahead", "future data", "누설", "룩어헤드", "미래데이터")),
+    (FAIL_OVERFITTING, ("overfit", "over-fit", "over fit", "curve fit", "curve-fit", "in-sample", "in sample", "과적합")),
+    (FAIL_REGIME_CHANGE, ("regime", "structural break", "regime change", "레짐", "국면")),
+    (FAIL_COST_SENSITIVITY, ("cost sensitiv", "transaction cost", "slippage", "fee", "turnover", "비용", "수수료", "슬리피지")),
+    (FAIL_LIQUIDITY, ("liquidity", "illiquid", "thin volume", "low volume", "유동성")),
+    (FAIL_PARAMETER_INSTABILITY, ("parameter instab", "unstable param", "param sensit", "parameter sensit", "instability", "파라미터", "불안정")),
+    (FAIL_RISK_CONCENTRATION, ("concentration", "concentrated", "over-exposed", "overexposed", "correlated risk", "집중", "편중")),
+    (FAIL_TIMING, ("timing", "latency", "delay", "late entry", "타이밍", "지연")),
+    (FAIL_POOR_HYPOTHESIS, ("poor hypothesis", "weak signal", "no edge", "spurious", "insignificant", "가설 약", "약한 가설")),
+)
+
+
+def classify_failure(text) -> str:
+    """실패 텍스트 → 분류체계 카테고리(결정적, 첫 일치 우선). 매칭 없으면 UNCLASSIFIED."""
+    t = str(text or "").lower()
+    for cat, kws in _FAILURE_RULES:
+        if any(k in t for k in kws):
+            return cat
+    return FAIL_UNCLASSIFIED
+
+
 # 검색 텍스트에서 제외할 메타 키(해시/인풋해시 등 — 노이즈·오탐 방지)
 _META_KEYS = ("previous_hash", "record_hash", "report_hash", "input_hash", "content_hash",
               "bundle_digest", "result_digest")
@@ -270,6 +309,21 @@ class RecallResult:
     source_hits: dict        # {source: [{ref, text}]}
     sources_hit: list
     headline: str
+    is_advisory: bool = True
+    is_decision: bool = False
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class FailureIntelligenceResult:
+    """Failure Intelligence — 실패를 분류체계로 구조화. '왜 실패했나' + '이전에 같은 실수 했나'. 분석만."""
+    total_failures: int
+    by_category: dict          # {category: count}
+    records: list              # [{ref, category, text, source}]
+    top_category: str
+    lessons: list              # 카테고리별 교훈 문장
     is_advisory: bool = True
     is_decision: bool = False
 

@@ -851,3 +851,105 @@ def test_cli_ask(tmp_path, monkeypatch, capsys):
     rc, out = _cli(["ask", "--q", "Have we tried momentum?"], tmp_path, monkeypatch, capsys)
     assert rc == 0
     assert "intent" in out
+
+
+# ──────────────────────── Failure Intelligence ────────────────────────
+@pytest.mark.parametrize("text,cat", [
+    ("strategy overfit to in-sample data", M.FAIL_OVERFITTING),
+    ("look-ahead data leakage detected", M.FAIL_DATA_LEAKAGE),
+    ("regime change broke the signal", M.FAIL_REGIME_CHANGE),
+    ("high transaction cost / slippage", M.FAIL_COST_SENSITIVITY),
+    ("liquidity too thin to fill", M.FAIL_LIQUIDITY),
+    ("parameter instability across folds", M.FAIL_PARAMETER_INSTABILITY),
+    ("risk concentration in one name", M.FAIL_RISK_CONCENTRATION),
+    ("entry timing latency issue", M.FAIL_TIMING),
+    ("weak signal, no edge vs random", M.FAIL_POOR_HYPOTHESIS),
+    ("something totally unrelated", M.FAIL_UNCLASSIFIED),
+    ("과적합 발생", M.FAIL_OVERFITTING),
+    ("유동성 부족", M.FAIL_LIQUIDITY),
+])
+def test_classify_failure(text, cat):
+    assert M.classify_failure(text) == cat
+
+
+def test_failure_taxonomy_has_nine_plus_unclassified():
+    assert len(M.FAILURE_TAXONOMY) == 10
+    assert M.FAIL_UNCLASSIFIED in M.FAILURE_TAXONOMY
+
+
+def test_failure_intelligence(eng):
+    fi = eng.failure_intelligence()
+    # DATA: failures has "momentum instability"(x3)+"cost"; incidents "data gap"; results drawdown FAIL
+    assert fi.total_failures >= 4
+    assert isinstance(fi.by_category, dict)
+    assert fi.top_category in M.FAILURE_TAXONOMY
+    assert fi.is_advisory and not fi.is_decision
+
+
+def test_failure_intelligence_classifies(eng):
+    fi = eng.failure_intelligence()
+    # "cost" 실패 → COST_SENSITIVITY, "momentum instability" → PARAMETER_INSTABILITY(instab)
+    assert M.FAIL_COST_SENSITIVITY in fi.by_category or M.FAIL_PARAMETER_INSTABILITY in fi.by_category
+
+
+def test_failure_intelligence_lessons(eng):
+    fi = eng.failure_intelligence()
+    assert all(isinstance(l, str) for l in fi.lessons)
+
+
+def test_failure_intelligence_empty(empty_eng):
+    fi = empty_eng.failure_intelligence()
+    assert fi.total_failures == 0
+    assert fi.top_category == M.FAIL_UNCLASSIFIED
+
+
+def test_failure_intelligence_deterministic(eng):
+    assert eng.failure_intelligence().to_dict() == eng.failure_intelligence().to_dict()
+
+
+def test_mistake_check_yes(eng):
+    r = eng.mistake_check("momentum")
+    assert r["made_this_mistake"] is True
+    assert r["failure_count"] >= 1
+    assert r["is_decision"] is False
+
+
+def test_mistake_check_no(eng):
+    r = eng.mistake_check("zzz_never")
+    assert r["made_this_mistake"] is False
+    assert r["failure_count"] == 0
+
+
+def test_mistake_check_categorized(eng):
+    r = eng.mistake_check("momentum")
+    assert isinstance(r["by_category"], dict)
+
+
+def test_ask_mistake_intent(eng):
+    a = eng.ask("have we made this mistake with momentum before?")
+    assert a["intent"] == "mistake"
+
+
+def test_ask_failure_uses_taxonomy(eng):
+    a = eng.ask("why did it fail?")
+    assert a["intent"] == "failure"
+    assert "by_category" in a["data"]
+    assert "top_category" in a["data"]
+
+
+def test_failintel_no_write(eng):
+    eng.failure_intelligence()
+    eng.mistake_check("momentum")
+    assert ledger.read_reports() == [] and ledger.read_notes() == []
+
+
+def test_cli_failintel(tmp_path, monkeypatch, capsys):
+    rc, out = _cli(["failintel"], tmp_path, monkeypatch, capsys)
+    assert rc == 0
+    assert "by_category" in out
+
+
+def test_cli_mistake(tmp_path, monkeypatch, capsys):
+    rc, out = _cli(["mistake", "--topic", "momentum"], tmp_path, monkeypatch, capsys)
+    assert rc == 0
+    assert "made_this_mistake" in out

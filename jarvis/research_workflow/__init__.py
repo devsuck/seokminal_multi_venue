@@ -24,6 +24,16 @@ from jarvis.research_workflow.autonomous_loop import (  # noqa: F401
     LoopState,
 )
 from jarvis.research_workflow.alt_data import catalog as alt_data_catalog  # noqa: F401
+from jarvis.research_workflow.research_trigger import ResearchTrigger, dispatch as dispatch_trigger  # noqa: F401
+from jarvis.research_workflow.research_trigger import from_event as trigger_from_event  # noqa: F401
+from jarvis.research_workflow.backtest_bridge import BacktestResearchJob, create_job as create_backtest_job  # noqa: F401
+from jarvis.research_workflow.paper_validation import PaperValidationMonitor, validate as validate_paper  # noqa: F401
+from jarvis.research_workflow.validation_gap import analyze_gap as analyze_validation_gap  # noqa: F401
+from jarvis.research_workflow.strategy_lifecycle import board as lifecycle_board, lifecycle_state  # noqa: F401
+from jarvis.research_workflow.quality_monitor import ResearchQualityMonitor, evaluate as evaluate_quality  # noqa: F401
+from jarvis.research_workflow.ops_events import ops_events as research_ops_events  # noqa: F401
+from jarvis.research_workflow.research_audit import audit_strategy, audit_coverage  # noqa: F401
+from jarvis.research_workflow.release_validation import validate_release, safety_check  # noqa: F401
 from jarvis.research_workflow.earnings_intelligence import analyze_earnings  # noqa: F401
 from jarvis.research_workflow.insider_flow import analyze_transaction  # noqa: F401
 from jarvis.research_workflow.market_data_adapter import MarketEvent, normalize  # noqa: F401

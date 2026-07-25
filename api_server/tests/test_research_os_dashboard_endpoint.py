@@ -191,3 +191,38 @@ def test_market_intel_feed_shape():
 def test_earnings_intel_fields():
     from api_server.console_api import earnings_intel
     assert len(earnings_intel()["fields"]) == 7
+
+
+# ── P101-110 Research Validation Loop ──
+def test_research_trigger_endpoint_not_signal():
+    from api_server.console_api import research_trigger_endpoint
+    t = research_trigger_endpoint(q="TSMC supply disruption", entity="TSMC", kind="supply")
+    assert t["trigger"].get("trigger_type")
+    assert t.get("is_trade_signal") is False
+
+
+def test_strategy_lifecycle_endpoint_shape():
+    from api_server.console_api import strategy_lifecycle_endpoint
+    b = strategy_lifecycle_endpoint()
+    assert "strategies" in b and "lifecycle" in b
+
+
+def test_ops_events_endpoint_types():
+    from api_server.console_api import research_ops_events_endpoint
+    ev = research_ops_events_endpoint()
+    assert len(ev["event_types"]) == 5
+
+
+def test_v2_release_endpoint_ready():
+    from api_server.console_api import v2_release_endpoint
+    r = v2_release_endpoint()
+    assert r["loop_complete"] is True and r["safety"]["safe"] is True
+
+
+def test_validation_loop_shape():
+    from api_server.console_api import validation_loop
+    vl = validation_loop()
+    assert set(vl) >= {"lifecycle_board", "validation_panel", "quality_panel", "review_queue",
+                       "ops_events", "loop_status"}
+    assert vl["validation_panel"]["status"] == "BACKTEST_SUCCESS_PAPER_FAILURE"
+    assert vl["is_decision"] is False

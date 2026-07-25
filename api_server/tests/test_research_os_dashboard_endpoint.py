@@ -92,3 +92,43 @@ def test_autonomous_runtime_preview():
 def test_autonomous_runtime_empty_topic():
     from api_server.console_api import autonomous_runtime
     assert autonomous_runtime("")["preview"] == {}
+
+
+# ── Research OS Completion (P78-85) ──
+def test_research_timeline_shape():
+    from api_server.console_api import research_timeline
+    r = research_timeline()
+    assert set(r) >= {"entries", "count", "stage_order"}
+    assert r["is_decision"] is False
+
+
+def test_research_graph_shape():
+    from api_server.console_api import research_graph
+    g = research_graph()
+    assert set(g) >= {"nodes", "edges", "node_count", "edge_count", "relationship_kinds"}
+
+
+def test_research_health_shape():
+    from api_server.console_api import research_health
+    h = research_health()
+    assert 0 <= h["overall_health_score"] <= 100
+    assert "coverage" in h
+
+
+def test_cockpit_shape():
+    from api_server.console_api import cockpit
+    c = cockpit()
+    assert set(c) >= {"research", "current_loop", "top_opportunities", "highest_risks",
+                      "research_health", "timeline", "knowledge_graph", "human_review_queue"}
+    assert c["is_decision"] is False
+
+
+def test_research_quality_and_cross():
+    from api_server.console_api import cross_strategy, research_quality
+    assert "note" in research_quality("") or "overall_quality" in research_quality("")
+    assert "pairs" in cross_strategy()
+
+
+def test_continuous_learning_shape():
+    from api_server.console_api import continuous_learning
+    assert "channels" in continuous_learning()

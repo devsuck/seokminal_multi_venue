@@ -1000,3 +1000,85 @@ def autonomous_runtime(q: str = "") -> dict:
             "is_advisory": True, "is_decision": False,
             "disclaimer": ("Autonomous Research Runtime — 제안·비판·우선순위·학습만. 거래·집행·자본배분·"
                            "배포 승인 없음. 사람이 모든 투자 결정을 한다.")}
+
+
+# ══════════════ Research OS Completion (P78-85) — 통합·시각화 표면. READ ONLY ══════════════
+@router.get("/research-timeline")
+def research_timeline(q: str = "", limit: int = 200) -> dict:
+    """P78 — 기존 append-only 원장에서 재구성한 연구 타임라인. **새 히스토리 DB 없음, 읽기전용.**"""
+    from jarvis.research_workflow.timeline import build_timeline
+    return _safe(lambda: build_timeline(q, limit=limit), {"entries": [], "count": 0}) or {}
+
+
+@router.get("/research-graph")
+def research_graph(q: str = "", limit: int = 120) -> dict:
+    """P79 — 다개체 연구 지식 그래프(기존 memory_graph/relationship_graph 결합). **읽기전용.**"""
+    from jarvis.research_workflow.knowledge_graph import build_knowledge_graph
+    return _safe(lambda: build_knowledge_graph(q, limit=limit),
+                 {"nodes": [], "edges": [], "node_count": 0, "edge_count": 0}) or {}
+
+
+@router.get("/research-health")
+def research_health() -> dict:
+    """P81 — 결정적 운영 건강 지표(활성/대기/검증누락/지식성장/속도/커버리지/점수). **읽기전용.**"""
+    from jarvis.research_workflow.health_monitor import build_health
+    return _safe(build_health, {"overall_health_score": 0}) or {}
+
+
+@router.get("/continuous-learning")
+def continuous_learning() -> dict:
+    """P82 — 지속 학습 커버리지(각 메모리 채널 축적량). **읽기전용, 새 저장소 없음.**"""
+    from jarvis.research_workflow.continuous_learning import learning_status
+    return _safe(learning_status, {"channels": {}, "total": 0}) or {}
+
+
+def _strategy_metrics(name: str) -> dict:
+    """실험 원장(expt_)에서 전략명 매칭 실행의 수치 지표 재구성(읽기전용)."""
+    from jarvis.experiment_tracking import ledger as el
+    low = (name or "").lower()
+    exp_ids = {e["experiment_id"] for e in el.read_experiments()
+               if low and low in str(e.get("name", "")).lower()}
+    run_ids = {r["run_id"] for r in el.read_runs() if r.get("experiment_id") in exp_ids}
+    metrics: dict = {}
+    for res in el.read_results():
+        if res.get("run_id") in run_ids:
+            try:
+                metrics[res.get("metric")] = float(res.get("value"))
+            except (TypeError, ValueError):
+                pass
+    return metrics
+
+
+@router.get("/research-quality")
+def research_quality(q: str = "") -> dict:
+    """P84 — 연구 품질 점수(결정적 다차원). q=전략명 → 실험 원장에서 지표 재구성해 채점. **읽기전용.**"""
+    def _run():
+        if not (q or "").strip():
+            return {"note": "전략명(q)을 입력하세요.", "is_decision": False}
+        from jarvis.research_workflow.quality_score import score_research
+        metrics = _strategy_metrics(q)
+        return score_research({"strategy_name": q, "metrics": metrics, "source": "ledger"})
+    return _safe(_run, {"note": "quality 사용 불가"}) or {}
+
+
+@router.get("/cross-strategy")
+def cross_strategy() -> dict:
+    """P83 — 전략 간 교차 지능(유사/상관/충돌/공유교훈·리스크). 원장의 전략을 쌍별 비교. **읽기전용.**"""
+    def _run():
+        from jarvis.research_ingestion.ledger import read_ingestions
+        from jarvis.research_workflow.cross_strategy import compare_all
+        names = []
+        for r in read_ingestions():
+            n = r.get("strategy_name")
+            if n and n not in names:
+                names.append(n)
+        strategies = [{"name": n, "metrics": _strategy_metrics(n)} for n in names[:6]]
+        return compare_all(strategies)
+    return _safe(_run, {"pairs": [], "count": 0}) or {}
+
+
+@router.get("/cockpit")
+def cockpit() -> dict:
+    """P85 — Executive Research Cockpit(모든 역량 통합 홈). **READ ONLY. 사람이 모든 결정.**"""
+    from jarvis.research_workflow.cockpit import build_cockpit
+    return _safe(build_cockpit, {"health_score": 0}) or {}

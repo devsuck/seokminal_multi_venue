@@ -764,3 +764,184 @@ def failure_intel(q: str = "") -> dict:
             out["mistake_check"] = eng.mistake_check(q)
         return out
     return _safe(_run, {"failure_intelligence": {}, "memory_graph": {"nodes": [], "edges": []}}) or {}
+
+
+# ══════════════ Research OS Dashboard (P68-71) — 조율 표면. READ ONLY (세션 관리 제외) ══════════════
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+@router.get("/research-workflow")
+def research_workflow() -> dict:
+    """P68 — 연구 워크플로/세션/큐 조율 상태(rwf_ 원장 폴드). **READ ONLY. 사람 결정 필수.**"""
+    def _runs():
+        from jarvis.research_workflow import ledger as wl
+        from jarvis.research_workflow.orchestrator import WorkflowOrchestrator
+        orch = WorkflowOrchestrator()
+        seen, ids = set(), []
+        for e in wl.read_runs():
+            rid = e.get("run_id")
+            if rid and rid not in seen:
+                seen.add(rid)
+                ids.append(rid)
+        out = []
+        for rid in ids[-25:]:
+            st = orch.state(rid)
+            out.append({"run_id": rid, "request": st.request, "current_stage": st.current_stage,
+                        "completed_stages": st.completed_stages, "blocked_stage": st.blocked_stage,
+                        "cancelled": st.cancelled,
+                        "requires_human_decision": st.requires_human_decision,
+                        "execution_log": st.execution_log})
+        return out
+    runs = _safe(_runs, []) or []
+
+    def _sessions():
+        from jarvis.research_workflow.session_manager import ResearchSessionManager
+        return ResearchSessionManager().list_sessions()
+    sessions = _safe(_sessions, []) or []
+
+    def _queue():
+        from jarvis.research_assistant.research_queue import ResearchQueueEngine
+        return ResearchQueueEngine().generate(limit=8).to_dict()
+    queue = _safe(_queue, {"proposals": [], "proposal_count": 0}) or {}
+
+    from jarvis.research_workflow.models import STAGES
+    return {"stages": list(STAGES), "runs": runs, "sessions": sessions, "queue": queue,
+            "counts": {"runs": len(runs), "sessions": len(sessions),
+                       "active_sessions": sum(1 for s in sessions if s.get("state") == "ACTIVE"),
+                       "awaiting_human": sum(1 for r in runs if r.get("requires_human_decision")),
+                       "proposals": queue.get("proposal_count", 0)},
+            "is_advisory": True, "is_decision": False,
+            "disclaimer": ("Research OS workflow — READ ONLY 조율 상태. Human Decision 은 사람만, "
+                           "자동 거래·집행·자본배분 없음.")}
+
+
+@router.get("/decision-memo")
+def decision_memo(q: str = "") -> dict:
+    """P65 — 주제에 대한 Decision Memo(모든 섹션 통합). **자문일 뿐, 결정 아님.**"""
+    def _run():
+        if not (q or "").strip():
+            return {"question": "", "note": "주제를 입력하세요.", "is_advisory": True,
+                    "is_decision": False}
+        from jarvis.research_workflow.decision_support import DecisionSupportEngine
+        return DecisionSupportEngine().build_memo(q, topic=q).to_dict()
+    return _safe(_run, {"note": "decision memo 사용 불가", "is_decision": False}) or {}
+
+
+@router.get("/explainability")
+def explainability(q: str = "") -> dict:
+    """P67/P71 — 결론의 증거 사슬(Experiment→…→Recommendation). **블랙박스 아님, 결정 아님.**"""
+    def _run():
+        if not (q or "").strip():
+            return {"topic": "", "note": "주제를 입력하세요.", "chain": [], "edges": []}
+        from jarvis.research_workflow.explainability import ExplainabilityEngine
+        return ExplainabilityEngine().evidence_chain(q).to_dict()
+    return _safe(_run, {"note": "explainability 사용 불가", "chain": [], "edges": []}) or {}
+
+
+@router.get("/operating-console")
+def operating_console() -> dict:
+    """P70 — 헤지펀드 운영 콘솔(오늘의 연구/기회/리스크/이벤트/노출/페이퍼/세션/추천). **READ ONLY.**"""
+    def _research():
+        from jarvis.research_assistant.engine import ResearchAssistantEngine
+        eng = ResearchAssistantEngine()
+        d = eng.daily_summary()
+        es = eng.experiment_summary()
+        return {"total_records": d.total_records, "active_sources": d.active_sources,
+                "experiment_runs": es.run_count, "results": es.result_count}
+    research = _safe(_research, {}) or {}
+
+    def _opportunities():
+        from jarvis.research_assistant.research_queue import ResearchQueueEngine
+        q = ResearchQueueEngine().generate(limit=6)
+        return [{"name": p.name, "kind": p.kind, "confidence": p.confidence,
+                 "expected_value": p.expected_value, "reason": p.reason}
+                for p in q.proposals]
+    opportunities = _safe(_opportunities, []) or []
+
+    def _risks():
+        from jarvis.research_assistant.engine import ResearchAssistantEngine
+        fi = ResearchAssistantEngine().failure_intelligence()
+        return {"total_failures": fi.total_failures, "top_category": fi.top_category,
+                "by_category": fi.by_category, "lessons": fi.lessons[:5]}
+    risks = _safe(_risks, {}) or {}
+
+    def _events():
+        from jarvis.research_assistant.event_intelligence import MarketEventIntelligence
+        g = MarketEventIntelligence().relationship_graph()
+        return {"node_count": g["node_count"], "edge_count": g["edge_count"],
+                "note": "정적 공급망/기업 관계 참조 그래프 — 이벤트 발생 시 파급 추적."}
+    events = _safe(_events, {}) or {}
+
+    def _paper():
+        from jarvis.paper_execution.engine import portfolio_status
+        ps = portfolio_status()
+        return {"portfolio_value": ps.get("portfolio_value"), "n_positions": ps.get("n_positions"),
+                "pnl_summary": ps.get("pnl_summary")}
+    paper = _safe(_paper, {}) or {}
+
+    def _exposure():
+        from jarvis.paper_execution.ledger import current_positions
+        from jarvis.paper_execution.models import PAPER_CAPITAL
+        pos = list(current_positions().values())
+        gross = sum(abs(float(p.get("market_value", 0.0))) for p in pos)
+        return {"capital": PAPER_CAPITAL, "gross_exposure": round(gross, 2),
+                "exposure_pct": round(gross / PAPER_CAPITAL * 100, 2) if PAPER_CAPITAL else 0.0,
+                "n_positions": len(pos)}
+    exposure = _safe(_exposure, {}) or {}
+
+    def _sessions():
+        from jarvis.research_workflow.session_manager import ResearchSessionManager
+        s = ResearchSessionManager().list_sessions()
+        return {"count": len(s), "active": sum(1 for x in s if x.get("state") == "ACTIVE"),
+                "items": s[:6]}
+    sessions = _safe(_sessions, {"count": 0, "active": 0, "items": []}) or {}
+
+    def _recommendations():
+        # 상위 기회에 대한 협의체 권고(자문). 없으면 빈 목록.
+        if not opportunities:
+            return []
+        from jarvis.research_assistant.council import ResearchCouncilEngine
+        from jarvis.research_assistant.models import extract_topic
+        eng = ResearchCouncilEngine()
+        out = []
+        for opp in opportunities[:2]:
+            topic = extract_topic(opp["name"]) or opp["name"]
+            memo = eng.deliberate(topic)
+            out.append({"topic": topic, "recommendation": memo.recommendation,
+                        "conflicts": len(memo.conflicts)})
+        return out
+    recommendations = _safe(_recommendations, []) or []
+
+    return {"date": _now_iso()[:10], "research": research, "opportunities": opportunities,
+            "risks": risks, "events": events, "paper": paper, "exposure": exposure,
+            "sessions": sessions, "recommendations": recommendations,
+            "is_advisory": True, "is_decision": False,
+            "disclaimer": ("Operating Console — READ ONLY 요약. 분석·추천·요약만, 자동 거래·집행·"
+                           "자본배분 없음. 모든 결정은 사람.")}
+
+
+@router.post("/session/{action}")
+def session_action(action: str, session_id: str = "", goal: str = "") -> dict:
+    """P68 — 세션 관리(create/pause/resume/archive). **유일한 변경 작업 — rwf_sessions 원장에만 append.**
+
+    거래·집행·자본배분 없음. append-only 이벤트 소싱. 사람 조작.
+    """
+    def _run():
+        from jarvis.research_workflow.session_manager import ResearchSessionManager
+        mgr = ResearchSessionManager()
+        now = _now_iso()
+        act = (action or "").lower()
+        if act == "create":
+            return mgr.create_session(goal or "untitled research", now=now, commit=True).to_dict()
+        if not session_id:
+            return {"error": "session_id required"}
+        if act == "pause":
+            return mgr.pause_session(session_id, now=now, commit=True).to_dict()
+        if act == "resume":
+            return mgr.resume_session(session_id, now=now, commit=True).to_dict()
+        if act == "archive":
+            return mgr.archive_session(session_id, now=now, commit=True).to_dict()
+        return {"error": f"unknown action {action}"}
+    return _safe(_run, {"error": "session action failed"}) or {}

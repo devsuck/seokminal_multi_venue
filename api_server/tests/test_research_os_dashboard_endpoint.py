@@ -285,3 +285,41 @@ def test_agent_workspace_endpoint():
     assert w["active_research"]["pipeline"] == ["Director", "Analyst", "StrategyResearcher",
                                                 "Critic", "Writer"]
     assert w["is_decision"] is False
+
+
+# ── P131-140 Research Knowledge Intelligence ──
+def test_memory_audit_endpoint():
+    from api_server.console_api import memory_audit_endpoint
+    a = memory_audit_endpoint()
+    assert len(a["entity_types"]) == 7 and a["memory_stores"]
+
+
+def test_knowledge_graph_endpoint():
+    from api_server.console_api import knowledge_graph_endpoint
+    g = knowledge_graph_endpoint()
+    assert len(g["research_chain"]) == 6
+
+
+def test_semantic_recall_endpoint():
+    from api_server.console_api import semantic_recall_endpoint
+    p = semantic_recall_endpoint("Does momentum work?")
+    assert "relevant_experiments" in p and "similar_failures" in p
+
+
+def test_knowledge_health_endpoint():
+    from api_server.console_api import knowledge_health_endpoint
+    assert knowledge_health_endpoint()["grade"] in ("HEALTHY", "FAIR", "DEGRADED", "EMPTY")
+
+
+def test_brain_validation_endpoint():
+    from api_server.console_api import brain_validation_endpoint
+    v = brain_validation_endpoint()
+    assert v["validated"] is True and v["safety"]["safe"] is True
+
+
+def test_research_brain_endpoint():
+    from api_server.console_api import research_brain
+    rb = research_brain()
+    assert set(rb) >= {"knowledge_graph", "past_research", "failure_patterns", "strategy_memory",
+                       "company_memory", "conflicts", "lessons", "knowledge_health"}
+    assert rb["is_decision"] is False

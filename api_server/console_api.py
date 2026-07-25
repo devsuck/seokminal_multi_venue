@@ -1408,3 +1408,97 @@ def agent_workspace(objective: str = "", company: str = "") -> dict:
             "disclaimer": ("Research Agents — READ ONLY. Director→Analyst→Strategy→Critic→Writer. "
                            "분석 전용 에이전트(트레이딩/집행/결정 아님). 기존 엔진 재사용, 새 메모리 없음. "
                            "자동 거래·집행·자본배분 없음. 사람이 모든 투자 결정.")}
+
+
+# ══════════════ Research Knowledge Intelligence Layer (P131-140) — READ ONLY, KNOWLEDGE ONLY ══════════════
+@router.get("/memory-audit")
+def memory_audit_endpoint() -> dict:
+    """P131 — 메모리 감사(rmi_/memory_graph/recall/timeline/kg): 저장소·역량·누락연결. READ ONLY."""
+    from jarvis.research_workflow.memory_audit import audit_memory
+    return _safe(audit_memory, {"memory_stores": []}) or {}
+
+
+@router.get("/knowledge-graph")
+def knowledge_graph_endpoint(topic: str = "") -> dict:
+    """P132 — 연구 지식 그래프(질문→가설→실험→결과→실패/성공→교훈). 기존 그래프 확장. READ ONLY."""
+    from jarvis.research_workflow.knowledge_graph_upgrade import build_research_knowledge_graph
+    return _safe(lambda: build_research_knowledge_graph(topic), {"nodes": [], "edges": []}) or {}
+
+
+@router.get("/semantic-recall")
+def semantic_recall_endpoint(q: str = "") -> dict:
+    """P133 — 질문 → Research Context Package(경험·유사실패·과거결론·모순증거). READ ONLY."""
+    def _run():
+        if not (q or "").strip():
+            return {"note": "질문(q)을 입력하세요.", "relevant_experiments": []}
+        from jarvis.research_workflow.semantic_recall import recall_context
+        return recall_context(q)
+    return _safe(_run, {"relevant_experiments": []}) or {}
+
+
+@router.get("/knowledge-conflicts")
+def knowledge_conflicts_endpoint(topic: str = "") -> dict:
+    """P135 — 지식 모순(works vs fails) Conflict Report. READ ONLY."""
+    from jarvis.research_workflow.conflict_detection import detect_conflicts
+    return _safe(lambda: detect_conflicts(topic=topic), {"conflicts": [], "count": 0}) or {}
+
+
+@router.get("/knowledge-health")
+def knowledge_health_endpoint() -> dict:
+    """P139 — Knowledge Health Score(중복·노후·모순·근거누락). READ ONLY."""
+    from jarvis.research_workflow.knowledge_quality import build_knowledge_health
+    return _safe(build_knowledge_health, {"health_score": 0, "grade": "EMPTY"}) or {}
+
+
+@router.get("/brain-validation")
+def brain_validation_endpoint() -> dict:
+    """P140 — 연구 두뇌 검증(회수·실패재사용·중복없음·에이전트지식·대시보드) + 안전. READ ONLY."""
+    from jarvis.research_workflow.brain_validation import validate_brain
+    return _safe(validate_brain, {"validated": False, "checks": []}) or {}
+
+
+@router.get("/research-brain")
+def research_brain(topic: str = "") -> dict:
+    """P138 통합 — Research Brain Workspace: knowledge graph·past research·failure patterns·strategy/company
+    memory·conflicts·lessons. **READ ONLY. 지식 시스템 전용, 자동 거래·집행 없음.**"""
+    graph = _safe(lambda: __import__("jarvis.research_workflow.knowledge_graph_upgrade",
+                                     fromlist=["build_research_knowledge_graph"])
+                  .build_research_knowledge_graph(topic, limit=80), {"nodes": [], "edges": []}) or {}
+    audit = _safe(lambda: __import__("jarvis.research_workflow.memory_audit",
+                                     fromlist=["audit_memory"]).audit_memory(), {}) or {}
+    conflicts = _safe(lambda: __import__("jarvis.research_workflow.conflict_detection",
+                                         fromlist=["detect_conflicts"]).detect_conflicts(topic=topic),
+                      {"conflicts": []}) or {}
+    health = _safe(lambda: __import__("jarvis.research_workflow.knowledge_quality",
+                                      fromlist=["build_knowledge_health"]).build_knowledge_health(), {}) or {}
+    # 실패 패턴 — assistant.failure_intelligence 재사용
+    fails = _safe(lambda: _failure_patterns(), {"by_category": {}, "top_category": None})
+    # 과거 연구/교훈/전략·기업 메모리 — 그래프 노드에서 파생
+    ntypes = graph.get("node_types", {})
+
+    def _nodes(kind):
+        return [n for n in graph.get("nodes", []) if n["type"] == kind][:20]
+
+    return {"knowledge_graph": {"nodes": graph.get("nodes", []), "edges": graph.get("edges", []),
+                                "node_count": graph.get("node_count", 0),
+                                "node_types": ntypes, "research_chain": graph.get("research_chain", [])},
+            "past_research": _nodes("Experiment") + _nodes("Question"),
+            "failure_patterns": fails,
+            "strategy_memory": _nodes("Strategy"),
+            "company_memory": _nodes("Sector") + _nodes("MacroEvent"),
+            "conflicts": conflicts.get("conflicts", []),
+            "lessons": _nodes("Lesson"),
+            "knowledge_health": {"health_score": health.get("health_score"), "grade": health.get("grade"),
+                                 "issues": health.get("issues", {})},
+            "entity_counts": audit.get("entity_counts", {}),
+            "is_advisory": True, "is_decision": False,
+            "disclaimer": ("Research Brain — READ ONLY. 질문→회수→분석→충돌검사→결과→교훈. 지식 시스템 전용. "
+                           "기존 rmi_/그래프/recall 재사용, 새 DB/원장/메모리 없음. 사람이 모든 결정.")}
+
+
+def _failure_patterns() -> dict:
+    from jarvis.research_assistant.engine import ResearchAssistantEngine
+    fi = ResearchAssistantEngine().failure_intelligence()
+    d = fi.to_dict() if hasattr(fi, "to_dict") else dict(fi)
+    return {"total_failures": d.get("total_failures", 0), "by_category": d.get("by_category", {}),
+            "top_category": d.get("top_category"), "lessons": d.get("lessons", [])[:8]}

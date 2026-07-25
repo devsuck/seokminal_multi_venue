@@ -52,6 +52,15 @@ from jarvis.research_workflow.research_reviewer import ResearchReviewer  # noqa:
 from jarvis.research_workflow.research_writer import ResearchWriter  # noqa: F401
 from jarvis.research_workflow.multi_agent_workflow import run as run_agent_workflow  # noqa: F401
 from jarvis.research_workflow.agent_validation import validate_agents, agent_safety  # noqa: F401
+from jarvis.research_workflow.memory_audit import audit_memory  # noqa: F401
+from jarvis.research_workflow.knowledge_graph_upgrade import build_research_knowledge_graph  # noqa: F401
+from jarvis.research_workflow.semantic_recall import recall_context  # noqa: F401
+from jarvis.research_workflow.research_similarity import ResearchSimilarity, compare as research_compare  # noqa: F401
+from jarvis.research_workflow.conflict_detection import detect_conflicts  # noqa: F401
+from jarvis.research_workflow.learning_engine import ResearchLearningEngine, learn as learn_lesson  # noqa: F401
+from jarvis.research_workflow.agent_memory import knowledge_informed_research  # noqa: F401
+from jarvis.research_workflow.knowledge_quality import build_knowledge_health  # noqa: F401
+from jarvis.research_workflow.brain_validation import validate_brain, brain_safety  # noqa: F401
 from jarvis.research_workflow.earnings_intelligence import analyze_earnings  # noqa: F401
 from jarvis.research_workflow.insider_flow import analyze_transaction  # noqa: F401
 from jarvis.research_workflow.market_data_adapter import MarketEvent, normalize  # noqa: F401

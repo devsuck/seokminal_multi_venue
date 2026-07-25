@@ -1141,3 +1141,73 @@ def market_cockpit() -> dict:
     """P95 — Jarvis Investment Research OS v1.0 (시장상태→기회→실험→검증→리스크→포트폴리오→결정큐→지식). **READ ONLY.**"""
     from jarvis.research_workflow.market_cockpit import build_market_cockpit
     return _safe(lambda: build_market_cockpit({}, {}), {"market_state": {"regime": "UNKNOWN"}}) or {}
+
+
+# ══════════════ Live Market Intelligence Integration (P96-100) — DATA→EVENT→CONTEXT. READ ONLY ══════════════
+@router.get("/news-intel")
+def news_intel(q: str = "", entity: str = "") -> dict:
+    """P97 — 뉴스 헤드라인 → 연구 이벤트(유형·영향기업·섹터·관련성·과거유사). **읽기전용, 신호 아님.**"""
+    def _run():
+        if not (q or "").strip():
+            return {"note": "헤드라인(q)을 입력하세요.", "event_type": "", "affected_companies": []}
+        from jarvis.research_workflow.news_intelligence import analyze_headline
+        return analyze_headline(q, entity=entity)
+    return _safe(_run, {"note": "news intel 사용 불가"}) or {}
+
+
+@router.get("/supply-chain-impact")
+def supply_chain_impact(q: str = "", entity: str = "") -> dict:
+    """P99 — 이벤트 → 공급망 영향 전파(공급자/고객/경쟁사/섹터·경로·불확실성). 기존 그래프 재사용. **읽기전용.**"""
+    def _run():
+        if not (q or "").strip() and not entity:
+            return {"origin": "", "affected_entities": [], "note": "이벤트/개체(q 또는 entity)를 입력하세요."}
+        from jarvis.research_workflow.supply_chain_impact import propagate
+        return propagate({"text": q, "entity": entity})
+    return _safe(_run, {"origin": "", "affected_entities": []}) or {}
+
+
+@router.get("/earnings-intel")
+def earnings_intel() -> dict:
+    """P100 — 실적 인텔리전스 프레임(기대 vs 실제·서프라이즈·전략영향). 입력 없으면 스키마 안내. **읽기전용.**"""
+    return {"note": "실적 이벤트는 데이터 소스 연결 시 채워집니다(어댑터 준비 완료).",
+            "fields": ["company", "period", "expected_metrics", "actual_metrics", "surprise",
+                       "historical_comparison", "related_strategy_impact"],
+            "is_advisory": True, "is_decision": False}
+
+
+@router.get("/market-intel-feed")
+def market_intel_feed(q: str = "", entity: str = "") -> dict:
+    """P96-100 — 통합 라이브 이벤트 피드(시장/뉴스/내부자/공급망) + 시장 컨텍스트(레짐). **READ ONLY.**
+
+    q(헤드라인/이벤트) 있으면 뉴스·공급망 라이브 데모. 시장 컨텍스트는 항상. 데이터 소스 연결 전엔 정직하게 빈 피드.
+    """
+    feed = []
+    impact = {}
+    if (q or "").strip() or entity:
+        def _news():
+            from jarvis.research_workflow.news_intelligence import analyze_headline
+            n = analyze_headline(q, entity=entity)
+            return {"category": "NEWS", "event_type": n["event_type"], "label": q or entity,
+                    "affected": n["affected_companies"][:4], "relevance": n["relevance_score"]}
+        feed.append(_safe(_news, None))
+
+        def _supply():
+            from jarvis.research_workflow.supply_chain_impact import propagate
+            r = propagate({"text": q, "entity": entity})
+            return {"origin": r.get("origin"), "affected_entities": r.get("affected_entities", []),
+                    "customers": r.get("customers", []), "direct_suppliers": r.get("direct_suppliers", [])}
+        impact = _safe(_supply, {}) or {}
+
+    market_context = _safe(lambda: __import__("jarvis.research_workflow.regime", fromlist=["detect_regime"]).detect_regime({}), {"regime": "UNKNOWN"})
+    opportunities = _safe(lambda: __import__("jarvis.research_workflow.opportunity_discovery",
+                                             fromlist=["discover"]).discover({}), {"opportunities": []})
+    return {"query": q, "live_event_feed": [f for f in feed if f], "impact_map": impact,
+            "research_opportunities": opportunities.get("opportunities", []),
+            "market_context": {"regime": market_context.get("regime"),
+                               "labels": market_context.get("labels", []),
+                               "recommended_research": market_context.get("recommended_research", []),
+                               "avoid": market_context.get("avoid", [])},
+            "adapters": ["market_data", "news", "insider_flow", "supply_chain", "earnings"],
+            "is_advisory": True, "is_decision": False,
+            "disclaimer": ("Market Intelligence Feed — READ ONLY. 데이터→이벤트→연구컨텍스트→사람검토. "
+                           "데이터 소스 미연결 시 빈 피드(정직). 자동 거래·집행·자본배분 없음. 사람이 모든 결정.")}

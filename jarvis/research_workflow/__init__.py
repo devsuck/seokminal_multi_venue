@@ -24,6 +24,12 @@ from jarvis.research_workflow.autonomous_loop import (  # noqa: F401
     LoopState,
 )
 from jarvis.research_workflow.alt_data import catalog as alt_data_catalog  # noqa: F401
+from jarvis.research_workflow.earnings_intelligence import analyze_earnings  # noqa: F401
+from jarvis.research_workflow.insider_flow import analyze_transaction  # noqa: F401
+from jarvis.research_workflow.market_data_adapter import MarketEvent, normalize  # noqa: F401
+from jarvis.research_workflow.market_data_adapter import ingest as ingest_market_data  # noqa: F401
+from jarvis.research_workflow.news_intelligence import analyze_headline  # noqa: F401
+from jarvis.research_workflow.supply_chain_impact import propagate as supply_chain_propagate  # noqa: F401
 from jarvis.research_workflow.alt_data import observe as alt_data_observe  # noqa: F401
 from jarvis.research_workflow.cockpit import build_cockpit  # noqa: F401
 from jarvis.research_workflow.council_evolution import deliberate as council_deliberate  # noqa: F401

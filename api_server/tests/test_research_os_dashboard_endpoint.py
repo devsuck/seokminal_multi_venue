@@ -163,3 +163,31 @@ def test_market_cockpit_shape():
     assert set(c) >= {"market_state", "research_opportunities", "active_experiments",
                       "validation_status", "risk", "portfolio_context", "decision_queue", "knowledge_growth"}
     assert c["is_decision"] is False
+
+
+# ── Live Market Intelligence (P96-100) ──
+def test_news_intel_shape():
+    from api_server.console_api import news_intel
+    n = news_intel("TSMC supplier expands production", "TSMC")
+    assert n["event_type"] == "SUPPLY_CHAIN_CHANGE"
+    assert n.get("is_trade_signal", False) is False
+
+
+def test_supply_chain_impact_shape():
+    from api_server.console_api import supply_chain_impact
+    r = supply_chain_impact("TSMC production issue", "TSMC")
+    assert r["origin"] == "TSMC"
+    assert len(r["affected_entities"]) >= 3
+
+
+def test_market_intel_feed_shape():
+    from api_server.console_api import market_intel_feed
+    f = market_intel_feed("TSMC supplier expands", "TSMC")
+    assert set(f) >= {"live_event_feed", "impact_map", "research_opportunities", "market_context", "adapters"}
+    assert f["is_decision"] is False
+    assert len(f["adapters"]) == 5
+
+
+def test_earnings_intel_fields():
+    from api_server.console_api import earnings_intel
+    assert len(earnings_intel()["fields"]) == 7

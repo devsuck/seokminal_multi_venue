@@ -5,6 +5,11 @@ recall/failure_intelligence/perspectives 가 실데이터로 채워진다. **새
 API 재사용(Integration over Expansion).** 결정적 결과 판정 + 9종 실패 자동분류 + 멱등. 거래·집행·배포 없음.
 기존 P1~P52 불변. 원장 ring_ 접두사(수집 감사만).
 """
+from jarvis.research_ingestion.backtest_adapter import (  # noqa: F401
+    adapt,
+    ingest_backtest,
+    ingest_backtests,
+)
 from jarvis.research_ingestion.engine import ResearchIngestionEngine  # noqa: F401
 from jarvis.research_ingestion.models import (  # noqa: F401
     OUTCOMES,

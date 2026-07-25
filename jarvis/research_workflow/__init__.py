@@ -34,6 +34,15 @@ from jarvis.research_workflow.quality_monitor import ResearchQualityMonitor, eva
 from jarvis.research_workflow.ops_events import ops_events as research_ops_events  # noqa: F401
 from jarvis.research_workflow.research_audit import audit_strategy, audit_coverage  # noqa: F401
 from jarvis.research_workflow.release_validation import validate_release, safety_check  # noqa: F401
+from jarvis.research_workflow.providers import Provider, provider_for, provider_registry  # noqa: F401
+from jarvis.research_workflow.market_pipeline import run as run_market_pipeline  # noqa: F401
+from jarvis.research_workflow.news_pipeline import run as run_news_pipeline  # noqa: F401
+from jarvis.research_workflow.fundamental_pipeline import run as run_fundamental_pipeline  # noqa: F401
+from jarvis.research_workflow.ownership_pipeline import run as run_ownership_pipeline  # noqa: F401
+from jarvis.research_workflow.research_feed import ResearchFeedPipeline, collect as collect_research_feed  # noqa: F401
+from jarvis.research_workflow.data_quality import DataQualityMonitor, build_data_health  # noqa: F401
+from jarvis.research_workflow.live_intelligence import build_live_intelligence  # noqa: F401
+from jarvis.research_workflow.operational_validation import validate_operations, architecture_safety  # noqa: F401
 from jarvis.research_workflow.earnings_intelligence import analyze_earnings  # noqa: F401
 from jarvis.research_workflow.insider_flow import analyze_transaction  # noqa: F401
 from jarvis.research_workflow.market_data_adapter import MarketEvent, normalize  # noqa: F401

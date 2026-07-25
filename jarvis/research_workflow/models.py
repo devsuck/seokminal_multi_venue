@@ -88,6 +88,37 @@ def session_event_id(sess_id, kind, seq) -> str:
     return _id("RSESE", sess_id, kind, seq)
 
 
+# ── P72-76 자율 연구 런타임 ID ──
+def loop_id(idea, seed="") -> str:
+    return _id("RLOOP", idea, seed)
+
+
+def loop_event_id(lid, stage, seq) -> str:
+    return _id("RLOOPE", lid, stage, seq)
+
+
+def hypothesis_id(statement) -> str:
+    return _id("RHYP", statement)
+
+
+def spec_id(hypothesis_id_, seq=0) -> str:
+    return _id("RSPEC", hypothesis_id_, seq)
+
+
+# 자율 루프 단계(문서 파이프라인 P72)
+L_IDEA = "IDEA"
+L_HYPOTHESIS = "HYPOTHESIS"
+L_DESIGN = "EXPERIMENT_DESIGN"
+L_BACKTEST = "BACKTEST"
+L_VALIDATION = "VALIDATION"
+L_FAILURE = "FAILURE_ANALYSIS"
+L_LESSON = "LESSON"
+L_UPDATE = "UPDATED_HYPOTHESIS"
+L_NEXT = "NEXT_EXPERIMENT"
+LOOP_STAGES = (L_IDEA, L_HYPOTHESIS, L_DESIGN, L_BACKTEST, L_VALIDATION, L_FAILURE,
+               L_LESSON, L_UPDATE, L_NEXT)
+
+
 @dataclass(frozen=True)
 class StageEvent:
     event_id: str

@@ -945,3 +945,58 @@ def session_action(action: str, session_id: str = "", goal: str = "") -> dict:
             return mgr.archive_session(session_id, now=now, commit=True).to_dict()
         return {"error": f"unknown action {action}"}
     return _safe(_run, {"error": "session action failed"}) or {}
+
+
+# ══════════════ Autonomous Research Runtime (P72-76) — 조율 표면. READ ONLY ══════════════
+@router.get("/autonomous-runtime")
+def autonomous_runtime(q: str = "") -> dict:
+    """P72-76 — 자율 연구 런타임(가설·플랜·비판·우선순위 + 루프 상태). **제안/비판/우선순위만, 실행/결정 없음.**
+
+    q(주제) 있으면 해당 주제로 가설 생성→플랜→비판→우선순위 미리보기. rwf_loops 원장의 루프 상태도 집계.
+    어떤 것도 변경/집행하지 않는다.
+    """
+    def _preview():
+        if not (q or "").strip():
+            return {}
+        from jarvis.research_workflow.experiment_planner import ExperimentPlanner
+        from jarvis.research_workflow.hypothesis_generator import HypothesisGenerator
+        from jarvis.research_workflow.research_critic import ResearchCritic
+        from jarvis.research_workflow.research_prioritizer import ResearchPrioritizer
+        hyps = HypothesisGenerator().generate(topic=q, limit=6)
+        ranked = ResearchPrioritizer().prioritize([h.to_dict() for h in hyps])
+        top = next((h for h in hyps if h.hypothesis_id == ranked.recommended.get("hypothesis_id")),
+                   hyps[0] if hyps else None)
+        spec = ExperimentPlanner().plan(top).to_dict() if top else {}
+        critique = ResearchCritic().critique(spec).to_dict() if spec else {}
+        return {"hypotheses": [h.to_dict() for h in hyps],
+                "ranked": ranked.to_dict(), "recommended_spec": spec, "critique": critique}
+    preview = _safe(_preview, {}) or {}
+
+    def _loops():
+        from jarvis.research_workflow import ledger as wl
+        from jarvis.research_workflow.autonomous_loop import AutonomousResearchLoop
+        loop = AutonomousResearchLoop()
+        seen, ids = set(), []
+        for e in wl.read_loops():
+            lid = e.get("loop_id")
+            if lid and lid not in seen:
+                seen.add(lid)
+                ids.append(lid)
+        out = []
+        for lid in ids[-15:]:
+            st = loop.state(lid)
+            out.append({"loop_id": lid, "idea": st.idea, "current_stage": st.current_stage,
+                        "completed_stages": st.completed_stages, "blocked_stage": st.blocked_stage,
+                        "cancelled": st.cancelled, "paused": st.paused,
+                        "requires_human_checkpoint": st.requires_human_checkpoint,
+                        "audit_trail": st.audit_trail})
+        return out
+    loops = _safe(_loops, []) or []
+
+    from jarvis.research_workflow.models import LOOP_STAGES
+    return {"topic": q, "loop_stages": list(LOOP_STAGES), "preview": preview, "loops": loops,
+            "counts": {"loops": len(loops),
+                       "awaiting_checkpoint": sum(1 for lp in loops if lp.get("requires_human_checkpoint"))},
+            "is_advisory": True, "is_decision": False,
+            "disclaimer": ("Autonomous Research Runtime — 제안·비판·우선순위·학습만. 거래·집행·자본배분·"
+                           "배포 승인 없음. 사람이 모든 투자 결정을 한다.")}

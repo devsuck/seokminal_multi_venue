@@ -18,4 +18,13 @@ from jarvis.research_workflow.orchestrator import (  # noqa: F401
     WorkflowCancelledError,
     WorkflowOrchestrator,
 )
+from jarvis.research_workflow.autonomous_loop import (  # noqa: F401
+    AutonomousResearchLoop,
+    LoopCancelledError,
+    LoopState,
+)
+from jarvis.research_workflow.experiment_planner import ExperimentPlanner, ExperimentSpec  # noqa: F401
+from jarvis.research_workflow.hypothesis_generator import Hypothesis, HypothesisGenerator  # noqa: F401
+from jarvis.research_workflow.research_critic import CritiqueReport, ResearchCritic  # noqa: F401
+from jarvis.research_workflow.research_prioritizer import RankedQueue, ResearchPrioritizer  # noqa: F401
 from jarvis.research_workflow.session_manager import ResearchSessionManager  # noqa: F401

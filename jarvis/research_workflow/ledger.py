@@ -12,8 +12,9 @@ from jarvis.config import state_path
 
 RUNS = ("rwf_runs.jsonl", "event_id")          # 워크플로 단계 이벤트(event-sourced)
 SESSIONS = ("rwf_sessions.jsonl", "event_id")  # 연구 세션 이벤트(event-sourced)
+LOOPS = ("rwf_loops.jsonl", "event_id")        # 자율 연구 루프 이터레이션(event-sourced, P72)
 
-ALL_LEDGERS = (RUNS, SESSIONS)
+ALL_LEDGERS = (RUNS, SESSIONS, LOOPS)
 
 
 def _append(filename, record) -> None:
@@ -77,3 +78,20 @@ def sessions_head():
 
 def session_events(session_id) -> list[dict]:
     return [r for r in read_sessions() if r.get("session_id") == session_id]
+
+
+# ── loops (P72 자율 연구 루프) ──
+def append_loop(rec) -> None:
+    _append(LOOPS[0], rec)
+
+
+def read_loops() -> list[dict]:
+    return read_jsonl(LOOPS[0])
+
+
+def loops_head():
+    return _head(LOOPS[0])
+
+
+def loop_events(loop_id) -> list[dict]:
+    return [r for r in read_loops() if r.get("loop_id") == loop_id]

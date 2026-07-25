@@ -744,3 +744,23 @@ def assistant(q: str = "") -> dict:
         ans["suggestions"] = suggestions
         return ans
     return _safe(_run, {"intent": "error", "answer": "assistant 사용 불가", "suggestions": []}) or {}
+
+
+# ── Failure Intelligence + Perspectives + Memory Graph (READ ONLY) ──
+@router.get("/failure-intel")
+def failure_intel(q: str = "") -> dict:
+    """실패 지능(9종 분류) + 다관점 비평(Critic 포함) + 리서치 메모리 그래프. **분석만, 결정/집행 없음.**
+
+    q 있으면 그 주제로 perspectives·mistake_check 도 포함. 기존 원장 READ ONLY.
+    """
+    def _run():
+        from jarvis.research_assistant.engine import ResearchAssistantEngine
+        eng = ResearchAssistantEngine()
+        out = {"failure_intelligence": eng.failure_intelligence().to_dict(),
+               "memory_graph": eng.memory_graph(),
+               "is_advisory": True, "is_decision": False}
+        if (q or "").strip():
+            out["perspectives"] = eng.perspectives(q)
+            out["mistake_check"] = eng.mistake_check(q)
+        return out
+    return _safe(_run, {"failure_intelligence": {}, "memory_graph": {"nodes": [], "edges": []}}) or {}

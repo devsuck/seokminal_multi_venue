@@ -143,6 +143,8 @@ _STOPWORDS = frozenset({
     "on", "in", "of", "to", "for", "our", "us", "me", "you", "it", "any", "some",
     "예전에", "해봤어", "해봤", "했어", "했나", "왜", "실패", "실패했어", "이번", "주에", "최근", "다음",
     "뭘", "봐야", "볼까", "우리", "이거", "이번주", "무슨", "일이", "있었어", "배운", "지식", "관련",
+    "perspective", "perspectives", "opinion", "opinions", "critique", "view", "views", "give",
+    "관점", "비평", "다각도", "시각", "give me", "mistake", "mistakes",
 })
 
 

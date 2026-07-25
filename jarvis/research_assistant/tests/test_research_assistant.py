@@ -953,3 +953,85 @@ def test_cli_mistake(tmp_path, monkeypatch, capsys):
     rc, out = _cli(["mistake", "--topic", "momentum"], tmp_path, monkeypatch, capsys)
     assert rc == 0
     assert "made_this_mistake" in out
+
+
+# ──────────────────────── 다관점 비평(Critic) ────────────────────────
+def test_perspectives_lenses(eng):
+    p = eng.perspectives("momentum")
+    lenses = {l["lens"] for l in p["lenses"]}
+    assert lenses == {"Quant", "Risk", "Macro", "Supply", "News", "Critic"}
+
+
+def test_perspectives_stances_valid(eng):
+    p = eng.perspectives("momentum")
+    for l in p["lenses"]:
+        assert l["stance"] in ("SUPPORT", "CAUTION", "OPPOSE", "NEUTRAL", "INFO")
+
+
+def test_perspectives_critic_flags_past_failure(eng):
+    # DATA: failures with "momentum instability" x3 → Critic OPPOSE
+    p = eng.perspectives("momentum")
+    critic = next(l for l in p["lenses"] if l["lens"] == "Critic")
+    assert critic["stance"] in ("OPPOSE", "CAUTION")
+
+
+def test_perspectives_requires_human(eng):
+    p = eng.perspectives("momentum")
+    assert p["requires_human_judgment"] is True
+    assert p["is_decision"] is False
+
+
+def test_perspectives_deterministic(eng):
+    assert eng.perspectives("momentum") == eng.perspectives("momentum")
+
+
+def test_perspectives_empty_topic(eng):
+    p = eng.perspectives("")
+    assert len(p["lenses"]) == 6
+
+
+def test_ask_perspectives_intent(eng):
+    a = eng.ask("give me perspectives on momentum")
+    assert a["intent"] == "perspectives"
+
+
+# ──────────────────────── 메모리 그래프(연결) ────────────────────────
+def test_memory_graph_shape(eng):
+    g = eng.memory_graph()
+    assert "nodes" in g and "edges" in g
+    assert g["node_count"] == len(g["nodes"])
+
+
+def test_memory_graph_experiment_to_category(eng):
+    # 실패 레코드 → EXPERIMENT 노드 + CATEGORY 노드 + failed_as 엣지
+    g = eng.memory_graph()
+    types = {n["type"] for n in g["nodes"]}
+    assert "CATEGORY" in types
+    assert any(e["kind"] == "failed_as" for e in g["edges"])
+
+
+def test_memory_graph_category_to_lesson(eng):
+    g = eng.memory_graph()
+    assert any(e["kind"] == "lesson" for e in g["edges"])
+
+
+def test_memory_graph_deterministic(eng):
+    assert eng.memory_graph() == eng.memory_graph()
+
+
+def test_memory_graph_no_write(eng):
+    eng.perspectives("momentum")
+    eng.memory_graph()
+    assert ledger.read_reports() == [] and ledger.read_notes() == []
+
+
+def test_cli_perspectives(tmp_path, monkeypatch, capsys):
+    rc, out = _cli(["perspectives", "--topic", "momentum"], tmp_path, monkeypatch, capsys)
+    assert rc == 0
+    assert "lenses" in out and "conclusion" in out
+
+
+def test_cli_graph(tmp_path, monkeypatch, capsys):
+    rc, out = _cli(["graph"], tmp_path, monkeypatch, capsys)
+    assert rc == 0
+    assert "nodes" in out

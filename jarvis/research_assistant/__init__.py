@@ -6,7 +6,21 @@ ASSISTANT ANALYZES · DOES NOT DECIDE / APPROVE / EXECUTE. execution/broker/live
 execute()/trade()/deploy()/allocate()/approve()/decide() 를 노출하지 않는다. 결정적·불변·해시체인. 산출 스냅샷은
 자체 ras_ 원장에만 append. 기존 P1~P43 불변.
 """
+from jarvis.research_assistant.council import (  # noqa: F401
+    CouncilMemo,
+    ResearchCouncilEngine,
+)
 from jarvis.research_assistant.engine import ResearchAssistantEngine  # noqa: F401
+from jarvis.research_assistant.event_intelligence import (  # noqa: F401
+    DEFAULT_RELATIONSHIPS,
+    EventImpact,
+    MarketEventIntelligence,
+)
+from jarvis.research_assistant.research_queue import (  # noqa: F401
+    ResearchProposal,
+    ResearchQueue,
+    ResearchQueueEngine,
+)
 from jarvis.research_assistant.models import (  # noqa: F401
     SOURCES,
     AdvisoryNoteRecord,

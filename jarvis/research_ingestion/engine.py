@@ -64,9 +64,16 @@ class ResearchIngestionEngine:
     def validate(self, backtest: dict) -> dict:
         return M.validate_backtest(backtest)
 
-    def ingest(self, backtest: dict, now="", *, commit=False, strict=False) -> IngestionResult:
-        """백테스트 1건 수집. 기존 원장에 기록 + 결과 판정 + 실패 자동분류. 멱등."""
+    def ingest(self, backtest: dict, now="", *, commit=False, strict=False,
+               provenance=None) -> IngestionResult:
+        """백테스트 1건 수집. 기존 원장에 기록 + 결과 판정 + 실패 자동분류. 멱등.
+
+        provenance(선택): {source_type, source_file, import_timestamp} — **backtest_hash 에 포함되지
+        않는다**(연구 내용만 해시 → 재수집·재임포트는 파일명·시각과 무관하게 no-op). 감사·추적용으로만
+        파라미터·수집 원장에 기록된다(P55 이력 백필).
+        """
         bt = backtest or {}
+        prov = provenance or {}
         v = M.validate_backtest(bt)
         if strict and not v["ok"]:
             raise SchemaError(f"필수 필드 누락: {v['missing_fields']}")
@@ -113,6 +120,10 @@ class ResearchIngestionEngine:
             "features": ", ".join(bt.get("features", []) or []),
             "entry_rules": bt.get("entry_rules", ""), "exit_rules": bt.get("exit_rules", ""),
             "risk_rules": bt.get("risk_rules", ""), "source": bt.get("source", ""),
+            # provenance(추적성) — backtest_hash 에 미포함. 이력 백필 시에만 값 존재.
+            "source_type": prov.get("source_type", ""),
+            "source_file": prov.get("source_file", ""),
+            "import_timestamp": prov.get("import_timestamp", "") or (now if prov else ""),
         }
         pcount = 0
         for k, val in params.items():
@@ -160,6 +171,8 @@ class ResearchIngestionEngine:
             experiment_id=experiment.experiment_id, run_id=run.run_id, outcome=outcome,
             failure_category=category, validation_complete=v["validation_complete"],
             metric_count=rcount, source=str(bt.get("source", "")), created_at=now,
+            source_type=str(prov.get("source_type", "")),
+            source_file=str(prov.get("source_file", "")),
             input_hash=input_digest(name, bt_hash), previous_hash=GENESIS).to_dict()
         rec["record_hash"] = content_hash(rec)
         if commit and not ledger.ingestion_exists(iid):
@@ -184,10 +197,14 @@ class ResearchIngestionEngine:
         rows = ledger.read_ingestions()
         by_out: dict = {}
         by_cat: dict = {}
+        by_src: dict = {}
         for r in rows:
             by_out[r.get("outcome")] = by_out.get(r.get("outcome"), 0) + 1
             if r.get("failure_category"):
                 by_cat[r["failure_category"]] = by_cat.get(r["failure_category"], 0) + 1
+            st = r.get("source_type") or "live"
+            by_src[st] = by_src.get(st, 0) + 1
         return IngestionSummary(timestamp=now, ingestion_count=len(rows),
                                 by_outcome=dict(sorted(by_out.items())),
-                                by_failure_category=dict(sorted(by_cat.items())))
+                                by_failure_category=dict(sorted(by_cat.items())),
+                                by_source_type=dict(sorted(by_src.items())))

@@ -163,6 +163,8 @@ class IngestionRecord:
     metric_count: int
     source: str
     created_at: str
+    source_type: str = ""       # "" | "historical_import" (provenance — 해시 미포함)
+    source_file: str = ""       # 원본 파일 경로(추적성) — backtest_hash 에 미포함
     input_hash: str = ""
     record_hash: str = ""
     previous_hash: str = GENESIS
@@ -197,6 +199,10 @@ class IngestionSummary:
     ingestion_count: int
     by_outcome: dict
     by_failure_category: dict
+    by_source_type: dict = None  # {"": n, "historical_import": m} — 이력/실시간 구분
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        if d.get("by_source_type") is None:
+            d["by_source_type"] = {}
+        return d

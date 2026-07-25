@@ -11,6 +11,12 @@ from jarvis.research_ingestion.backtest_adapter import (  # noqa: F401
     ingest_backtests,
 )
 from jarvis.research_ingestion.engine import ResearchIngestionEngine  # noqa: F401
+from jarvis.research_ingestion.history_importer import (  # noqa: F401
+    HistoricalResearchImporter,
+    ImportSummary,
+    map_record,
+    read_records,
+)
 from jarvis.research_ingestion.models import (  # noqa: F401
     OUTCOMES,
     REQUIRED_VALIDATIONS,

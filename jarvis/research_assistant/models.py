@@ -122,8 +122,16 @@ _FAILURE_RULES = (
 
 
 def classify_failure(text) -> str:
-    """실패 텍스트 → 분류체계 카테고리(결정적, 첫 일치 우선). 매칭 없으면 UNCLASSIFIED."""
+    """실패 텍스트 → 분류체계 카테고리(결정적, 첫 일치 우선). 매칭 없으면 UNCLASSIFIED.
+
+    먼저 정규 카테고리 토큰(예: 'COST_SENSITIVITY')이 그대로 있으면 그것을 반환(수집 파이프라인과 라운드트립).
+    """
     t = str(text or "").lower()
+    for cat in FAILURE_TAXONOMY:
+        if cat == FAIL_UNCLASSIFIED:
+            continue
+        if cat.lower() in t or cat.lower().replace("_", " ") in t:
+            return cat
     for cat, kws in _FAILURE_RULES:
         if any(k in t for k in kws):
             return cat

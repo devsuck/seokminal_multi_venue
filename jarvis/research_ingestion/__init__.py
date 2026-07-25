@@ -39,3 +39,8 @@ from jarvis.research_ingestion.models import (  # noqa: F401
     classify_outcome,
     validate_backtest,
 )
+from jarvis.research_ingestion.paper_feedback import (  # noqa: F401,E402
+    DifferenceAnalysis,
+    FeedbackResult,
+    PaperTradingFeedback,
+)

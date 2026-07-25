@@ -132,3 +132,34 @@ def test_research_quality_and_cross():
 def test_continuous_learning_shape():
     from api_server.console_api import continuous_learning
     assert "channels" in continuous_learning()
+
+
+# ── Market Intelligence (P86-95) ──
+def test_market_regime_shape():
+    from api_server.console_api import market_regime
+    r = market_regime()
+    assert "regime" in r and r.get("is_decision", False) is False
+
+
+def test_opportunity_queue_shape():
+    from api_server.console_api import opportunity_queue
+    assert "opportunities" in opportunity_queue()
+
+
+def test_alt_data_catalog():
+    from api_server.console_api import alt_data
+    assert alt_data()["count"] == 7
+
+
+def test_council_expanded_seven():
+    from api_server.console_api import council_expanded
+    c = council_expanded("momentum")
+    assert len(c["expanded_perspectives"]) == 7
+
+
+def test_market_cockpit_shape():
+    from api_server.console_api import market_cockpit
+    c = market_cockpit()
+    assert set(c) >= {"market_state", "research_opportunities", "active_experiments",
+                      "validation_status", "risk", "portfolio_context", "decision_queue", "knowledge_growth"}
+    assert c["is_decision"] is False

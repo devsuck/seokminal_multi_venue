@@ -23,7 +23,18 @@ from jarvis.research_workflow.autonomous_loop import (  # noqa: F401
     LoopCancelledError,
     LoopState,
 )
+from jarvis.research_workflow.alt_data import catalog as alt_data_catalog  # noqa: F401
+from jarvis.research_workflow.alt_data import observe as alt_data_observe  # noqa: F401
 from jarvis.research_workflow.cockpit import build_cockpit  # noqa: F401
+from jarvis.research_workflow.council_evolution import deliberate as council_deliberate  # noqa: F401
+from jarvis.research_workflow.decision_center import committee_packet, record_decision  # noqa: F401
+from jarvis.research_workflow.event_stream import classify_event, stream  # noqa: F401
+from jarvis.research_workflow.forward_testing import analyze as forward_analyze  # noqa: F401
+from jarvis.research_workflow.market_cockpit import build_market_cockpit  # noqa: F401
+from jarvis.research_workflow.opportunity_discovery import discover as discover_opportunities  # noqa: F401
+from jarvis.research_workflow.portfolio_sim import simulate as simulate_portfolio  # noqa: F401
+from jarvis.research_workflow.regime import detect_regime as detect_market_regime  # noqa: F401
+from jarvis.research_workflow.strategy_lab import find_similar, repeated_mistakes, strategy_dna  # noqa: F401
 from jarvis.research_workflow.continuous_learning import learning_status, on_research_complete  # noqa: F401
 from jarvis.research_workflow.cross_strategy import compare, compare_all  # noqa: F401
 from jarvis.research_workflow.health_monitor import build_health  # noqa: F401

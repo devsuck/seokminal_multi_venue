@@ -1082,3 +1082,62 @@ def cockpit() -> dict:
     """P85 — Executive Research Cockpit(모든 역량 통합 홈). **READ ONLY. 사람이 모든 결정.**"""
     from jarvis.research_workflow.cockpit import build_cockpit
     return _safe(build_cockpit, {"health_score": 0}) or {}
+
+
+# ══════════════ Market Intelligence & Investment Research OS (P86-95) — READ ONLY ══════════════
+@router.get("/market-regime")
+def market_regime() -> dict:
+    """P87 — 시장 레짐 분석. 기존 /regime 지표(있으면)로 분류 + 유사기간·유리/불리 전략. **읽기전용.**"""
+    def _run():
+        ind = _safe(lambda: __import__("jarvis.portfolio.regime", fromlist=["detect_regime"]).detect_regime(), None)
+        from jarvis.research_workflow.regime import detect_regime
+        # 기존 감지기가 지표를 주면 사용, 아니면 빈 dict → UNKNOWN(정직)
+        indicators = ind.get("indicators") if isinstance(ind, dict) else {}
+        return detect_regime(indicators or {})
+    return _safe(_run, {"regime": "UNKNOWN"}) or {}
+
+
+@router.get("/opportunity-queue")
+def opportunity_queue() -> dict:
+    """P88 — 기회 발견 큐(연구 아이디어만, 트레이드 신호 아님). 기본은 빈 신호 → 빈 큐(정직). **읽기전용.**"""
+    from jarvis.research_workflow.opportunity_discovery import discover
+    return _safe(lambda: discover({}), {"opportunities": [], "count": 0}) or {}
+
+
+@router.get("/alt-data")
+def alt_data() -> dict:
+    """P89 — 대체 연구 데이터 프레임워크 카탈로그(아키텍처). **연구 근거 전용, 신호 아님. 읽기전용.**"""
+    from jarvis.research_workflow.alt_data import catalog
+    return _safe(catalog, {"sources": {}, "count": 0}) or {}
+
+
+@router.get("/council-expanded")
+def council_expanded(q: str = "") -> dict:
+    """P90 — 7관점 협의체(Quant/Macro/Industry/Behavioral/Risk/Contrarian/Portfolio). **논거만, 결정 없음.**"""
+    def _run():
+        if not (q or "").strip():
+            return {"note": "질문(q)을 입력하세요.", "expanded_perspectives": [], "is_decision": False}
+        from jarvis.research_workflow.council_evolution import deliberate
+        return deliberate(q)
+    return _safe(_run, {"note": "council 사용 불가"}) or {}
+
+
+@router.get("/strategy-lab")
+def strategy_lab(q: str = "") -> dict:
+    """P91 — Strategy DNA(factors/universe/horizon/entry/exit/risk/validation/failure/regimes). **읽기전용.**"""
+    def _run():
+        if not (q or "").strip():
+            return {"note": "전략명(q)을 입력하세요."}
+        from jarvis.research_workflow.strategy_lab import repeated_mistakes, strategy_dna
+        metrics = _strategy_metrics(q)
+        dna = strategy_dna(q, spec={"metrics": metrics})
+        dna["repeated_mistakes"] = repeated_mistakes(q)
+        return dna
+    return _safe(_run, {"note": "strategy lab 사용 불가"}) or {}
+
+
+@router.get("/market-cockpit")
+def market_cockpit() -> dict:
+    """P95 — Jarvis Investment Research OS v1.0 (시장상태→기회→실험→검증→리스크→포트폴리오→결정큐→지식). **READ ONLY.**"""
+    from jarvis.research_workflow.market_cockpit import build_market_cockpit
+    return _safe(lambda: build_market_cockpit({}, {}), {"market_state": {"regime": "UNKNOWN"}}) or {}

@@ -32,3 +32,9 @@ from jarvis.portfolio_research.models import (  # noqa: F401
     PortfolioVersion,
     RiskAnalysis,
 )
+from jarvis.portfolio_research.intelligence import (  # noqa: F401,E402
+    CombinationReport,
+    ExposureReport,
+    PortfolioIntelligence,
+    pearson,
+)

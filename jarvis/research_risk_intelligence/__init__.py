@@ -33,3 +33,9 @@ from jarvis.research_risk_intelligence.models import (  # noqa: F401
     RiskSummary,
     UnknownRisk,
 )
+from jarvis.research_risk_intelligence.failure_reasoning import (  # noqa: F401,E402
+    RISK_CATEGORIES,
+    FailureScenario,
+    StrategyRiskReasoner,
+    StrategyRiskReport,
+)

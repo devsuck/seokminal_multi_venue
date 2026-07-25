@@ -128,11 +128,13 @@ def test_hash_chain_valid(orch):
 # ── 5. 중복 원장 없음 ──
 def test_no_duplicate_ledgers(orch, tmp_path):
     orch.run("research momentum", _full_ctx(), now=NOW, commit=True)
+    # rwf_ 원장은 오케스트레이션 상태 전용(runs/sessions/loops) — 기존 지식 원장 복제 아님
     assert ledger.ALL_LEDGERS == (("rwf_runs.jsonl", "event_id"),
-                                  ("rwf_sessions.jsonl", "event_id"))
-    # 조율은 기존 실험/메모리 원장에 쓰지 않는다(rwf_ 만)
+                                  ("rwf_sessions.jsonl", "event_id"),
+                                  ("rwf_loops.jsonl", "event_id"))
+    # 워크플로 조율은 rwf_runs 만 기록(다른 원장 무변경)
     written = {p.name for p in (tmp_path / "_state").iterdir()}
-    assert written <= {"rwf_runs.jsonl", "rwf_sessions.jsonl"}
+    assert written <= {"rwf_runs.jsonl", "rwf_sessions.jsonl", "rwf_loops.jsonl"}
 
 
 def test_dry_run_no_writes(orch, tmp_path):

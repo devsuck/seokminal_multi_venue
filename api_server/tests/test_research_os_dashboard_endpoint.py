@@ -73,3 +73,22 @@ def test_session_action_requires_id(tmp_path, monkeypatch):
     monkeypatch.setattr(wl, "state_path", lambda n: str(tmp_path / n))
     from api_server.console_api import session_action
     assert "error" in session_action("pause")
+
+
+def test_autonomous_runtime_shape():
+    from api_server.console_api import autonomous_runtime
+    r = autonomous_runtime("momentum")
+    assert set(r) >= {"topic", "loop_stages", "preview", "loops", "counts", "disclaimer"}
+    assert len(r["loop_stages"]) == 9
+    assert r["is_decision"] is False
+
+
+def test_autonomous_runtime_preview():
+    from api_server.console_api import autonomous_runtime
+    p = autonomous_runtime("momentum")["preview"]
+    assert "hypotheses" in p and "critique" in p and "recommended_spec" in p
+
+
+def test_autonomous_runtime_empty_topic():
+    from api_server.console_api import autonomous_runtime
+    assert autonomous_runtime("")["preview"] == {}

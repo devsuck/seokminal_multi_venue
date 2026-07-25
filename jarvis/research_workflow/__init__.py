@@ -23,6 +23,13 @@ from jarvis.research_workflow.autonomous_loop import (  # noqa: F401
     LoopCancelledError,
     LoopState,
 )
+from jarvis.research_workflow.cockpit import build_cockpit  # noqa: F401
+from jarvis.research_workflow.continuous_learning import learning_status, on_research_complete  # noqa: F401
+from jarvis.research_workflow.cross_strategy import compare, compare_all  # noqa: F401
+from jarvis.research_workflow.health_monitor import build_health  # noqa: F401
+from jarvis.research_workflow.knowledge_graph import build_knowledge_graph  # noqa: F401
+from jarvis.research_workflow.quality_score import score_research  # noqa: F401
+from jarvis.research_workflow.timeline import build_timeline  # noqa: F401
 from jarvis.research_workflow.experiment_planner import ExperimentPlanner, ExperimentSpec  # noqa: F401
 from jarvis.research_workflow.hypothesis_generator import Hypothesis, HypothesisGenerator  # noqa: F401
 from jarvis.research_workflow.research_critic import CritiqueReport, ResearchCritic  # noqa: F401

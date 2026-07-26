@@ -79,6 +79,16 @@ from jarvis.research_workflow.cross_asset_intelligence import build_cross_asset 
 from jarvis.research_workflow.institutional_memory_expansion import build_institutional_memory  # noqa: F401
 from jarvis.research_workflow.intelligence_quality import score_intelligence  # noqa: F401
 from jarvis.research_workflow.institutional_intelligence_validation import validate_intelligence, intelligence_safety  # noqa: F401
+from jarvis.research_workflow.investment_committee import build_committee_packet  # noqa: F401
+from jarvis.research_workflow.debate_engine import build_debate  # noqa: F401
+from jarvis.research_workflow.conviction_framework import build_conviction  # noqa: F401
+from jarvis.research_workflow.portfolio_research_view import build_portfolio_research  # noqa: F401
+from jarvis.research_workflow.human_decision_center import build_decision_center, act as decision_center_act  # noqa: F401
+from jarvis.research_workflow.production_monitor import build_production_status  # noqa: F401
+from jarvis.research_workflow.operational_metrics import build_operational_metrics  # noqa: F401
+from jarvis.research_workflow.governance import build_governance  # noqa: F401
+from jarvis.research_workflow.system_validation import validate_system  # noqa: F401
+from jarvis.research_workflow.release_v20 import build_release_report  # noqa: F401
 from jarvis.research_workflow.earnings_intelligence import analyze_earnings  # noqa: F401
 from jarvis.research_workflow.insider_flow import analyze_transaction  # noqa: F401
 from jarvis.research_workflow.market_data_adapter import MarketEvent, normalize  # noqa: F401

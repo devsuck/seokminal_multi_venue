@@ -1724,3 +1724,139 @@ def institutional_intelligence(topic: str = "", sector: str = "semiconductor", e
             "is_advisory": True, "is_decision": False,
             "disclaimer": ("Institutional Intelligence — READ ONLY. 시장·섹터·매크로·기업·지식·품질 통합 컨텍스트. "
                            "예측/랭킹/배분 아님. 자동 거래·집행 없음. 사람이 모든 투자 결정.")}
+
+
+# ══════════════ Institutional Committee & Production Readiness (P161-170) — READ ONLY, ADVISORY ══════════════
+@router.get("/committee-packet")
+def committee_packet_endpoint(q: str = "") -> dict:
+    """P161 — CommitteePacket(요약·증거·리스크·반대시각·신뢰도·한계·사람질문). BUY/SELL 없음. READ ONLY."""
+    def _run():
+        if not (q or "").strip():
+            return {"note": "연구 질문(q)을 입력하세요.", "questions_for_human": []}
+        from jarvis.research_workflow.investment_committee import build_committee_packet
+        return build_committee_packet(q)
+    return _safe(_run, {"questions_for_human": []}) or {}
+
+
+@router.get("/debate")
+def debate_endpoint(q: str = "") -> dict:
+    """P162 — DebateReport(강세·약세·리스크·대안·누락·역사반례). 예측 아님. READ ONLY."""
+    def _run():
+        if not (q or "").strip():
+            return {"note": "연구 질문(q)을 입력하세요."}
+        from jarvis.research_workflow.debate_engine import build_debate
+        return build_debate(q)
+    return _safe(_run, {}) or {}
+
+
+@router.get("/conviction")
+def conviction_endpoint(topic: str = "momentum") -> dict:
+    """P163 — ResearchConvictionReport(6요인 → LOW/MEDIUM/HIGH). 투자 등급 아님. READ ONLY."""
+    from jarvis.research_workflow.conviction_framework import build_conviction
+    return _safe(lambda: build_conviction(topic), {"conviction_level": "LOW"}) or {}
+
+
+@router.get("/portfolio-research")
+def portfolio_research_endpoint() -> dict:
+    """P164 — PortfolioResearchView(노출·중첩·상관·집중·시나리오). 배분 제안 아님. READ ONLY."""
+    from jarvis.research_workflow.portfolio_research_view import build_portfolio_research
+    return _safe(lambda: build_portfolio_research(correlations={"AAPL~SPY": 0.72, "GLD~DXY": -0.58}),
+                 {"strategy_health": []}) or {}
+
+
+@router.get("/decision-center")
+def decision_center_endpoint(q: str = "") -> dict:
+    """P165 — Human Decision Center(committee packet·decision log·follow-up·archive). 투자 승인·거래 없음. READ ONLY."""
+    from jarvis.research_workflow.human_decision_center import build_decision_center
+    return _safe(lambda: build_decision_center(q), {"decision_log": []}) or {}
+
+
+@router.get("/production-status")
+def production_status_endpoint() -> dict:
+    """P166 — ProductionStatusReport(7 컴포넌트 severity OK/WARNING/CRITICAL). READ ONLY."""
+    from jarvis.research_workflow.production_monitor import build_production_status
+    return _safe(build_production_status, {"overall_severity": "UNKNOWN", "components": []}) or {}
+
+
+@router.get("/operational-metrics")
+def operational_metrics_endpoint() -> dict:
+    """P167 — OperationalMetricsReport(처리량·지연·활용·가용성·신선도·완료·백로그). READ ONLY."""
+    from jarvis.research_workflow.operational_metrics import build_operational_metrics
+    return _safe(build_operational_metrics, {"metrics": {}}) or {}
+
+
+@router.get("/governance")
+def governance_endpoint() -> dict:
+    """P168 — GovernanceReport(권한·감사·무결성·체크포인트·아키텍처·안전). READ ONLY."""
+    from jarvis.research_workflow.governance import build_governance
+    return _safe(build_governance, {"governance": "REVIEW_REQUIRED", "checks": []}) or {}
+
+
+@router.get("/system-validation")
+def system_validation_endpoint() -> dict:
+    """P169 — 전체 시스템 검증(워크플로·위원회·거버넌스·모니터링·지표·대시보드·무중복). READ ONLY."""
+    from jarvis.research_workflow.system_validation import validate_system
+    return _safe(validate_system, {"validated": False, "checks": []}) or {}
+
+
+@router.get("/release-v20")
+def release_v20_endpoint() -> dict:
+    """P170 — Release Readiness Report(v2.0, 아키텍처 동결). READ ONLY."""
+    from jarvis.research_workflow.release_v20 import build_release_report
+    return _safe(build_release_report, {"release_ready": False}) or {}
+
+
+@router.get("/production-readiness")
+def production_readiness(q: str = "Does momentum work in KR equities?") -> dict:
+    """P161-170 통합 — Committee & Production dashboard: overview·committee·debate·conviction·portfolio·
+    governance·production·metrics·review queue. **READ ONLY. 자문만, 거래·집행·배분·승인 없음. 사람이 결정.**"""
+    committee = _safe(lambda: __import__("jarvis.research_workflow.investment_committee",
+                                         fromlist=["build_committee_packet"]).build_committee_packet(q), {}) or {}
+    debate = _safe(lambda: __import__("jarvis.research_workflow.debate_engine", fromlist=["build_debate"])
+                   .build_debate(q), {}) or {}
+    conviction = _safe(lambda: __import__("jarvis.research_workflow.conviction_framework",
+                                          fromlist=["build_conviction"]).build_conviction(q), {}) or {}
+    portfolio = _safe(lambda: __import__("jarvis.research_workflow.portfolio_research_view",
+                                         fromlist=["build_portfolio_research"])
+                      .build_portfolio_research(correlations={"AAPL~SPY": 0.72}), {}) or {}
+    governance = _safe(lambda: __import__("jarvis.research_workflow.governance", fromlist=["build_governance"])
+                       .build_governance(), {}) or {}
+    production = _safe(lambda: __import__("jarvis.research_workflow.production_monitor",
+                                         fromlist=["build_production_status"]).build_production_status(), {}) or {}
+    metrics = _safe(lambda: __import__("jarvis.research_workflow.operational_metrics",
+                                       fromlist=["build_operational_metrics"]).build_operational_metrics(), {}) or {}
+    release = _safe(lambda: __import__("jarvis.research_workflow.release_v20", fromlist=["build_release_report"])
+                    .build_release_report(), {}) or {}
+    dc = _safe(lambda: __import__("jarvis.research_workflow.human_decision_center",
+                                  fromlist=["build_decision_center"]).build_decision_center(q), {}) or {}
+    return {"institutional_overview": {"version": release.get("version"),
+                                       "release_ready": release.get("release_ready"),
+                                       "architecture_frozen": release.get("architecture_frozen"),
+                                       "capabilities": [c["capability"] for c in release.get("capability_matrix", [])]},
+            "committee_packet": {"research_summary": committee.get("research_summary"),
+                                 "confidence": committee.get("confidence"),
+                                 "limitations": committee.get("limitations", []),
+                                 "questions_for_human": committee.get("questions_for_human", []),
+                                 "risk_summary": committee.get("risk_summary", {}),
+                                 "alternative_views": committee.get("alternative_views", {})},
+            "debate": {"bull_case": debate.get("bull_case", {}), "bear_case": debate.get("bear_case", {}),
+                       "risk_case": debate.get("risk_case", {}),
+                       "historical_counterexamples": debate.get("historical_counterexamples", [])},
+            "conviction": {"level": conviction.get("conviction_level"),
+                           "score": conviction.get("conviction_score"),
+                           "factors": conviction.get("factors", {})},
+            "portfolio_research": {"strategy_health": portfolio.get("strategy_health", []),
+                                   "factor_exposure": portfolio.get("factor_exposure", {}),
+                                   "concentration": portfolio.get("concentration", {}),
+                                   "correlation": portfolio.get("correlation", [])},
+            "governance_status": {"governance": governance.get("governance"),
+                                  "passed": governance.get("passed"),
+                                  "checks": governance.get("checks", [])},
+            "production_health": {"overall_severity": production.get("overall_severity"),
+                                  "components": production.get("components", []),
+                                  "counts": production.get("counts", {})},
+            "operational_metrics": metrics.get("metrics", {}),
+            "review_queue": dc.get("follow_up_research", []),
+            "is_advisory": True, "is_decision": False,
+            "disclaimer": ("Committee & Production — READ ONLY. 위원회·토론·확신도·거버넌스·모니터링. "
+                           "BUY/SELL/EXECUTE/ALLOCATE 없음. 브로커·자본배분 없음. 모든 투자 결정은 사람.")}

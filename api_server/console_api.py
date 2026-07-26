@@ -1603,3 +1603,124 @@ def research_organization(topic: str = "") -> dict:
             "disclaimer": ("Research Organization — READ ONLY. External Data→Opportunity→Agent Research→"
                            "Experiment→Validation→Knowledge Update→Improvement. 자문만, 자동 거래·집행·자본배분 "
                            "없음. 사람이 모든 투자 결정.")}
+
+
+# ══════════════ Institutional Intelligence Expansion (P151-160) — READ ONLY, ADVISORY ══════════════
+@router.get("/data-production")
+def data_production_endpoint() -> dict:
+    """P151 — DataProductionReport(provider availability·freshness·quality·lineage). 데이터 변형 없음. READ ONLY."""
+    from jarvis.research_workflow.data_production import build_data_production
+    return _safe(build_data_production, {"reports": []}) or {}
+
+
+@router.get("/sector-intelligence")
+def sector_intelligence_endpoint(sector: str = "semiconductor") -> dict:
+    """P152 — SectorIntelligenceReport(핵심개체·이벤트·과거·리스크·연구질문). 투자 랭킹 아님. READ ONLY."""
+    from jarvis.research_workflow.sector_intelligence import analyze_sector
+    return _safe(lambda: analyze_sector(sector), {"key_entities": []}) or {}
+
+
+@router.get("/macro-intelligence")
+def macro_intelligence_endpoint() -> dict:
+    """P153 — MacroContextReport(상태·지표·과거·영향자산·불확실성). 예측 아님. READ ONLY."""
+    demo = {"fed_funds": 5.0, "cpi": 3.5, "unemployment": 4.2}
+    from jarvis.research_workflow.macro_intelligence import build_macro_context
+    return _safe(lambda: build_macro_context(indicators=demo), {"macro_state": "UNKNOWN"}) or {}
+
+
+@router.get("/company-intelligence")
+def company_intelligence_endpoint(entity: str = "TSMC") -> dict:
+    """P154 — CompanyIntelligenceReport(관계·이벤트·재무·교훈·리스크). 매수/매도 신호 아님. READ ONLY."""
+    def _run():
+        name = (entity or "TSMC").strip()
+        from jarvis.research_workflow.company_intelligence import analyze_company
+        return analyze_company(name, financials=[{"company": name, "expected": {"eps": 0.5},
+                               "actual": {"eps": 0.62}}], headlines=[{"text": f"{name} news", "entity": name}])
+    return _safe(_run, {"relationships": {}}) or {}
+
+
+@router.get("/research-context")
+def research_context_endpoint(q: str = "", entity: str = "", sector: str = "") -> dict:
+    """P155 — ResearchContextPackage(8섹션: 질문·환경·과거·기업·전략·리스크·모순·누락). READ ONLY."""
+    def _run():
+        if not (q or entity or sector):
+            return {"note": "질문(q)/개체(entity)/섹터(sector)를 입력하세요.", "package": {}}
+        from jarvis.research_workflow.research_context_engine import build_research_context
+        return build_research_context(q, entity=entity, sector=sector)
+    return _safe(_run, {"package": {}}) or {}
+
+
+@router.get("/cross-asset")
+def cross_asset_endpoint() -> dict:
+    """P156 — CrossAssetReport(자산군 관계·상관·레짐·리스크 전이). 포트폴리오 배분 아님. READ ONLY."""
+    demo = {"AAPL~SPY": 0.72, "GLD~DXY": -0.58, "TLT~SPY": -0.35}
+    from jarvis.research_workflow.cross_asset_intelligence import build_cross_asset
+    return _safe(lambda: build_cross_asset(correlations=demo), {"asset_classes": []}) or {}
+
+
+@router.get("/institutional-memory")
+def institutional_memory_endpoint() -> dict:
+    """P157 — InstitutionalMemoryReport(테마·사이클·기간·성공/실패 스터디). 새 메모리 없음. READ ONLY."""
+    from jarvis.research_workflow.institutional_memory_expansion import build_institutional_memory
+    return _safe(build_institutional_memory, {"research_themes": []}) or {}
+
+
+@router.get("/intelligence-quality")
+def intelligence_quality_endpoint(topic: str = "momentum") -> dict:
+    """P158 — IntelligenceQualityReport(data·evidence·historical·conflict·uncertainty → confidence). READ ONLY."""
+    from jarvis.research_workflow.intelligence_quality import score_intelligence
+    return _safe(lambda: score_intelligence(topic=topic), {"confidence": "LOW"}) or {}
+
+
+@router.get("/intelligence-validation")
+def intelligence_validation_endpoint() -> dict:
+    """P160 — 기관 인텔리전스 검증(데이터·섹터·매크로·기업·컨텍스트·품질·무중복) + 안전. READ ONLY."""
+    from jarvis.research_workflow.institutional_intelligence_validation import validate_intelligence
+    return _safe(validate_intelligence, {"validated": False, "checks": []}) or {}
+
+
+@router.get("/institutional-intelligence")
+def institutional_intelligence(topic: str = "", sector: str = "semiconductor", entity: str = "TSMC") -> dict:
+    """P159 통합 — Institutional Intelligence Dashboard: data health·market·sector·macro·company·knowledge·quality.
+    **READ ONLY. 자문만, 자동 거래·집행·자본배분 없음. 사람이 모든 결정.**"""
+    dp = _safe(lambda: __import__("jarvis.research_workflow.data_production",
+                                  fromlist=["build_data_production"]).build_data_production(), {}) or {}
+    regime = _safe(lambda: __import__("jarvis.research_workflow.regime", fromlist=["detect_regime"])
+                   .detect_regime({}), {"regime": "UNKNOWN"}) or {}
+    sec = _safe(lambda: __import__("jarvis.research_workflow.sector_intelligence",
+                                   fromlist=["analyze_sector"]).analyze_sector(sector), {}) or {}
+    mac = _safe(lambda: __import__("jarvis.research_workflow.macro_intelligence",
+                                   fromlist=["build_macro_context"])
+                .build_macro_context(indicators={"fed_funds": 5.0, "cpi": 3.5, "unemployment": 4.2}), {}) or {}
+    co = _safe(lambda: __import__("jarvis.research_workflow.company_intelligence", fromlist=["analyze_company"])
+               .analyze_company(entity), {}) or {}
+    knowledge = _safe(lambda: __import__("jarvis.research_workflow.knowledge_quality",
+                                         fromlist=["build_knowledge_health"]).build_knowledge_health(), {}) or {}
+    quality = _safe(lambda: __import__("jarvis.research_workflow.intelligence_quality",
+                                       fromlist=["score_intelligence"]).score_intelligence(topic=topic or sector),
+                    {}) or {}
+    v = _safe(lambda: __import__("jarvis.research_workflow.institutional_intelligence_validation",
+                                 fromlist=["validate_intelligence"]).validate_intelligence(),
+              {"validated": False}) or {}
+    return {"data_production_health": {"overall_status": dp.get("overall_status"),
+                                       "available_count": dp.get("available_count"),
+                                       "count": dp.get("count"), "average_quality": dp.get("average_quality"),
+                                       "reports": dp.get("reports", [])[:12]},
+            "market_intelligence": {"regime": regime.get("regime"), "labels": regime.get("labels", [])},
+            "sector_intelligence": {"sector": sec.get("sector"), "key_entities": sec.get("key_entities", []),
+                                    "risk_factors": sec.get("risk_factors", []),
+                                    "research_questions": sec.get("research_questions", [])},
+            "macro_context": {"macro_state": mac.get("macro_state"), "indicators": mac.get("indicators", {}),
+                              "affected_assets": mac.get("affected_assets", []),
+                              "uncertainty": mac.get("uncertainty")},
+            "company_intelligence": {"entity": co.get("entity"), "relationships": co.get("relationships", {}),
+                                     "risks": co.get("risks", [])},
+            "knowledge_context": {"health_score": knowledge.get("health_score"),
+                                  "grade": knowledge.get("grade")},
+            "quality_scores": {"confidence": quality.get("confidence"),
+                               "dimensions": quality.get("dimensions", {}),
+                               "reliability": quality.get("reliability_score")},
+            "validation": {"validated": v.get("validated"), "capabilities": v.get("capabilities", [])},
+            "is_advisory": True, "is_decision": False,
+            "disclaimer": ("Institutional Intelligence — READ ONLY. 시장·섹터·매크로·기업·지식·품질 통합 컨텍스트. "
+                           "예측/랭킹/배분 아님. 자동 거래·집행 없음. 사람이 모든 투자 결정.")}

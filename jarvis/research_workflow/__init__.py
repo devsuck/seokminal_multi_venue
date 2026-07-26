@@ -70,6 +70,15 @@ from jarvis.research_workflow.research_workspace import build_workspace, act as 
 from jarvis.research_workflow.research_outcome_tracker import ResearchOutcomeTracker, track as track_outcome  # noqa: F401
 from jarvis.research_workflow.agent_performance import AgentPerformanceMonitor, report as agent_performance_report  # noqa: F401
 from jarvis.research_workflow.ops_validation import validate_research_ops, ops_safety  # noqa: F401
+from jarvis.research_workflow.data_production import build_data_production  # noqa: F401
+from jarvis.research_workflow.sector_intelligence import analyze_sector  # noqa: F401
+from jarvis.research_workflow.macro_intelligence import build_macro_context  # noqa: F401
+from jarvis.research_workflow.company_intelligence import analyze_company  # noqa: F401
+from jarvis.research_workflow.research_context_engine import build_research_context  # noqa: F401
+from jarvis.research_workflow.cross_asset_intelligence import build_cross_asset  # noqa: F401
+from jarvis.research_workflow.institutional_memory_expansion import build_institutional_memory  # noqa: F401
+from jarvis.research_workflow.intelligence_quality import score_intelligence  # noqa: F401
+from jarvis.research_workflow.institutional_intelligence_validation import validate_intelligence, intelligence_safety  # noqa: F401
 from jarvis.research_workflow.earnings_intelligence import analyze_earnings  # noqa: F401
 from jarvis.research_workflow.insider_flow import analyze_transaction  # noqa: F401
 from jarvis.research_workflow.market_data_adapter import MarketEvent, normalize  # noqa: F401

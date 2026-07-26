@@ -359,3 +359,44 @@ def test_research_organization_endpoint():
     assert set(ro) >= {"market_overview", "company_monitoring", "strategy_health", "agent_status",
                        "knowledge_health", "research_reports", "review_queue", "operational_status"}
     assert ro["is_decision"] is False
+
+
+# ── P151-160 Institutional Intelligence Expansion ──
+def test_data_production_endpoint():
+    from api_server.console_api import data_production_endpoint
+    assert data_production_endpoint()["overall_status"] in ("HEALTHY", "DEGRADED", "LIMITED")
+
+
+def test_sector_intelligence_endpoint():
+    from api_server.console_api import sector_intelligence_endpoint
+    assert sector_intelligence_endpoint("semiconductor")["key_entities"]
+
+
+def test_macro_intelligence_endpoint():
+    from api_server.console_api import macro_intelligence_endpoint
+    assert macro_intelligence_endpoint()["macro_state"]
+
+
+def test_research_context_endpoint():
+    from api_server.console_api import research_context_endpoint
+    r = research_context_endpoint(q="momentum", sector="semiconductor")
+    assert len(r["package"]) == 8
+
+
+def test_intelligence_quality_endpoint():
+    from api_server.console_api import intelligence_quality_endpoint
+    assert intelligence_quality_endpoint()["confidence"] in ("HIGH", "MEDIUM", "LOW")
+
+
+def test_intelligence_validation_endpoint():
+    from api_server.console_api import intelligence_validation_endpoint
+    v = intelligence_validation_endpoint()
+    assert v["validated"] is True and v["safety"]["safe"] is True
+
+
+def test_institutional_intelligence_endpoint():
+    from api_server.console_api import institutional_intelligence
+    ii = institutional_intelligence()
+    assert set(ii) >= {"data_production_health", "market_intelligence", "sector_intelligence",
+                       "macro_context", "company_intelligence", "knowledge_context", "quality_scores"}
+    assert ii["is_decision"] is False

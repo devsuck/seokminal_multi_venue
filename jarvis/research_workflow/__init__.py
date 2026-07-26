@@ -94,6 +94,17 @@ from jarvis.research_workflow.backfill import (  # noqa: F401
     run_backfill,
     sync as backfill_sync,
 )
+# P171-180 Autonomous Research Intelligence Enhancement — 기존 엔진 조율, 새 아키텍처 없음.
+from jarvis.research_workflow.creative_hypothesis import discover_hypotheses  # noqa: F401
+from jarvis.research_workflow.research_search import build_search_space  # noqa: F401
+from jarvis.research_workflow.continuous_queue import build_continuous_queue  # noqa: F401
+from jarvis.research_workflow.experiment_prioritization import prioritize_experiments  # noqa: F401
+from jarvis.research_workflow.research_expansion import expand_research  # noqa: F401
+from jarvis.research_workflow.self_reflection import reflect_on_cycle  # noqa: F401
+from jarvis.research_workflow.research_planning import build_research_plan  # noqa: F401
+from jarvis.research_workflow.collaborative_research import run_collaborative_research  # noqa: F401
+from jarvis.research_workflow.productivity_optimization import build_productivity_report  # noqa: F401
+from jarvis.research_workflow.autonomy_validation import validate_autonomy, autonomy_safety  # noqa: F401
 from jarvis.research_workflow.earnings_intelligence import analyze_earnings  # noqa: F401
 from jarvis.research_workflow.insider_flow import analyze_transaction  # noqa: F401
 from jarvis.research_workflow.market_data_adapter import MarketEvent, normalize  # noqa: F401

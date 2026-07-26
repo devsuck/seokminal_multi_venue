@@ -1860,3 +1860,52 @@ def production_readiness(q: str = "Does momentum work in KR equities?") -> dict:
             "is_advisory": True, "is_decision": False,
             "disclaimer": ("Committee & Production — READ ONLY. 위원회·토론·확신도·거버넌스·모니터링. "
                            "BUY/SELL/EXECUTE/ALLOCATE 없음. 브로커·자본배분 없음. 모든 투자 결정은 사람.")}
+
+
+# ── P171-180 Autonomous Research Intelligence Enhancement (READ ONLY) ──────────
+@router.get("/research-intelligence")
+def research_intelligence(q: str = "Does momentum work in KR equities?") -> dict:
+    """P171-180 통합 — 창의적 가설·탐색트리·연속큐·실험우선순위·확장·성찰·계획·협업·생산성·검증.
+    **READ ONLY. 자문만, 연구 자동 실행 없음, 자율 승인 없음. 모든 결정은 사람.**"""
+    creative = _safe(lambda: __import__("jarvis.research_workflow.creative_hypothesis",
+                                        fromlist=["discover_hypotheses"]).discover_hypotheses(q, limit=8), {}) or {}
+    search = _safe(lambda: __import__("jarvis.research_workflow.research_search",
+                                      fromlist=["build_search_space"]).build_search_space(q, top_k=10), {}) or {}
+    queue = _safe(lambda: __import__("jarvis.research_workflow.continuous_queue",
+                                     fromlist=["build_continuous_queue"]).build_continuous_queue(topic=q), {}) or {}
+    prioritized = _safe(lambda: __import__("jarvis.research_workflow.experiment_prioritization",
+                                           fromlist=["prioritize_experiments"]).prioritize_experiments(topic=q, limit=8), {}) or {}
+    planning = _safe(lambda: __import__("jarvis.research_workflow.research_planning",
+                                        fromlist=["build_research_plan"]).build_research_plan(topic=q), {}) or {}
+    productivity = _safe(lambda: __import__("jarvis.research_workflow.productivity_optimization",
+                                            fromlist=["build_productivity_report"]).build_productivity_report(), {}) or {}
+    reflection = _safe(lambda: __import__("jarvis.research_workflow.self_reflection",
+                                          fromlist=["reflect_on_cycle"]).reflect_on_cycle(), {}) or {}
+    autonomy = _safe(lambda: __import__("jarvis.research_workflow.autonomy_validation",
+                                        fromlist=["validate_autonomy"]).validate_autonomy(), {}) or {}
+    return {"query": q,
+            "creative_hypotheses": {"count": creative.get("hypothesis_count", 0),
+                                    "diversity": creative.get("diversity", {}),
+                                    "hypotheses": creative.get("hypotheses", [])[:8]},
+            "research_search": {"surfaced_count": search.get("surfaced_count", 0),
+                                "merged_duplicates": search.get("merged_duplicates", 0),
+                                "candidates": search.get("highest_value_candidates", [])[:8]},
+            "continuous_queue": {"queue_size": queue.get("queue_size", 0),
+                                 "by_source": queue.get("by_source", {}),
+                                 "backlog": queue.get("backlog", [])[:8],
+                                 "recommended_next": queue.get("recommended_next", {})},
+            "experiment_prioritization": {"coverage_context": prioritized.get("coverage_context", {}),
+                                          "recommendations": prioritized.get("recommendations", [])[:8]},
+            "research_planning": planning.get("plans", {}),
+            "productivity": {"metrics": productivity.get("metrics", {}),
+                             "recommendations": productivity.get("recommendations", [])},
+            "self_reflection": reflection.get("reflection", {}),
+            "autonomy_validation": {"validated": autonomy.get("validated"),
+                                    "checks": autonomy.get("checks", []),
+                                    "reuse_count": autonomy.get("reuse_analysis", {}).get("reuse_count"),
+                                    "duplicated_logic": autonomy.get("duplicated_logic", []),
+                                    "remaining_limitations": autonomy.get("remaining_limitations", [])},
+            "is_advisory": True, "is_decision": False,
+            "disclaimer": ("Autonomous Research Intelligence — READ ONLY. 창의적 가설·탐색·큐·우선순위·확장·"
+                           "성찰·계획·협업·생산성. 연구 자동 실행 없음, 자율 승인 없음, 새 아키텍처 없음. "
+                           "BUY/SELL/EXECUTE/ALLOCATE 없음. 모든 결정은 사람.")}

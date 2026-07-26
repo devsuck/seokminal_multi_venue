@@ -129,6 +129,15 @@ from jarvis.research_workflow.prediction_registry import (  # noqa: F401
     registry_status as prediction_registry_status,
     transition as prediction_transition,
 )
+# P202 Migration Safety Net — characterization(meaning==meaning) + capture hook + ledger contract.
+from jarvis.research_workflow.ledger_writer import JsonlLedgerBackend, LedgerBackend  # noqa: F401
+from jarvis.research_workflow.characterization import build_meaning_snapshot, compare_to_golden  # noqa: F401
+from jarvis.research_workflow.prediction_capture_hook import (  # noqa: F401
+    capture_from_agent,
+    capture_from_committee,
+    capture_from_hypothesis,
+    capture_research_output,
+)
 from jarvis.research_workflow.earnings_intelligence import analyze_earnings  # noqa: F401
 from jarvis.research_workflow.insider_flow import analyze_transaction  # noqa: F401
 from jarvis.research_workflow.market_data_adapter import MarketEvent, normalize  # noqa: F401

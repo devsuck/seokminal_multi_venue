@@ -113,3 +113,68 @@ def _expiry(now: str, ttl_seconds: int) -> str:
 
 def default_authority() -> WriterAuthority:
     return WriterAuthority()
+
+
+# ── Ledger Source-of-Truth 계약 (P202-3) — backend 독립 ──
+# Research OS 는 이 계약만 본다. 오늘 JSONL, 나중 SQLite/PG 는 드라이버 교체(같은 ledger).
+class LedgerBackend:
+    """원장 백엔드 추상 계약: append · read · head · verify. 구현 교체 가능(JSONL→SQLite→PG)."""
+
+    def append(self, record: dict) -> dict:
+        raise NotImplementedError
+
+    def read(self) -> list:
+        raise NotImplementedError
+
+    def head(self) -> dict | None:
+        raise NotImplementedError
+
+    def verify(self) -> dict:
+        raise NotImplementedError
+
+
+class JsonlLedgerBackend(LedgerBackend):
+    """JSONL 참조 구현 — 기존 _state jsonl 재사용. 해시체인 검증. 새 저장 시스템 아님(포맷 계약일 뿐)."""
+
+    def __init__(self, filename: str) -> None:
+        self.filename = filename
+
+    def _path(self):
+        from jarvis.config import state_path
+        return state_path(self.filename)
+
+    def read(self) -> list:
+        out = []
+        try:
+            with open(self._path(), encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        out.append(json.loads(line))
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+        return out
+
+    def append(self, record: dict) -> dict:
+        from jarvis.config import ensure_state_dir
+        ensure_state_dir()
+        with open(self._path(), "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+        return record
+
+    def head(self) -> dict | None:
+        rows = self.read()
+        return rows[-1] if rows else None
+
+    def verify(self) -> dict:
+        """해시체인 무결성 검사(previous_hash/record_hash 있을 때). 없으면 unverifiable=True(정직)."""
+        rows = self.read()
+        if not rows or "record_hash" not in rows[0]:
+            return {"ok": True, "records": len(rows), "unverifiable": True,
+                    "note": "해시체인 필드 없음 — 순서만 보존"}
+        prev = "GENESIS"
+        for i, r in enumerate(rows):
+            if r.get("previous_hash", "GENESIS") != prev:
+                return {"ok": False, "broken_at": i, "records": len(rows)}
+            prev = r.get("record_hash", prev)
+        return {"ok": True, "records": len(rows), "unverifiable": False}

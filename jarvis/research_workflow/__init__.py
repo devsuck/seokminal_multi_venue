@@ -120,6 +120,15 @@ from jarvis.research_workflow.research_metrics_v3 import build_research_metrics 
 from jarvis.research_workflow.research_reflection import reflect as research_reflect  # noqa: F401
 from jarvis.research_workflow.autonomous_validation_v3 import validate_loop, audit_production  # noqa: F401
 from jarvis.research_workflow.release_v30 import build_release_report_v30  # noqa: F401
+# P201 Research Accountability — Forward Prediction Capture + Writer Authority. 기존 rmi_ 재사용, 새 원장 없음.
+from jarvis.research_workflow.ledger_writer import WriterAuthority  # noqa: F401
+from jarvis.research_workflow.prediction_registry import (  # noqa: F401
+    capture_prediction,
+    derive_framework,
+    evaluate as evaluate_prediction,
+    registry_status as prediction_registry_status,
+    transition as prediction_transition,
+)
 from jarvis.research_workflow.earnings_intelligence import analyze_earnings  # noqa: F401
 from jarvis.research_workflow.insider_flow import analyze_transaction  # noqa: F401
 from jarvis.research_workflow.market_data_adapter import MarketEvent, normalize  # noqa: F401

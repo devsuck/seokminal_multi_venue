@@ -1909,3 +1909,68 @@ def research_intelligence(q: str = "Does momentum work in KR equities?") -> dict
             "disclaimer": ("Autonomous Research Intelligence — READ ONLY. 창의적 가설·탐색·큐·우선순위·확장·"
                            "성찰·계획·협업·생산성. 연구 자동 실행 없음, 자율 승인 없음, 새 아키텍처 없음. "
                            "BUY/SELL/EXECUTE/ALLOCATE 없음. 모든 결정은 사람.")}
+
+
+# ── P181-200 Autonomous Research Discovery & Validation Loop v3.0 (READ ONLY) ──
+@router.get("/autonomous-research")
+def autonomous_research(q: str = "Does momentum work in KR equities?") -> dict:
+    """P181-200 통합 — 연구 사이클·시장관찰·가설·실험큐·검증·랭킹·사람 검토큐·지표·릴리스 v3.0.
+    **READ ONLY. 연구 자동화 ON, 실행 OFF. 자동 백테스트 없음, WAITING_HUMAN 체크포인트 유지. 모든 결정은 사람.**"""
+    cycle = _safe(lambda: __import__("jarvis.research_workflow.research_cycle",
+                                     fromlist=["run_cycle"]).run_cycle(q), {}) or {}
+    obs = _safe(lambda: __import__("jarvis.research_workflow.market_observation",
+                                   fromlist=["observe_market"]).observe_market(), {}) or {}
+    disc = _safe(lambda: __import__("jarvis.research_workflow.hypothesis_discovery",
+                                    fromlist=["discover_research"]).discover_research(q, limit=8), {}) or {}
+    research_hyps = disc.get("research_hypotheses", [])
+    prio = _safe(lambda: __import__("jarvis.research_workflow.research_priority",
+                                    fromlist=["prioritize_research"]).prioritize_research(research_hyps, limit=8), {}) or {}
+    gate = _safe(lambda: __import__("jarvis.research_workflow.research_gate",
+                                    fromlist=["build_approval_queue"]).build_approval_queue(
+                                        prio.get("research_queue", []), limit=8), {}) or {}
+    brief = _safe(lambda: __import__("jarvis.research_workflow.research_brief",
+                                     fromlist=["build_research_brief"]).build_research_brief(topic=q), {}) or {}
+    metrics = _safe(lambda: __import__("jarvis.research_workflow.research_metrics_v3",
+                                       fromlist=["build_research_metrics"]).build_research_metrics(topic=q), {}) or {}
+    loopval = _safe(lambda: __import__("jarvis.research_workflow.autonomous_validation_v3",
+                                       fromlist=["validate_loop"]).validate_loop(), {}) or {}
+    audit = _safe(lambda: __import__("jarvis.research_workflow.autonomous_validation_v3",
+                                     fromlist=["audit_production"]).audit_production(), {}) or {}
+    release = _safe(lambda: __import__("jarvis.research_workflow.release_v30",
+                                       fromlist=["build_release_report_v30"]).build_release_report_v30(), {}) or {}
+    return {"query": q,
+            "cycle_status": {"state": cycle.get("state"),
+                             "history": cycle.get("history", []),
+                             "human_checkpoint_pending": cycle.get("human_checkpoint_pending"),
+                             "auto_backtest": cycle.get("auto_backtest")},
+            "opportunities": {"count": obs.get("opportunity_count", 0),
+                              "by_type": obs.get("by_type", {}),
+                              "items": obs.get("opportunities", [])[:6]},
+            "hypotheses": {"count": disc.get("hypothesis_count", 0),
+                           "with_why_different": disc.get("with_why_different", 0),
+                           "items": research_hyps[:6]},
+            "experiment_queue": {"queue_size": gate.get("queue_size", 0),
+                                 "requests": gate.get("requests", [])[:6],
+                                 "available_actions": gate.get("available_actions", []),
+                                 "forbidden_actions": gate.get("forbidden_actions", [])},
+            "research_ranking": {"queue": prio.get("research_queue", [])[:6],
+                                 "formula": prio.get("formula")},
+            "validation_results": brief.get("sections", {}).get("validation_results", {}),
+            "human_review_queue": {"pending": gate.get("queue_size", 0),
+                                   "actions": gate.get("available_actions", [])},
+            "metrics": metrics.get("metrics", {}),
+            "loop_validation": {"validated": loopval.get("validated"),
+                                "checks": loopval.get("checks", [])},
+            "production_audit": {"audited": audit.get("audited"),
+                                 "ledger_count": audit.get("ledger_count"),
+                                 "duplicate_logic": audit.get("duplicate_logic", [])},
+            "release": {"version": release.get("version"), "status": release.get("status"),
+                        "research_automation": release.get("research_automation"),
+                        "execution": release.get("execution"),
+                        "decision_authority": release.get("decision_authority"),
+                        "production_ready": release.get("production_ready"),
+                        "capabilities": release.get("capabilities", {})},
+            "is_advisory": True, "is_decision": False,
+            "disclaimer": ("Autonomous Research OS v3.0 — READ ONLY. 관찰→기회→가설→실험제안→사람 체크포인트→"
+                           "외부테스트→검증→랭킹→지식→다음 사이클. 연구 자동화 ON, 실행 OFF, 자동 백테스트 없음. "
+                           "BUY/SELL/EXECUTE/ALLOCATE 없음. 모든 결정은 사람.")}

@@ -105,6 +105,21 @@ from jarvis.research_workflow.research_planning import build_research_plan  # no
 from jarvis.research_workflow.collaborative_research import run_collaborative_research  # noqa: F401
 from jarvis.research_workflow.productivity_optimization import build_productivity_report  # noqa: F401
 from jarvis.research_workflow.autonomy_validation import validate_autonomy, autonomy_safety  # noqa: F401
+# P181-200 Autonomous Research Discovery & Validation Loop v3.0 — 기존 엔진 조율, 새 아키텍처 없음.
+from jarvis.research_workflow.research_cycle import ResearchCycleManager, run_cycle  # noqa: F401
+from jarvis.research_workflow.market_observation import observe_market  # noqa: F401
+from jarvis.research_workflow.hypothesis_discovery import discover_research  # noqa: F401
+from jarvis.research_workflow.experiment_designer import design_experiment  # noqa: F401
+from jarvis.research_workflow.research_priority import prioritize_research  # noqa: F401
+from jarvis.research_workflow.research_gate import build_approval_queue, act as research_gate_act  # noqa: F401
+from jarvis.research_workflow.validation_intelligence import build_validation_report  # noqa: F401
+from jarvis.research_workflow.research_selection import evaluate_research  # noqa: F401
+from jarvis.research_workflow.research_brief import build_research_brief  # noqa: F401
+from jarvis.research_workflow.research_loop_v3 import run_research_loop  # noqa: F401
+from jarvis.research_workflow.research_metrics_v3 import build_research_metrics  # noqa: F401
+from jarvis.research_workflow.research_reflection import reflect as research_reflect  # noqa: F401
+from jarvis.research_workflow.autonomous_validation_v3 import validate_loop, audit_production  # noqa: F401
+from jarvis.research_workflow.release_v30 import build_release_report_v30  # noqa: F401
 from jarvis.research_workflow.earnings_intelligence import analyze_earnings  # noqa: F401
 from jarvis.research_workflow.insider_flow import analyze_transaction  # noqa: F401
 from jarvis.research_workflow.market_data_adapter import MarketEvent, normalize  # noqa: F401

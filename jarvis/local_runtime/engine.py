@@ -213,7 +213,20 @@ class LocalRuntimeEngine:
                     {"boot_ran": boot_ran, "env": env, "health": health}, now, commit=commit)
         if commit:
             self.record_log("INFO", "runtime", "local runtime started", now, commit=commit)
+            self._sync_research_ledgers()
         return self.status(now, boot_ran=boot_ran, boot_result=boot_result)
+
+    def _sync_research_ledgers(self) -> dict:
+        """부팅 시 기존 실험 이력 → 연구 원장 멱등 반영(신규분만). **자문 전용, 거래·집행 없음.**
+
+        best-effort — 실패해도 런타임을 막지 않는다. 지연 import(순환 방지). idempotent(중복 no-op).
+        연구 원장(expt_/rmi_/ring_)만 쓴다 — 자기 집행 권한 확장 없음.
+        """
+        try:
+            from jarvis.research_workflow.backfill import sync
+            return sync()
+        except Exception:  # noqa: BLE001
+            return {}
 
     def restart(self, now="", *, run_boot=False, commit=False) -> RuntimeStatus:
         """로컬 런타임 재시작(멱등, read-only 기본). 재시작 이벤트 기록."""
@@ -228,6 +241,7 @@ class LocalRuntimeEngine:
                     {"boot_ran": boot_ran}, now, commit=commit)
         if commit:
             self.record_log("INFO", "runtime", "local runtime restarted", now, commit=commit)
+            self._sync_research_ledgers()
         return self.status(now, boot_ran=boot_ran, boot_result=boot_result)
 
     def stop(self, now="", *, commit=False) -> RuntimeEventRecord:

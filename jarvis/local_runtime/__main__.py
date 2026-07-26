@@ -3,6 +3,7 @@
   start [--boot] [--commit]      로컬 런타임 시작(기본 read-only; --boot 시 기존 boot() 통합 실행)
   restart [--boot] [--commit]    재시작(멱등)
   stop [--commit]                정지 마커
+  sync [--dry-run]               기존 실험 이력 → 연구 원장 멱등 백필(자문 전용, 거래·집행 없음)
   status                         통합 상태(기존 status() + 런타임 + 헬스 + 모듈 발견)
   health                         헬스 체크
   validate                       환경 검증
@@ -43,6 +44,17 @@ def _cmd_restart(a) -> int:
 
 def _cmd_stop(a) -> int:
     _p(_eng().stop(_now(), commit=a.commit).to_dict())
+    return 0
+
+
+def _cmd_sync(a) -> int:
+    """기존 실험 이력 → 연구 원장 멱등 백필. --dry-run 은 미리보기(원장 무변경)."""
+    from jarvis.research_workflow import backfill
+    if getattr(a, "dry_run", False):
+        p = backfill.plan()
+        _p({k: v for k, v in p.items() if k != "records"})
+    else:
+        _p(backfill.run_backfill(commit=True))
     return 0
 
 
@@ -107,15 +119,17 @@ def main(argv=None) -> int:
         p.add_argument("--commit", action="store_true")
     ps = sub.add_parser("stop")
     ps.add_argument("--commit", action="store_true")
+    psync = sub.add_parser("sync")
+    psync.add_argument("--dry-run", action="store_true")
     for name in ("status", "health", "validate", "discover", "logs", "events", "summary",
                  "verify", "replay"):
         sub.add_parser(name)
 
     args = ap.parse_args(argv)
-    disp = {"start": _cmd_start, "restart": _cmd_restart, "stop": _cmd_stop, "status": _cmd_status,
-            "health": _cmd_health, "validate": _cmd_validate, "discover": _cmd_discover,
-            "logs": _cmd_logs, "events": _cmd_events, "summary": _cmd_summary,
-            "verify": _cmd_verify, "replay": _cmd_replay}
+    disp = {"start": _cmd_start, "restart": _cmd_restart, "stop": _cmd_stop, "sync": _cmd_sync,
+            "status": _cmd_status, "health": _cmd_health, "validate": _cmd_validate,
+            "discover": _cmd_discover, "logs": _cmd_logs, "events": _cmd_events,
+            "summary": _cmd_summary, "verify": _cmd_verify, "replay": _cmd_replay}
     return disp[args.cmd](args)
 
 

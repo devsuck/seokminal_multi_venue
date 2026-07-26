@@ -89,6 +89,11 @@ from jarvis.research_workflow.operational_metrics import build_operational_metri
 from jarvis.research_workflow.governance import build_governance  # noqa: F401
 from jarvis.research_workflow.system_validation import validate_system  # noqa: F401
 from jarvis.research_workflow.release_v20 import build_release_report  # noqa: F401
+from jarvis.research_workflow.backfill import (  # noqa: F401
+    plan as backfill_plan,
+    run_backfill,
+    sync as backfill_sync,
+)
 from jarvis.research_workflow.earnings_intelligence import analyze_earnings  # noqa: F401
 from jarvis.research_workflow.insider_flow import analyze_transaction  # noqa: F401
 from jarvis.research_workflow.market_data_adapter import MarketEvent, normalize  # noqa: F401

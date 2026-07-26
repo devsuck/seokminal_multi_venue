@@ -11,8 +11,9 @@ from __future__ import annotations
 
 # 사이클 정의(결정적) — cadence + 기본 태스크 셋
 CYCLES = {
-    "daily": {"cadence": "0 8 * * 1-5", "tasks": ["morning_briefing", "company_monitor",
-                                                  "opportunity_scan", "review_queue_refresh"]},
+    "daily": {"cadence": "0 8 * * 1-5", "tasks": ["research_ledger_sync", "morning_briefing",
+                                                  "company_monitor", "opportunity_scan",
+                                                  "review_queue_refresh"]},
     "weekly": {"cadence": "0 8 * * 1", "tasks": ["strategy_health", "weekly_letter",
                                                  "knowledge_health", "conflict_scan"]},
     "monthly": {"cadence": "0 8 1 * *", "tasks": ["strategy_review", "agent_performance",

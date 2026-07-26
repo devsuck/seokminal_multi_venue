@@ -323,3 +323,39 @@ def test_research_brain_endpoint():
     assert set(rb) >= {"knowledge_graph", "past_research", "failure_patterns", "strategy_memory",
                        "company_memory", "conflicts", "lessons", "knowledge_health"}
     assert rb["is_decision"] is False
+
+
+# ── P141-150 Research Operations & Institutional Deployment ──
+def test_research_schedule_endpoint():
+    from api_server.console_api import research_schedule
+    p = research_schedule("daily")
+    assert p["cycle_type"] == "daily" and p["auto_execution"] is False
+
+
+def test_morning_briefing_endpoint():
+    from api_server.console_api import morning_briefing
+    assert len(morning_briefing()["brief"]) == 6
+
+
+def test_company_monitor_endpoint():
+    from api_server.console_api import company_monitor
+    assert company_monitor("NVDA")["research_priority"] in ("LOW", "MEDIUM", "HIGH")
+
+
+def test_agent_performance_endpoint():
+    from api_server.console_api import agent_performance_endpoint
+    assert agent_performance_endpoint()["autonomous_self_modification"] is False
+
+
+def test_research_ops_validation_endpoint():
+    from api_server.console_api import research_ops_validation
+    v = research_ops_validation()
+    assert v["operational"] is True and v["safety"]["safe"] is True
+
+
+def test_research_organization_endpoint():
+    from api_server.console_api import research_organization
+    ro = research_organization()
+    assert set(ro) >= {"market_overview", "company_monitoring", "strategy_health", "agent_status",
+                       "knowledge_health", "research_reports", "review_queue", "operational_status"}
+    assert ro["is_decision"] is False

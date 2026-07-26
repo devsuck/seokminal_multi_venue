@@ -1502,3 +1502,104 @@ def _failure_patterns() -> dict:
     d = fi.to_dict() if hasattr(fi, "to_dict") else dict(fi)
     return {"total_failures": d.get("total_failures", 0), "by_category": d.get("by_category", {}),
             "top_category": d.get("top_category"), "lessons": d.get("lessons", [])[:8]}
+
+
+# ══════════════ Research Operations & Institutional Deployment (P141-150) — READ ONLY, ADVISORY ══════════════
+@router.get("/research-schedule")
+def research_schedule(cycle: str = "daily") -> dict:
+    """P141 — 연구 운영 계획(daily/weekly/monthly): 태스크·배정·검토큐. 자동 투자 없음. READ ONLY."""
+    from jarvis.research_workflow.research_scheduler import plan_cycle
+    return _safe(lambda: plan_cycle(cycle), {"tasks": []}) or {}
+
+
+@router.get("/morning-briefing")
+def morning_briefing() -> dict:
+    """P142 — Daily Market Brief(시장·레짐·이벤트·기회·리스크·교훈 + confidence·limitations). READ ONLY."""
+    demo_events = [{"kind": "macro", "text": "CPI surprise"}, {"kind": "earnings", "text": "NVDA earnings"}]
+    from jarvis.research_workflow.morning_briefing import generate
+    return _safe(lambda: generate(events=demo_events), {"brief": {}}) or {}
+
+
+@router.get("/company-monitor")
+def company_monitor(company: str = "") -> dict:
+    """P143 — CompanyUpdateReport(재무·실적·뉴스·소유 변화·영향·우선순위). 신호 아님. READ ONLY."""
+    def _run():
+        name = (company or "NVDA").strip()
+        from jarvis.research_workflow.company_monitor import update
+        return update(name, financials=[{"company": name, "expected": {"eps": 0.5},
+                      "actual": {"eps": 0.62}}], headlines=[{"text": f"{name} product news", "entity": name}])
+    return _safe(_run, {"events": []}) or {}
+
+
+@router.get("/strategy-health")
+def strategy_health_endpoint() -> dict:
+    """P144 — 전략 건강 보드(성과·검증·레짐·리스크·과거). READ ONLY."""
+    from jarvis.research_workflow.strategy_health import StrategyHealthMonitor
+    return _safe(lambda: StrategyHealthMonitor().board(), {"strategies": []}) or {}
+
+
+@router.get("/agent-performance")
+def agent_performance_endpoint() -> dict:
+    """P148 — Agent Performance Report(디렉터/분석/비평/작성 품질). 자율 자기수정 아님. READ ONLY."""
+    from jarvis.research_workflow.agent_performance import report
+    return _safe(lambda: report(objective="momentum research"), {"agents": {}}) or {}
+
+
+@router.get("/research-workspace")
+def research_workspace_endpoint(topic: str = "") -> dict:
+    """P146 — 사람 연구 워크스페이스(inbox·review queue·agent outputs·history). 투자 승인·거래 없음. READ ONLY."""
+    from jarvis.research_workflow.research_workspace import build_workspace
+    return _safe(lambda: build_workspace(topic=topic), {"review_queue": []}) or {}
+
+
+@router.get("/research-ops-validation")
+def research_ops_validation() -> dict:
+    """P150 — Jarvis Research OS v1.5 검증(스케줄러·에이전트·리포트·지식·사람검토·무중복·안전). READ ONLY."""
+    from jarvis.research_workflow.ops_validation import validate_research_ops
+    return _safe(validate_research_ops, {"operational": False, "checks": []}) or {}
+
+
+@router.get("/research-organization")
+def research_organization(topic: str = "") -> dict:
+    """P149 통합 — Research Organization Dashboard: market·company·strategy·agent·knowledge·reports·review.
+    **READ ONLY. 자문만, 자동 거래·집행·자본배분 없음. 사람이 모든 결정.**"""
+    briefing = _safe(lambda: __import__("jarvis.research_workflow.morning_briefing", fromlist=["generate"])
+                     .generate(events=[{"kind": "macro", "text": "CPI"}]), {}) or {}
+    company = _safe(lambda: __import__("jarvis.research_workflow.company_monitor", fromlist=["update"])
+                    .update("NVDA", financials=[{"company": "NVDA", "expected": {"eps": 0.5},
+                            "actual": {"eps": 0.62}}]), {}) or {}
+    health = _safe(lambda: __import__("jarvis.research_workflow.strategy_health",
+                                      fromlist=["StrategyHealthMonitor"]).StrategyHealthMonitor().board(),
+                   {"strategies": []}) or {}
+    agents = _safe(lambda: __import__("jarvis.research_workflow.agent_performance", fromlist=["report"])
+                   .report(objective="momentum research"), {}) or {}
+    knowledge = _safe(lambda: __import__("jarvis.research_workflow.knowledge_quality",
+                                         fromlist=["build_knowledge_health"]).build_knowledge_health(), {}) or {}
+    workspace = _safe(lambda: __import__("jarvis.research_workflow.research_workspace",
+                                         fromlist=["build_workspace"]).build_workspace(topic=topic), {}) or {}
+    v15 = _safe(lambda: __import__("jarvis.research_workflow.ops_validation",
+                                   fromlist=["validate_research_ops"]).validate_research_ops(),
+                {"operational": False}) or {}
+    brief = briefing.get("brief", {})
+    return {"market_overview": {"regime": brief.get("2_current_regime", {}),
+                                "opportunities": brief.get("4_research_opportunities", []),
+                                "risk_factors": brief.get("5_risk_factors", []),
+                                "confidence": briefing.get("confidence")},
+            "company_monitoring": {"company": company.get("company"), "events": company.get("events", []),
+                                   "impact": company.get("impact", {}),
+                                   "research_priority": company.get("research_priority")},
+            "strategy_health": {"strategies": health.get("strategies", []),
+                                "review_needed_count": health.get("review_needed_count", 0)},
+            "agent_status": {"agents": agents.get("agents", {}),
+                             "overall_effectiveness": agents.get("overall_effectiveness")},
+            "knowledge_health": {"health_score": knowledge.get("health_score"),
+                                 "grade": knowledge.get("grade"), "issues": knowledge.get("issues", {})},
+            "research_reports": workspace.get("agent_outputs", [])[:6],
+            "review_queue": workspace.get("review_queue", []),
+            "operational_status": {"operational": v15.get("operational"),
+                                   "version": v15.get("version"),
+                                   "capabilities": v15.get("capabilities", [])},
+            "is_advisory": True, "is_decision": False,
+            "disclaimer": ("Research Organization — READ ONLY. External Data→Opportunity→Agent Research→"
+                           "Experiment→Validation→Knowledge Update→Improvement. 자문만, 자동 거래·집행·자본배분 "
+                           "없음. 사람이 모든 투자 결정.")}

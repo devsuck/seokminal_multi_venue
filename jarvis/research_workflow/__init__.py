@@ -61,6 +61,15 @@ from jarvis.research_workflow.learning_engine import ResearchLearningEngine, lea
 from jarvis.research_workflow.agent_memory import knowledge_informed_research  # noqa: F401
 from jarvis.research_workflow.knowledge_quality import build_knowledge_health  # noqa: F401
 from jarvis.research_workflow.brain_validation import validate_brain, brain_safety  # noqa: F401
+from jarvis.research_workflow.research_scheduler import ResearchScheduler, plan_cycle  # noqa: F401
+from jarvis.research_workflow.morning_briefing import MorningBriefingGenerator, generate as generate_briefing  # noqa: F401
+from jarvis.research_workflow.company_monitor import CompanyMonitor, update as monitor_company  # noqa: F401
+from jarvis.research_workflow.strategy_health import StrategyHealthMonitor, report as strategy_health_report  # noqa: F401
+from jarvis.research_workflow.report_automation import ReportAutomation, generate as generate_report  # noqa: F401
+from jarvis.research_workflow.research_workspace import build_workspace, act as workspace_act  # noqa: F401
+from jarvis.research_workflow.research_outcome_tracker import ResearchOutcomeTracker, track as track_outcome  # noqa: F401
+from jarvis.research_workflow.agent_performance import AgentPerformanceMonitor, report as agent_performance_report  # noqa: F401
+from jarvis.research_workflow.ops_validation import validate_research_ops, ops_safety  # noqa: F401
 from jarvis.research_workflow.earnings_intelligence import analyze_earnings  # noqa: F401
 from jarvis.research_workflow.insider_flow import analyze_transaction  # noqa: F401
 from jarvis.research_workflow.market_data_adapter import MarketEvent, normalize  # noqa: F401

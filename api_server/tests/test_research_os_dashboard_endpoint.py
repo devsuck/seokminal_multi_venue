@@ -400,3 +400,51 @@ def test_institutional_intelligence_endpoint():
     assert set(ii) >= {"data_production_health", "market_intelligence", "sector_intelligence",
                        "macro_context", "company_intelligence", "knowledge_context", "quality_scores"}
     assert ii["is_decision"] is False
+
+
+# ── P161-170 Institutional Committee & Production Readiness ──
+def test_committee_packet_endpoint():
+    from api_server.console_api import committee_packet_endpoint
+    c = committee_packet_endpoint("momentum")
+    assert "questions_for_human" in c and c["is_decision"] is False
+
+
+def test_conviction_endpoint():
+    from api_server.console_api import conviction_endpoint
+    assert conviction_endpoint()["conviction_level"] in ("LOW", "MEDIUM", "HIGH")
+
+
+def test_decision_center_endpoint_forbidden():
+    from api_server.console_api import decision_center_endpoint
+    d = decision_center_endpoint()
+    assert "approve_trade" in d["forbidden_actions"]
+
+
+def test_production_status_endpoint():
+    from api_server.console_api import production_status_endpoint
+    assert production_status_endpoint()["overall_severity"] in ("OK", "WARNING", "CRITICAL")
+
+
+def test_governance_endpoint():
+    from api_server.console_api import governance_endpoint
+    assert governance_endpoint()["governance"] == "COMPLIANT"
+
+
+def test_system_validation_endpoint():
+    from api_server.console_api import system_validation_endpoint
+    assert system_validation_endpoint()["validated"] is True
+
+
+def test_release_v20_endpoint():
+    from api_server.console_api import release_v20_endpoint
+    r = release_v20_endpoint()
+    assert r["release_ready"] is True and r["architecture_frozen"] is True
+
+
+def test_production_readiness_endpoint():
+    from api_server.console_api import production_readiness
+    p = production_readiness()
+    assert set(p) >= {"institutional_overview", "committee_packet", "debate", "conviction",
+                      "portfolio_research", "governance_status", "production_health",
+                      "operational_metrics", "review_queue"}
+    assert p["is_decision"] is False

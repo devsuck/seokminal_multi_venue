@@ -26,6 +26,9 @@ DEPTH_SNAPSHOT_LIMIT = 5000
 # (래더 ×100 배율에서 몇 칸밖에 안 뜨는 원인). ×1000까지 쓰려면 더 넓게 필요해서 스냅샷
 # 상한(5000)까지 그대로 들고 있는다.
 LOCAL_BOOK_MAX_LEVELS = 5000
+# @depth@100ms(초당 10회) 그대로 매번 정렬+객체화하면 낭비 — 소비자 쪽 스로틀(컬렉터
+# 1초/라이브 대시보드 0.15초)이 다 이보다 널널해서 여기서 한 번 더 걸어도 아무도 손해 안 봄.
+DEPTH_EMIT_THROTTLE_SEC = 0.2
 
 # HL 코인 심볼(예: "BTC") → 바이낸스 spot 심볼
 BINANCE_SYMBOL_MAP = {"BTC": "btcusdt", "ETH": "ethusdt", "SOL": "solusdt"}
@@ -62,7 +65,13 @@ class BinanceOrderflowClient:
                 if event is not None:
                     yield event
 
-    async def stream_depth(self, coin: str) -> AsyncIterator[OrderBookSnapshot]:
+    async def stream_depth(
+        self,
+        coin: str,
+        *,
+        now_fn: Callable[[], float] = time.monotonic,
+        throttle_sec: float = DEPTH_EMIT_THROTTLE_SEC,
+    ) -> AsyncIterator[OrderBookSnapshot]:
         pair = BINANCE_SYMBOL_MAP.get(coin)
         if pair is None:
             return
@@ -75,6 +84,7 @@ class BinanceOrderflowClient:
         url = f"{self._base_url}/{pair}@depth@100ms"
         synced = False
         prev_u: int | None = None
+        last_emit = float("-inf")
         async with self._connect_fn(url) as connection:
             async for raw in connection:
                 diff = parse_binance_diff_message(raw)
@@ -107,15 +117,23 @@ class BinanceOrderflowClient:
                 prev_u = diff["u"]
                 apply_binance_diff(bids, diff["b"])
                 apply_binance_diff(asks, diff["a"])
-                yield OrderBookSnapshot(
+                # dict 갱신은 매 메시지 하되, 정렬+객체화(비싼 연산)는 스로틀 통과할 때만 —
+                # 100ms 스트림 그대로 매번 5000레벨 재구성하면 대부분 아무도 안 쓰고 버려짐.
+                now = now_fn()
+                if now - last_emit < throttle_sec:
+                    continue
+                last_emit = now
+                # model_construct: pydantic 검증(이미 float()로 타입 보장된 값 재검증)이
+                # CPU 낭비 — 값은 그대로, 검증만 스킵.
+                yield OrderBookSnapshot.model_construct(
                     symbol=f"{coin}.HL",
                     ts=time.time(),
                     bids=[
-                        OrderBookLevel(price=p, size=s)
+                        OrderBookLevel.model_construct(price=p, size=s)
                         for p, s in sorted(bids.items(), reverse=True)[:LOCAL_BOOK_MAX_LEVELS]
                     ],
                     asks=[
-                        OrderBookLevel(price=p, size=s)
+                        OrderBookLevel.model_construct(price=p, size=s)
                         for p, s in sorted(asks.items())[:LOCAL_BOOK_MAX_LEVELS]
                     ],
                 )

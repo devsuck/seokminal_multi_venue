@@ -39,7 +39,8 @@ def _trim_levels(snapshot: dict, max_levels: int = STORAGE_MAX_LEVELS) -> dict:
     return {**snapshot, "bids": snapshot["bids"][:max_levels], "asks": snapshot["asks"][:max_levels]}
 
 
-def append_snapshots(venue: str, coin: str, snapshots: list[dict]) -> None:
+def append_snapshots(venue: str, coin: str, snapshots: list[OrderBookSnapshot]) -> None:
+    """스로틀 통과분만 `model_dump()` — 매 WS메시지마다 직렬화하던 게 CPU 낭비였음(대부분 버려짐)."""
     if not snapshots:
         return
     now = time.monotonic()
@@ -51,7 +52,7 @@ def append_snapshots(venue: str, coin: str, snapshots: list[dict]) -> None:
     path = _DATA_DIR / f"{venue}_{coin}_{dt.datetime.now(dt.timezone.utc).date().isoformat()}.jsonl"
     with path.open("a") as f:
         for s in snapshots:
-            f.write(json.dumps(_trim_levels(s), ensure_ascii=False) + "\n")
+            f.write(json.dumps(_trim_levels(s.model_dump()), ensure_ascii=False) + "\n")
 
 
 def _make_client(venue: str):
@@ -87,7 +88,7 @@ async def run_venue_coin_forever(
             async for event in _venue_stream(client, venue, coin):
                 if isinstance(event, OrderBookSnapshot):
                     received_snapshot = True
-                    append_fn(venue, coin, [event.model_dump()])
+                    append_fn(venue, coin, [event])
             if received_snapshot:
                 # 정상 수신하다 스트림 종료 — 백오프 불필요
                 delay = RECONNECT_BASE_DELAY

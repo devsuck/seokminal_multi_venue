@@ -91,6 +91,33 @@ def get_markets(limit: int = 200, active: bool = True, closed: bool = False) -> 
     return out
 
 
+def get_mlb_game_markets(limit: int = 200) -> list[dict]:
+    """예정/진행중인 MLB 경기 이벤트(무니라인/NRFI/props 등)의 개별 마켓.
+
+    `get_markets`(거래량 내림차순 top-N)는 크립토 up/down·e스포츠 같은 초고빈도
+    마이크로마켓이 볼륨 상위를 다 차지해서 상대적으로 거래량 작은 MLB 경기 마켓이
+    top-100~500 안에 거의 안 들어옴(실라이브 확인 2026-07-24: mlb_cids 1개만 잡힘).
+    `/events?tag_slug=mlb`는 거래량과 무관하게 MLB 태그가 붙은 이벤트를 다 주므로 이걸 쓴다.
+    ⚠️ 이벤트의 `startDate`는 경기 시각이 아니라 마켓 개설(베팅 오픈)일이라
+    `start_date_min=지금`으로 걸면 이미 개설된 이벤트가 다 잘려나가 0건이 됨(실라이브
+    확인 2026-07-24) — date 필터 없이 startDate 내림차순(최근 개설=임박/당일 경기 우선)만
+    쓴다. 실제 "경기가 아직 안 끝났나"는 mlb_condition_ids의 game_start_time 체크와
+    무관하게 애초에 closed=false 필터로 걸러진다."""
+    raw = _get("/events", {
+        "limit": limit, "active": "true", "closed": "false",
+        "tag_slug": "mlb", "order": "startDate", "ascending": "false",
+    })
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for event in raw:
+        for m in event.get("markets") or []:
+            mapped = _map_market(m)
+            if mapped:
+                out.append(mapped)
+    return out
+
+
 def get_updown_markets(limit: int = 100) -> list[dict]:
     """마감임박순 크립토 up/down 마켓(슬러그: `{coin}-updown-{5m|15m}-{ts}`).
 

@@ -2,7 +2,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-import api_server.router_autopilot as rp
+from api_server.routers import alpaca_shared as shared
 from api_server.main import app
 
 
@@ -10,7 +10,7 @@ from api_server.main import app
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENT_DB_PATH", str(tmp_path / "agents.db"))
     # Avoid network: US scores come back empty → AVOID, no orders.
-    monkeypatch.setattr(rp, "_fetch_intraday_bars", lambda s, days=2: [])
+    monkeypatch.setattr(shared, "_fetch_intraday_bars", lambda s, days=2: [])
     # Alpaca client stub (account + positions)
     class _Acct:  equity = 100000.0
     class _Cli:
@@ -18,7 +18,7 @@ def client(tmp_path, monkeypatch):
         def get_all_positions(self): return []
         def close_position(self, s): pass
         def submit_order(self, r): pass
-    monkeypatch.setattr(rp, "_trading_client", lambda *a, **k: _Cli())
+    monkeypatch.setattr(shared, "_trading_client", lambda *a, **k: _Cli())
     return TestClient(app)
 
 
@@ -33,7 +33,7 @@ def test_daytrade_tick_us_no_crash(client):
 
 def test_swing_kr_routes_to_kr_not_us(client, monkeypatch):
     """스윙(장투) 봇 + market=KR → KR 실행(KIS), US(Alpaca) 아님. 통화 오라우팅 회귀."""
-    monkeypatch.setattr(rp, "_fetch_kr_intraday_bars", lambda s: [])
+    monkeypatch.setattr(shared, "_fetch_kr_intraday_bars", lambda s: [])
 
     class _KIS:
         def __init__(self, *a, **k): pass

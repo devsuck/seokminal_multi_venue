@@ -167,7 +167,10 @@ async def test_stream_depth_hard_resyncs_on_mid_stream_gap():
         return snap
 
     client = BinanceOrderflowClient(connect_fn=fake_connect, fetch_snapshot_fn=fake_fetch_snapshot)
-    events = [e async for e in client.stream_depth("BTC")]
+    # throttle_sec=0: 이 테스트는 유효 diff마다 매번 yield되는지 검증하는 게 목적이라
+    # 실시간 스로틀(기본 0.2초)을 끔 — 안 끄면 테스트가 순식간에 돌아서 두 번째 emit이
+    # 스로틀에 걸려 사라짐.
+    events = [e async for e in client.stream_depth("BTC", throttle_sec=0.0)]
 
     assert calls["n"] == 2  # 최초 스냅샷 + 갭으로 인한 리싱크 1회
     assert len(events) == 2  # gap_diff는 리싱크 트리거로 폐기, 나머지 2개만 yield

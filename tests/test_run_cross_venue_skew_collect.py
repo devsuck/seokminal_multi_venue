@@ -45,7 +45,7 @@ class FakeClient:
 
 def test_append_snapshots_writes_jsonl_to_venue_coin_dated_file(tmp_path):
     with patch.object(runner, "_DATA_DIR", tmp_path):
-        runner.append_snapshots("binance", "BTC", [_book().model_dump(), _book(price=101.0).model_dump()])
+        runner.append_snapshots("binance", "BTC", [_book(), _book(price=101.0)])
         path = tmp_path / f"binance_BTC_{dt.datetime.now(dt.timezone.utc).date().isoformat()}.jsonl"
         lines = path.read_text().strip().splitlines()
     assert len(lines) == 2
@@ -66,8 +66,8 @@ async def test_run_venue_coin_forever_appends_only_book_snapshots_not_trades():
         append_fn=lambda venue, coin, snaps: appended.extend(snaps), max_cycles=1,
     )
     assert len(appended) == 2
-    assert appended[0]["bids"][0]["price"] == 99.0
-    assert appended[1]["bids"][0]["price"] == 101.0
+    assert appended[0].bids[0].price == 99.0
+    assert appended[1].bids[0].price == 101.0
 
 
 async def test_run_venue_coin_forever_uses_stream_depth_for_non_hl_venues():

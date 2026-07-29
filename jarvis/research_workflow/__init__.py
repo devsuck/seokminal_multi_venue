@@ -139,6 +139,9 @@ from jarvis.research_workflow.prediction_registry import (  # noqa: F401
 # P202 Migration Safety Net — characterization(meaning==meaning) + capture hook + ledger contract.
 from jarvis.research_workflow.ledger_writer import JsonlLedgerBackend, LedgerBackend  # noqa: F401
 from jarvis.research_workflow.characterization import build_meaning_snapshot, compare_to_golden  # noqa: F401
+from jarvis.research_workflow.characterization import build_call_graph, compare_call_graph  # noqa: F401
+# P204 Research Discovery Facade — 가설 발견 단일 공개 namespace(내부 모듈 유지·deprecated).
+from jarvis.research_workflow import research_discovery  # noqa: F401
 from jarvis.research_workflow.prediction_capture_hook import (  # noqa: F401
     capture_from_agent,
     capture_from_committee,

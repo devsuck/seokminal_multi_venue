@@ -443,17 +443,18 @@ def edges_meta() -> dict:
     (FDR 생존/최소 p-value/표본수/유의여부) + 감쇠 궤적. 읽기전용, 백그라운드 워밍.
     ⚠️ 스크리닝 결과일 뿐 실집행 근거 아님. research/hypothesis_registry.py 참고."""
     import time
-    from research import edge_history
+    from research import edge_history, edge_graduation
     from research.hypothesis_registry import registry_list
     _maybe_warm_edge()
     reports = _edge_val_cache["reports"]
     edges = []
-    n_sig = n_warm = 0
+    n_sig = n_warm = n_grad = 0
     for entry in registry_list():
         key = entry["key"]
         traj = edge_history.load_trajectory(key)
         row = {**entry, "trajectory": traj, "trend": edge_history.trajectory_trend(traj)}
         rep = reports.get(key)
+        summ = None
         if entry["warmable"]:
             n_warm += 1
             if rep is not None:
@@ -468,11 +469,16 @@ def edges_meta() -> dict:
                 row["status"] = "warming"
         else:
             row["status"] = "pending"      # 맥 데이터 조립/백테스트 대기
+        # 졸업 스코어카드(수익 게이트): 요약+궤적 → graduated/failed/accumulating
+        row["grade"] = edge_graduation.grade_edge(summ, traj)
+        if row["grade"]["status"] == "graduated":
+            n_grad += 1
         edges.append(row)
     return {
         "edges": edges,
         "portfolio": {"n_total": len(edges), "n_warmable": n_warm,
-                      "n_significant": n_sig, "n_pending": len(edges) - n_warm},
+                      "n_significant": n_sig, "n_graduated": n_grad,
+                      "n_pending": len(edges) - n_warm},
         "ts": _edge_val_cache["ts"],
         "warming": _edge_val_cache["warming"],
         "age_sec": round(time.time() - _edge_val_cache["ts"], 1) if _edge_val_cache["ts"] else None,

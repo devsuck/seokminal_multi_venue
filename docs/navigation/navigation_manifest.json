@@ -1,0 +1,452 @@
+{
+  "section_count": 4,
+  "item_count": 10,
+  "module_count": 142,
+  "coverage": 1.0,
+  "duplicate_page_count": 19,
+  "digest": "sha256:972006d2e34e9020",
+  "generated_at": "",
+  "sections": [
+    {
+      "section": "Research",
+      "item_count": 3,
+      "module_count": 37,
+      "items": [
+        {
+          "section": "Research",
+          "item": "Alpha",
+          "module_count": 32,
+          "modules": [
+            "adaptive_research_loop",
+            "alpha_intelligence",
+            "autonomous_research",
+            "autonomous_research_evaluation",
+            "autonomous_research_os",
+            "autonomous_research_pipeline",
+            "causal_intelligence",
+            "decision_intelligence",
+            "fusion",
+            "meta_intelligence",
+            "meta_research_intelligence",
+            "planner",
+            "research_automation",
+            "research_data",
+            "research_event_bus",
+            "research_evolution",
+            "research_improvement",
+            "research_lifecycle",
+            "research_manager",
+            "research_navigation",
+            "research_optimization_engine",
+            "research_orchestration",
+            "research_organization",
+            "research_os",
+            "research_os_core",
+            "research_planning",
+            "research_reliability",
+            "research_risk_intelligence",
+            "research_strategy_generation",
+            "research_task_planner",
+            "research_validation",
+            "self_improvement_intelligence"
+          ]
+        },
+        {
+          "section": "Research",
+          "item": "Simulation",
+          "module_count": 2,
+          "modules": [
+            "paper",
+            "simulation_environment"
+          ]
+        },
+        {
+          "section": "Research",
+          "item": "Experiments",
+          "module_count": 3,
+          "modules": [
+            "experiment_manager",
+            "experiment_orchestration",
+            "experiment_tracking"
+          ]
+        }
+      ]
+    },
+    {
+      "section": "Knowledge",
+      "item_count": 3,
+      "module_count": 14,
+      "items": [
+        {
+          "section": "Knowledge",
+          "item": "Graph",
+          "module_count": 1,
+          "modules": [
+            "research_kg"
+          ]
+        },
+        {
+          "section": "Knowledge",
+          "item": "Memory",
+          "module_count": 6,
+          "modules": [
+            "governance_memory",
+            "memory",
+            "research_experience_memory",
+            "research_memory",
+            "research_memory_intelligence",
+            "research_memory_system"
+          ]
+        },
+        {
+          "section": "Knowledge",
+          "item": "Insights",
+          "module_count": 7,
+          "modules": [
+            "continuous_learning",
+            "knowledge",
+            "knowledge_intelligence",
+            "knowledge_sharing",
+            "research_insight_intelligence",
+            "research_learning",
+            "research_literature"
+          ]
+        }
+      ]
+    },
+    {
+      "section": "Agents",
+      "item_count": 2,
+      "module_count": 11,
+      "items": [
+        {
+          "section": "Agents",
+          "item": "Tasks",
+          "module_count": 11,
+          "modules": [
+            "agent_governance",
+            "agent_runtime",
+            "agents",
+            "research_agent_coordination",
+            "research_agent_coordinator",
+            "research_agents",
+            "research_collaboration",
+            "research_conflict_resolution",
+            "research_coordinator",
+            "research_council",
+            "research_reviewer"
+          ]
+        },
+        {
+          "section": "Agents",
+          "item": "History",
+          "module_count": 0,
+          "modules": []
+        }
+      ]
+    },
+    {
+      "section": "System",
+      "item_count": 2,
+      "module_count": 80,
+      "items": [
+        {
+          "section": "System",
+          "item": "Monitoring",
+          "module_count": 9,
+          "modules": [
+            "benchmark",
+            "diagnostics",
+            "observability",
+            "profiling",
+            "research_monitoring",
+            "research_observability",
+            "research_observatory",
+            "resilience",
+            "system_health"
+          ]
+        },
+        {
+          "section": "System",
+          "item": "Configuration",
+          "module_count": 71,
+          "modules": [
+            "access_governance",
+            "architecture_docs",
+            "audit",
+            "autonomous_experiment_scheduler",
+            "broker_readonly",
+            "cache",
+            "compliance",
+            "concurrency",
+            "data_governance",
+            "data_infrastructure",
+            "db",
+            "dependency",
+            "documentation",
+            "emergency",
+            "execution",
+            "execution_audit",
+            "execution_control",
+            "execution_cost",
+            "execution_readiness",
+            "execution_reconciliation",
+            "execution_risk",
+            "execution_simulation",
+            "fill_reconciliation",
+            "governance_evolution",
+            "governance_feedback",
+            "governance_orchestration",
+            "integration_audit",
+            "integrity",
+            "license",
+            "live_execution",
+            "live_market_data",
+            "local_runtime",
+            "market_data",
+            "model_governance",
+            "model_management",
+            "operational_audit",
+            "operations",
+            "operations_console",
+            "order_lifecycle",
+            "paper_execution",
+            "performance",
+            "permissions",
+            "policy_governance",
+            "portfolio",
+            "portfolio_research",
+            "post_trade_analytics",
+            "production",
+            "production_readiness",
+            "production_review",
+            "reconciliation",
+            "recovery_control",
+            "redteam",
+            "registry",
+            "release_candidate",
+            "research_api",
+            "research_api_gateway",
+            "research_compliance",
+            "research_control",
+            "research_control_plane",
+            "research_dashboard_backend",
+            "research_governance",
+            "research_operations",
+            "research_resource_manager",
+            "risk",
+            "sbom",
+            "security",
+            "security_audit",
+            "self_audit_intelligence",
+            "system_integration",
+            "threat_model",
+            "workflow_automation"
+          ]
+        }
+      ]
+    }
+  ],
+  "duplicate_pages": [
+    {
+      "section": "Agents",
+      "item": "Tasks",
+      "family": "agent",
+      "members": [
+        "agent_governance",
+        "agent_runtime"
+      ]
+    },
+    {
+      "section": "Agents",
+      "item": "Tasks",
+      "family": "research",
+      "members": [
+        "research_agents",
+        "research_collaboration",
+        "research_coordinator",
+        "research_council",
+        "research_reviewer"
+      ]
+    },
+    {
+      "section": "Agents",
+      "item": "Tasks",
+      "family": "research_agent",
+      "members": [
+        "research_agent_coordination",
+        "research_agent_coordinator"
+      ]
+    },
+    {
+      "section": "Knowledge",
+      "item": "Insights",
+      "family": "knowledge",
+      "members": [
+        "knowledge",
+        "knowledge_intelligence",
+        "knowledge_sharing"
+      ]
+    },
+    {
+      "section": "Knowledge",
+      "item": "Insights",
+      "family": "research",
+      "members": [
+        "research_learning",
+        "research_literature"
+      ]
+    },
+    {
+      "section": "Knowledge",
+      "item": "Memory",
+      "family": "research_memory",
+      "members": [
+        "research_memory_intelligence",
+        "research_memory_system"
+      ]
+    },
+    {
+      "section": "Research",
+      "item": "Alpha",
+      "family": "autonomous_research",
+      "members": [
+        "autonomous_research_evaluation",
+        "autonomous_research_os",
+        "autonomous_research_pipeline"
+      ]
+    },
+    {
+      "section": "Research",
+      "item": "Alpha",
+      "family": "research",
+      "members": [
+        "research_automation",
+        "research_data",
+        "research_evolution",
+        "research_improvement",
+        "research_lifecycle",
+        "research_manager",
+        "research_navigation",
+        "research_orchestration",
+        "research_organization",
+        "research_os",
+        "research_planning",
+        "research_reliability",
+        "research_validation"
+      ]
+    },
+    {
+      "section": "Research",
+      "item": "Experiments",
+      "family": "experiment",
+      "members": [
+        "experiment_manager",
+        "experiment_orchestration",
+        "experiment_tracking"
+      ]
+    },
+    {
+      "section": "System",
+      "item": "Configuration",
+      "family": "data",
+      "members": [
+        "data_governance",
+        "data_infrastructure"
+      ]
+    },
+    {
+      "section": "System",
+      "item": "Configuration",
+      "family": "execution",
+      "members": [
+        "execution",
+        "execution_audit",
+        "execution_control",
+        "execution_cost",
+        "execution_readiness",
+        "execution_reconciliation",
+        "execution_risk",
+        "execution_simulation"
+      ]
+    },
+    {
+      "section": "System",
+      "item": "Configuration",
+      "family": "governance",
+      "members": [
+        "governance_evolution",
+        "governance_feedback",
+        "governance_orchestration"
+      ]
+    },
+    {
+      "section": "System",
+      "item": "Configuration",
+      "family": "model",
+      "members": [
+        "model_governance",
+        "model_management"
+      ]
+    },
+    {
+      "section": "System",
+      "item": "Configuration",
+      "family": "operations",
+      "members": [
+        "operations",
+        "operations_console"
+      ]
+    },
+    {
+      "section": "System",
+      "item": "Configuration",
+      "family": "portfolio",
+      "members": [
+        "portfolio",
+        "portfolio_research"
+      ]
+    },
+    {
+      "section": "System",
+      "item": "Configuration",
+      "family": "production",
+      "members": [
+        "production",
+        "production_readiness",
+        "production_review"
+      ]
+    },
+    {
+      "section": "System",
+      "item": "Configuration",
+      "family": "research",
+      "members": [
+        "research_api",
+        "research_compliance",
+        "research_control",
+        "research_governance",
+        "research_operations"
+      ]
+    },
+    {
+      "section": "System",
+      "item": "Configuration",
+      "family": "security",
+      "members": [
+        "security",
+        "security_audit"
+      ]
+    },
+    {
+      "section": "System",
+      "item": "Monitoring",
+      "family": "research",
+      "members": [
+        "research_monitoring",
+        "research_observability",
+        "research_observatory"
+      ]
+    }
+  ]
+}

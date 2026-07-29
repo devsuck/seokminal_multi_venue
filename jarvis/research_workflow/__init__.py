@@ -158,6 +158,13 @@ from jarvis.research_workflow.research_factory import (  # noqa: F401
     run_factory,
     run_on_registry as run_research_factory,
 )
+# Research Accountability Loop — forward eval(frozen rule)·decay·batting·edge score·lifecycle.
+from jarvis.research_workflow.research_accountability import (  # noqa: F401
+    accountability_report,
+    confidence_decay,
+    evaluate_forward,
+    evaluate_forward_batch,
+)
 from jarvis.research_workflow.prediction_capture_hook import (  # noqa: F401
     capture_from_agent,
     capture_from_committee,

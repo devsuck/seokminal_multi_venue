@@ -80,9 +80,14 @@ def fetch_trades(limit: int = 500) -> list[dict]:
 
 
 def refresh_mlb_markets() -> set[str]:
-    """활성 MLB 마켓 condition_id 세트(체결 필터용)."""
-    from polymarket.client import get_markets
-    return mlb_condition_ids(get_markets(limit=500))
+    """활성 MLB 마켓 condition_id 세트(체결 필터용).
+
+    get_markets(거래량 top-N)가 아니라 get_mlb_game_markets(tag_slug=mlb 이벤트 직접 조회) —
+    실라이브 확인(2026-07-24): top-500조차 MLB 경기 마켓을 1개밖에 못 잡았음(크립토
+    up/down·e스포츠 마이크로마켓에 거래량 밀림). is_mlb_market 필터는 그대로 통과시켜
+    시즌 선물(월드시리즈 우승 등, game_start_time 없음)은 mlb_condition_ids가 걸러낸다."""
+    from polymarket.client import get_mlb_game_markets
+    return mlb_condition_ids(get_mlb_game_markets())
 
 
 def snapshot_mlb_markets(mlb_cids: set[str]) -> None:

@@ -22,6 +22,7 @@ STALE_AFTER_S: dict[str, int] = {
     "polymarket_sharp_wallet_tick": 600,
     "polymarket_arb": 1800,          # 스캔류는 간헐적
     "polymarket_updown_arb": 1800,
+    "polymarket_event_divergence": 1800,
 }
 
 _RANK = {"dead": 0, "stale": 1, "fresh": 2}

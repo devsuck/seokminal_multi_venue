@@ -43,11 +43,11 @@ def parse_hl_message(raw: str, coin: str) -> list[OrderBookSnapshot | TradeEvent
         try:
             levels = data.get("levels") or [[], []]
             bids_raw, asks_raw = levels[0], levels[1]
-            return [OrderBookSnapshot(
+            return [OrderBookSnapshot.model_construct(
                 symbol=f"{coin}.HL",
                 ts=data["time"] / 1000.0,
-                bids=[OrderBookLevel(price=float(b["px"]), size=float(b["sz"])) for b in bids_raw],
-                asks=[OrderBookLevel(price=float(a["px"]), size=float(a["sz"])) for a in asks_raw],
+                bids=[OrderBookLevel.model_construct(price=float(b["px"]), size=float(b["sz"])) for b in bids_raw],
+                asks=[OrderBookLevel.model_construct(price=float(a["px"]), size=float(a["sz"])) for a in asks_raw],
             )]
         except (KeyError, IndexError, TypeError, ValueError):
             return []

@@ -3,14 +3,14 @@ import time
 
 from fastapi.testclient import TestClient
 
-from api_server import router_autopilot
+from api_server.routers import terminal
 from api_server.main import app
 
 client = TestClient(app)
 
 
 def test_status_reports_done_when_no_tmux_session(monkeypatch):
-    monkeypatch.setattr(router_autopilot, "_tmux_session_exists", lambda: False)
+    monkeypatch.setattr(terminal, "_tmux_session_exists", lambda: False)
 
     r = client.get("/alpaca/shutdown/status")
 
@@ -20,8 +20,8 @@ def test_status_reports_done_when_no_tmux_session(monkeypatch):
 
 
 def test_status_waits_for_handoff_complete_when_session_exists(monkeypatch):
-    monkeypatch.setattr(router_autopilot, "_tmux_session_exists", lambda: True)
-    monkeypatch.setattr(router_autopilot, "_tmux_capture", lambda n=200: ["working...", "still going"])
+    monkeypatch.setattr(terminal, "_tmux_session_exists", lambda: True)
+    monkeypatch.setattr(terminal, "_tmux_capture", lambda n=200: ["working...", "still going"])
 
     r = client.get("/alpaca/shutdown/status")
 
@@ -29,8 +29,8 @@ def test_status_waits_for_handoff_complete_when_session_exists(monkeypatch):
 
 
 def test_status_done_once_handoff_complete_marker_appears(monkeypatch):
-    monkeypatch.setattr(router_autopilot, "_tmux_session_exists", lambda: True)
-    monkeypatch.setattr(router_autopilot, "_tmux_capture", lambda n=200: ["work done", "HANDOFF_COMPLETE"])
+    monkeypatch.setattr(terminal, "_tmux_session_exists", lambda: True)
+    monkeypatch.setattr(terminal, "_tmux_capture", lambda n=200: ["work done", "HANDOFF_COMPLETE"])
 
     r = client.get("/alpaca/shutdown/status")
 
@@ -38,12 +38,12 @@ def test_status_done_once_handoff_complete_marker_appears(monkeypatch):
 
 
 def test_initiate_skips_tmux_commands_when_no_session(monkeypatch, tmp_path):
-    monkeypatch.setattr(router_autopilot, "_tmux_session_exists", lambda: False)
-    monkeypatch.setattr(router_autopilot, "KILL_FILE", str(tmp_path / "KILL"))
+    monkeypatch.setattr(terminal, "_tmux_session_exists", lambda: False)
+    monkeypatch.setattr(terminal, "KILL_FILE", str(tmp_path / "KILL"))
 
     calls = []
     monkeypatch.setattr(
-        router_autopilot.subprocess, "run",
+        terminal.subprocess, "run",
         lambda *a, **k: calls.append(a) or type("R", (), {"returncode": 0})(),
     )
 
@@ -55,13 +55,13 @@ def test_initiate_skips_tmux_commands_when_no_session(monkeypatch, tmp_path):
 
 
 def test_initiate_sends_handoff_when_session_exists(monkeypatch, tmp_path):
-    monkeypatch.setattr(router_autopilot, "_tmux_session_exists", lambda: True)
-    monkeypatch.setattr(router_autopilot, "KILL_FILE", str(tmp_path / "KILL"))
+    monkeypatch.setattr(terminal, "_tmux_session_exists", lambda: True)
+    monkeypatch.setattr(terminal, "KILL_FILE", str(tmp_path / "KILL"))
     monkeypatch.setattr(time, "sleep", lambda *_: None)
 
     calls = []
     monkeypatch.setattr(
-        router_autopilot.subprocess, "run",
+        terminal.subprocess, "run",
         lambda *a, **k: calls.append(a) or type("R", (), {"returncode": 0})(),
     )
 

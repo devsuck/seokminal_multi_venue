@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-import api_server.router_autopilot as rp
+from api_server.routers import alpaca_shared as shared
 from api_server.main import app
 
 client = TestClient(app)
@@ -24,11 +24,11 @@ def _synth_long_bars():
 
 @pytest.fixture(autouse=True)
 def _key(monkeypatch):
-    monkeypatch.setattr(rp, "ALPACA_KEY", "test-key")
+    monkeypatch.setattr(shared, "ALPACA_KEY", "test-key")
 
 
 def test_intraday_score_endpoint(monkeypatch):
-    monkeypatch.setattr(rp, "_fetch_intraday_bars", lambda symbol, days=2: _synth_long_bars())
+    monkeypatch.setattr(shared, "_fetch_intraday_bars", lambda symbol, days=2: _synth_long_bars())
     r = client.get("/alpaca/intraday/score/AAPL")
     assert r.status_code == 200
     body = r.json()
@@ -39,7 +39,7 @@ def test_intraday_score_endpoint(monkeypatch):
 
 
 def test_intraday_scores_batch(monkeypatch):
-    monkeypatch.setattr(rp, "_fetch_intraday_bars", lambda symbol, days=2: _synth_long_bars())
+    monkeypatch.setattr(shared, "_fetch_intraday_bars", lambda symbol, days=2: _synth_long_bars())
     r = client.get("/alpaca/intraday/scores?symbols=AAPL,NVDA")
     assert r.status_code == 200
     scores = r.json()["scores"]

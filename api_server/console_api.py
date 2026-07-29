@@ -2028,3 +2028,26 @@ def research_factory() -> dict:
             "disclaimer": ("Research Factory — READ ONLY. 약한 아이디어 조기 REJECT 깔때기. "
                            "LLM=economic rationale 심판 전용(생성 아님), judge 없으면 economic 게이트 HELD. "
                            "그 외 결정적. 자동 백테스트·실행·배분·포트폴리오 없음. 사람이 결정.")}
+
+
+# ── Research Accountability Loop — 연구를 측정 가능하게 (READ ONLY) ──
+@router.get("/research-accountability")
+def research_accountability() -> dict:
+    """연구 회계 루프 — batting average·calibration·edge score·confidence decay + 생명주기.
+    **READ ONLY. Pending/Evaluated/Invalidated/Inconclusive 항상 분리(pending 숨김 없음). 평가는
+    frozen success_rule 만(사후·골대이동 없음). 실행/배분/포트폴리오 없음.**"""
+    r = _safe(lambda: __import__("jarvis.research_workflow.research_accountability",
+                                 fromlist=["accountability_report"]).accountability_report(), {}) or {}
+    return {"lifecycle": r.get("lifecycle", {}),
+            "batting_average": r.get("batting_average", {}),
+            "edge_score": r.get("edge_score", {}),
+            "calibration": r.get("calibration"),
+            "confidence_decay": r.get("confidence_decay", {}),
+            "evaluation_rule": r.get("evaluation_rule"),
+            "no_posthoc_evaluation": r.get("no_posthoc_evaluation"),
+            "no_goalpost_movement": r.get("no_goalpost_movement"),
+            "hides_pending": r.get("hides_pending"),
+            "is_advisory": True, "is_decision": False,
+            "disclaimer": ("Research Accountability — READ ONLY. Pending/Evaluated/Invalidated/Inconclusive "
+                           "항상 분리. 평가는 frozen success_rule 만(사후·골대이동 없음). batting average·"
+                           "calibration·edge score(graded<20 PROVISIONAL)·confidence decay. 실행 없음.")}

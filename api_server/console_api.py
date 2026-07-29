@@ -2051,3 +2051,37 @@ def research_accountability() -> dict:
             "disclaimer": ("Research Accountability — READ ONLY. Pending/Evaluated/Invalidated/Inconclusive "
                            "항상 분리. 평가는 frozen success_rule 만(사후·골대이동 없음). batting average·"
                            "calibration·edge score(graded<20 PROVISIONAL)·confidence decay. 실행 없음.")}
+
+
+# ── Investment OS — Research OS 와 완전 분리된 계층 (READ ONLY) ──
+@router.get("/investment-os")
+def investment_os(notional: float = 1_000_000.0) -> dict:
+    """Investment OS — 연구 지식 소비 → 포트폴리오 추천·리스크·컴플라이언스·실행사다리.
+    **READ ONLY. 모두 추천/시뮬레이션. AUTO_EXECUTION 영구 비활성. 사람 승인 필수. Research OS 무변경.
+    실행/주문 라우팅 없음.**"""
+    import jarvis.investment_os as ios
+    k = _safe(lambda: ios.consume_research(), {}) or {}
+    cands = k.get("candidates", [])
+    p = _safe(lambda: ios.construct_portfolio(cands), {"weights": {}}) or {}
+    return {"knowledge": {"consumed_candidates": k.get("count", 0),
+                          "research_os_modified": k.get("research_os_modified"),
+                          "edge_score_status": k.get("edge_score_status")},
+            "portfolio": {"weights": p.get("weights", {}), "method": p.get("method")},
+            "exposure": _safe(lambda: ios.analyze_exposure(p, cands).get("concentration"), {}),
+            "risk_budget": _safe(lambda: ios.build_risk_budget(p), {}),
+            "scenarios": _safe(lambda: ios.analyze_scenarios(p, notional=notional).get("worst_case"), {}),
+            "compliance": _safe(lambda: {"compliant": ios.check_compliance(p).get("compliant"),
+                                         "human_can_override": ios.check_compliance(p).get("human_can_override")}, {}),
+            "gates": _safe(lambda: {"passed": ios.evaluate_gates(p).get("passed"),
+                                    "bypass_possible": ios.evaluate_gates(p).get("bypass_possible")}, {}),
+            "position_sizing": _safe(lambda: ios.recommend_position_sizes(p, notional=notional).get("recommended_sizes"), {}),
+            "capital_allocation_executes": False,
+            "execution_ladder": {"rungs": list(ios.EXECUTION_RUNGS),
+                                 "auto_execution_enabled": ios.AUTO_EXECUTION_ENABLED,
+                                 "human_approval_mandatory": ios.HUMAN_APPROVAL_MANDATORY},
+            "separation": _safe(lambda: {"separated": ios.validate_separation().get("separated"),
+                                         "invariants": ios.validate_separation().get("invariants", [])}, {}),
+            "is_advisory": True, "is_decision": False,
+            "disclaimer": ("Investment OS — READ ONLY. 연구=생산, 투자=소비. 모두 추천/시뮬레이션. "
+                           "AUTO_EXECUTION 영구 비활성, 사람 승인 필수, Risk/Compliance/Portfolio/Kill 우회 불가. "
+                           "Research OS 무변경, 실행/주문 라우팅 없음. 모든 결정은 사람.")}

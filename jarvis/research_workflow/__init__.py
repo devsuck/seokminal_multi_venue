@@ -87,6 +87,13 @@ from jarvis.research_workflow.human_decision_center import build_decision_center
 from jarvis.research_workflow.production_monitor import build_production_status  # noqa: F401
 from jarvis.research_workflow.operational_metrics import build_operational_metrics  # noqa: F401
 from jarvis.research_workflow.governance import build_governance  # noqa: F401
+# P203 Governance Consolidation — 검증 목적별 5도메인 단일 공개 API(validate/validate_all).
+from jarvis.research_workflow.governance import (  # noqa: F401
+    DOMAINS as GOVERNANCE_DOMAINS,
+    validate as validate_domain,
+    validate_all as validate_governance,
+    validation_inventory,
+)
 from jarvis.research_workflow.system_validation import validate_system  # noqa: F401
 from jarvis.research_workflow.release_v20 import build_release_report  # noqa: F401
 from jarvis.research_workflow.backfill import (  # noqa: F401

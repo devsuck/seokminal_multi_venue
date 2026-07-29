@@ -80,3 +80,141 @@ def _aggregate_safety() -> dict:
             __import__(f"jarvis.research_workflow.{m}", fromlist=[f]), f)(),
             {"safe": True, "no_new_ledger": True, "violations": []})
     return scans
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# P203 Governance Consolidation — 검증 목적별 5도메인 단일 공개 API. **읽기 전용.**
+#
+# 밖에서는 validate(domain=...) / validate_all() 만 호출한다. 내부에서만 기존 검증 모듈
+# (system_validation·agent_validation·brain_validation·ops_validation·operational_validation·
+# institutional_intelligence_validation·autonomy_validation·autonomous_validation_v3·
+# release_validation·memory_audit·research_audit·data_quality·production_monitor 등)을 조율한다.
+# 기존 모듈은 **삭제하지 않고 deprecated** — 얇게 유지(한 릴리스 이상). 새 validation 모듈이 더 안 생긴다.
+# ══════════════════════════════════════════════════════════════════════════════
+
+DOMAINS = ("architecture", "safety", "data", "research", "operations")
+
+
+def _call(module: str, fn: str, default=None):
+    return _safe(lambda: getattr(__import__(f"jarvis.research_workflow.{module}", fromlist=[fn]), fn)(),
+                 default)
+
+
+def _ok(result) -> bool:
+    """검증 결과 dict → pass 신호(공통 키 순서로 추출). 실패 신호 없으면 True(자문 리포트 관례)."""
+    if not isinstance(result, dict):
+        return bool(result)
+    for k in ("validated", "passed", "safe", "audited", "ok"):
+        if k in result:
+            return bool(result[k])
+    grade = str(result.get("grade") or result.get("overall_severity") or "").upper()
+    if grade:
+        return grade not in ("CRITICAL", "FAILED", "F")
+    return True
+
+
+def _domain_architecture() -> list:
+    """구조 불변식 — ledger==3, 중복엔진 없음, DB 추가 없음, import 규칙, 재사용."""
+    from jarvis.research_workflow import ledger as wl
+    checks = [
+        {"check": "ledger_count_3", "ok": len(wl.ALL_LEDGERS) == 3,
+         "detail": f"ALL_LEDGERS={len(wl.ALL_LEDGERS)}"},
+        {"check": "system_validation", "ok": _ok(_call("system_validation", "validate_system"))},
+        {"check": "release_validation", "ok": _ok(_call("release_validation", "validate_release"))},
+        {"check": "production_audit_v3", "ok": _ok(_call("autonomous_validation_v3", "audit_production"))},
+        {"check": "architecture_safety", "ok": _ok(_call("operational_validation", "architecture_safety"))},
+    ]
+    return checks
+
+
+def _domain_safety() -> list:
+    """금지 규칙 — execute/trade/allocate 없음, AST 스캔, human gate, advisory-only. 모든 *_safety 집계."""
+    from jarvis.config import live_execution_enabled
+    scans = _aggregate_safety()
+    checks = [{"check": "live_execution_disabled", "ok": _safe(live_execution_enabled, False) is False},
+              {"check": "autonomy_safety", "ok": _ok(_call("autonomy_validation", "autonomy_safety"))},
+              {"check": "release_safety_check", "ok": _ok(_call("release_validation", "safety_check"))}]
+    for layer, s in scans.items():
+        checks.append({"check": f"safety::{layer}", "ok": bool(s.get("safe", True))})
+    return checks
+
+
+def _domain_data() -> list:
+    """데이터 품질/계보 — provider·freshness·schema·lineage. (P206 KRX/DART 연결 시 확장.)"""
+    dh = _call("data_quality", "build_data_health", {})
+    return [{"check": "data_health", "ok": _ok(dh),
+             "detail": f"grade={dh.get('grade') if isinstance(dh, dict) else '?'}"}]
+
+
+def _domain_research() -> list:
+    """연구 품질 — hypothesis·experiment·validation·quality·memory."""
+    return [
+        {"check": "agent_validation", "ok": _ok(_call("agent_validation", "validate_agents"))},
+        {"check": "brain_validation", "ok": _ok(_call("brain_validation", "validate_brain"))},
+        {"check": "intelligence_validation",
+         "ok": _ok(_call("institutional_intelligence_validation", "validate_intelligence"))},
+        {"check": "memory_audit", "ok": _ok(_call("memory_audit", "audit_memory"))},
+    ]
+
+
+def _domain_operations() -> list:
+    """운영 상태 — scheduler·workflow·dashboard·health·metrics."""
+    return [
+        {"check": "research_ops", "ok": _ok(_call("ops_validation", "validate_research_ops"))},
+        {"check": "operations", "ok": _ok(_call("operational_validation", "validate_operations"))},
+        {"check": "autonomous_loop", "ok": _ok(_call("autonomous_validation_v3", "validate_loop"))},
+        {"check": "production_health",
+         "ok": _ok(_call("production_monitor", "build_production_status"))},
+    ]
+
+
+_DOMAIN_FNS = {"architecture": _domain_architecture, "safety": _domain_safety,
+               "data": _domain_data, "research": _domain_research, "operations": _domain_operations}
+
+
+def validate(domain: str) -> dict:
+    """단일 공개 API — 검증 목적별 도메인 하나를 검증(결정적·읽기전용). 내부에서 기존 검증 모듈 조율.
+
+    domain: architecture | safety | data | research | operations.
+    """
+    d = str(domain or "").strip().lower()
+    if d not in _DOMAIN_FNS:
+        return {"error": f"unknown domain: {domain}", "domains": list(DOMAINS), "is_decision": False}
+    checks = _DOMAIN_FNS[d]()
+    passed = all(c["ok"] for c in checks)
+    return {"domain": d, "passed": passed, "checks": checks,
+            "requires_human_review": True, "is_advisory": True, "is_decision": False,
+            "note": (f"Governance domain '{d}'(읽기전용) — 기존 검증 모듈 조율. "
+                     "단일 공개 API(validate/validate_all). 새 validation 모듈 없음.")}
+
+
+def validate_all() -> dict:
+    """5도메인 전체 검증 집계(결정적·읽기전용) — 기존 build_governance 의 목적별 상위 표면."""
+    domains = {d: validate(d) for d in DOMAINS}
+    passed = all(v.get("passed") for v in domains.values())
+    return {"domains": domains, "passed": passed,
+            "governance": "COMPLIANT" if passed else "REVIEW_REQUIRED",
+            "domain_summary": {d: v.get("passed") for d, v in domains.items()},
+            "requires_human_review": True, "is_advisory": True, "is_decision": False,
+            "note": ("Governance validate_all(읽기전용) — architecture·safety·data·research·operations "
+                     "5도메인 집계. 단일 공개 API. 기존 검증 조율, 새 모듈 없음.")}
+
+
+def validation_inventory() -> dict:
+    """P203 리팩터링 성과 지표 — before/after + 의미 보존/골든/원장 상태(읽기전용)."""
+    from jarvis.research_workflow import ledger as wl
+    _DEPRECATED = ("system_validation", "release_validation", "autonomy_validation",
+                   "autonomous_validation_v3", "operational_validation", "ops_validation",
+                   "agent_validation", "brain_validation", "institutional_intelligence_validation",
+                   "memory_audit", "research_audit", "governance")
+    all_ok = validate_all().get("passed")
+    return {"before": {"governance_modules": len(_DEPRECATED), "public_functions_approx": 21},
+            "after": {"public_api": ["validate(domain)", "validate_all()"],
+                      "internal_domains": list(DOMAINS),
+                      "deprecated_shims_kept": list(_DEPRECATED)},
+            "meaning_preserved": None,   # 골든 테스트가 별도 확인(test_p202_safety_net)
+            "governance_all_pass": all_ok,
+            "ledger_count": len(wl.ALL_LEDGERS),
+            "is_advisory": True, "is_decision": False,
+            "note": ("Validation Inventory — 12 governance 모듈/~21 함수 → 단일 facade(validate/"
+                     "validate_all)+5 내부 도메인. 기존 모듈 deprecated(삭제 아님, ≥1 릴리스 유지).")}

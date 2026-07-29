@@ -138,10 +138,17 @@ def build_meaning_snapshot() -> dict:
 # 리팩터링이 의미(meaning)뿐 아니라 **호출 구조**(누가 누구를 조율하는가)까지 보존하는지 확인.
 # 파사드가 내부 모듈을 재구현하지 않고 정말 '조율'만 하는지 AST 로 지문화(결정적).
 _SRC_DIR = pathlib.Path(__file__).resolve().parent
-# 호출 구조를 감시할 서브시스템(P204 hypothesis discovery)
+# 호출 구조를 감시할 서브시스템(P204 discovery workflow)
 CALL_GRAPH_MODULES = ("research_discovery", "hypothesis_discovery", "creative_hypothesis",
                       "hypothesis_generator", "research_search", "research_expansion",
                       "research_critic", "research_priority", "experiment_prioritization")
+# P208 — research workflow 호출 구조(발견→가설→실험→검증→랭킹 루프)
+RESEARCH_WORKFLOW_MODULES = ("research_loop_v3", "research_cycle", "market_observation",
+                             "hypothesis_discovery", "experiment_designer", "research_priority",
+                             "research_gate", "validation_intelligence", "research_selection",
+                             "research_brief")
+# 명명된 서브시스템 → 골든 파일
+SUBSYSTEMS = {"discovery": CALL_GRAPH_MODULES, "research_workflow": RESEARCH_WORKFLOW_MODULES}
 
 
 def _module_refs(src: str) -> set:
@@ -175,8 +182,8 @@ def build_call_graph(modules=CALL_GRAPH_MODULES) -> dict:
 
 
 def compare_call_graph(golden: dict) -> dict:
-    """현재 호출 그래프 vs 골든 — 호출 구조 동일성(결정적)."""
-    cur = build_call_graph()
+    """현재 호출 그래프 vs 골든 — 호출 구조 동일성(결정적). 골든의 modules 로 재구성 비교."""
+    cur = build_call_graph(tuple(golden.get("modules") or CALL_GRAPH_MODULES))
     same = cur["graph_hash"] == golden.get("graph_hash")
     diffs = []
     if not same:

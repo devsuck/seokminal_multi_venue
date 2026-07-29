@@ -89,3 +89,7 @@ def audit_memory() -> dict:
             "is_advisory": True, "is_decision": False,
             "note": ("메모리 감사(읽기전용) — rmi_/memory_graph/recall/timeline/knowledge_graph. "
                      "새 DB/원장/메모리 없음. 누락 연결은 P132-140 지식 계층이 채움.")}
+
+
+# ── P206 Deprecated (삭제 아님, ≥1 릴리스 유지) — 외부 직접 호출 대신 governance.validate(domain="research") ──
+__deprecated__ = {"since": "P206", "use": "governance.validate(domain='research')", "domain": "research"}

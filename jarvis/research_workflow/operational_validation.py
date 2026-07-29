@@ -98,3 +98,7 @@ def _safe(fn):
         return fn()
     except Exception:  # noqa: BLE001
         return None
+
+
+# ── P206 Deprecated (삭제 아님, ≥1 릴리스 유지) — 외부 직접 호출 대신 governance.validate(domain="architecture") ──
+__deprecated__ = {"since": "P206", "use": "governance.validate(domain='architecture')", "domain": "architecture"}

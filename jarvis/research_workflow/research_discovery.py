@@ -1,7 +1,7 @@
 """Research Discovery (P204) — 가설 발견의 **단일 공개 파사드**. **조율만, 실행 없음.**
 
-실제 연구 과정 = 발견 → 확장 → 비판 → 선택. 이 흐름을 하나의 namespace 로 묶는다:
-  generate() · expand() · criticize() · rank() (+ discover() 편의).
+실제 연구 과정 = 발견 → 탐색 → 확장 → 비판 → 선택. 이 흐름을 하나의 namespace 로 묶는다:
+  generate() · search() · expand() · criticize() · rank() (+ discover() 편의).
 
 밖에서는 이것만 호출. 내부에서만 기존 모듈 조율(모두 **유지·deprecated**, ≥1 릴리스):
   hypothesis_discovery(P183, recall-first) · creative_hypothesis(P171) · hypothesis_generator(P73) ·
@@ -45,16 +45,22 @@ def generate(topic: str = "", *, opportunity=None, limit: int = 8, mode: str = "
             "note": "Research Discovery.generate(읽기전용) — 기존 가설 모듈 조율(제안). 삭제 아님, 파사드."}
 
 
-def expand(hypothesis, *, top_k: int = 12, scale: bool = False) -> dict:
-    """가설 → 탐색 공간 확장. scale=False: research_search(트리) · scale=True: research_expansion(대규모). 결정적."""
-    if scale:
-        r = _safe(lambda: __import__("jarvis.research_workflow.research_expansion",
-                                     fromlist=["expand_research"]).expand_research(hypothesis, top_k=top_k),
-                  {}) or {}
-    else:
-        r = _safe(lambda: __import__("jarvis.research_workflow.research_search",
-                                     fromlist=["build_search_space"]).build_search_space(hypothesis, top_k=top_k),
-                  {}) or {}
+def search(hypothesis, *, top_k: int = 12) -> dict:
+    """가설 → 구조화된 탐색 트리(research_search 조율). 차원별 변형·스코어·프루닝. 결정적·읽기전용."""
+    r = _safe(lambda: __import__("jarvis.research_workflow.research_search",
+                                 fromlist=["build_search_space"]).build_search_space(hypothesis, top_k=top_k),
+              {}) or {}
+    return {"stage": "search", **r,
+            "requires_human_review": True, "is_advisory": True, "is_decision": False}
+
+
+def expand(hypothesis, *, top_k: int = 12, scale: bool = True) -> dict:
+    """가설 → 대규모 관련 후보 확장(research_expansion 조율, 계층적 프루닝). scale=False 면 search 트리. 결정적."""
+    if not scale:
+        return {**search(hypothesis, top_k=top_k), "stage": "expand"}
+    r = _safe(lambda: __import__("jarvis.research_workflow.research_expansion",
+                                 fromlist=["expand_research"]).expand_research(hypothesis, top_k=top_k),
+              {}) or {}
     return {"stage": "expand", "scale": scale, **r,
             "requires_human_review": True, "is_advisory": True, "is_decision": False}
 

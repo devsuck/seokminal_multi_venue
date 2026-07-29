@@ -78,3 +78,7 @@ def audit_coverage(*, limit: int = 30) -> dict:
             "incomplete": [r for r in rows if not r["complete"]],
             "is_advisory": True, "is_decision": False,
             "note": "감사 커버리지(읽기전용) — 불완전 계보 표시. 새 저장소 없음."}
+
+
+# ── P206 Deprecated (삭제 아님, ≥1 릴리스 유지) — 외부 직접 호출 대신 governance.validate(domain="research") ──
+__deprecated__ = {"since": "P206", "use": "governance.validate(domain='research')", "domain": "research"}

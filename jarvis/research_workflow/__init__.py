@@ -142,6 +142,10 @@ from jarvis.research_workflow.characterization import build_meaning_snapshot, co
 from jarvis.research_workflow.characterization import build_call_graph, compare_call_graph  # noqa: F401
 # P204 Research Discovery Facade — 가설 발견 단일 공개 namespace(내부 모듈 유지·deprecated).
 from jarvis.research_workflow import research_discovery  # noqa: F401
+# P204.5/P205/P206 Research Accountability — coverage audit · validation score · deprecation registry.
+from jarvis.research_workflow.prediction_coverage_audit import build_coverage_audit  # noqa: F401
+from jarvis.research_workflow.research_validation_score import build_validation_score  # noqa: F401
+from jarvis.research_workflow.governance import deprecations as governance_deprecations  # noqa: F401
 from jarvis.research_workflow.prediction_capture_hook import (  # noqa: F401
     capture_from_agent,
     capture_from_committee,

@@ -200,6 +200,26 @@ def validate_all() -> dict:
                      "5도메인 집계. 단일 공개 API. 기존 검증 조율, 새 모듈 없음.")}
 
 
+def deprecations() -> dict:
+    """P206 — deprecated governance 모듈 레지스트리(삭제 아님, ≥1 릴리스). 각 모듈의 __deprecated__ 확인."""
+    mods = ("system_validation", "release_validation", "autonomy_validation",
+            "autonomous_validation_v3", "operational_validation", "ops_validation",
+            "agent_validation", "brain_validation", "institutional_intelligence_validation",
+            "memory_audit", "research_audit")
+    registry = {}
+    for m in mods:
+        dep = _safe(lambda mm=m: getattr(__import__(f"jarvis.research_workflow.{mm}",
+                                                    fromlist=["__deprecated__"]), "__deprecated__", None))
+        registry[m] = dep
+    marked = {m: d for m, d in registry.items() if d}
+    return {"canonical_api": ["governance.validate(domain=...)", "governance.validate_all()"],
+            "deprecated_modules": registry,
+            "all_marked": len(marked) == len(mods), "count": len(mods),
+            "policy": "삭제 아님 — ≥1 릴리스 유지. forwarding-shim/삭제는 의존성 이관 후.",
+            "is_advisory": True, "is_decision": False,
+            "note": "P206 Deprecation Registry — 중복 governance 모듈은 deprecated(공개 API 는 facade)."}
+
+
 def validation_inventory() -> dict:
     """P203 리팩터링 성과 지표 — before/after + 의미 보존/골든/원장 상태(읽기전용)."""
     from jarvis.research_workflow import ledger as wl

@@ -197,6 +197,35 @@ def list_predictions() -> list:
     return [r.get("evidence") or {} for r in _prediction_records("prediction")]
 
 
+def _latest_outcomes() -> tuple:
+    """전이 원장에서 예측별 최신 상태·결과 추출(append-only 재구성)."""
+    transitions = [r.get("evidence") or {} for r in _prediction_records("prediction_transition")]
+    latest_state: dict = {}
+    latest_outcome: dict = {}
+    for t in transitions:
+        pid = t.get("prediction_id")
+        if not pid:
+            continue
+        latest_state[pid] = t.get("to_state") or latest_state.get(pid)
+        if t.get("outcome"):
+            latest_outcome[pid] = t.get("outcome")
+    return latest_state, latest_outcome
+
+
+def graded_predictions() -> list:
+    """평가 완료된 예측 [{prediction_id, confidence, source, outcome}] — P204.5/P205 입력. 읽기전용."""
+    _, latest_outcome = _latest_outcomes()
+    out = []
+    for p in list_predictions():
+        pid = p.get("prediction_id")
+        oc = latest_outcome.get(pid)
+        if oc:
+            out.append({"prediction_id": pid, "confidence": p.get("confidence"),
+                        "source": p.get("source"), "outcome": oc,
+                        "strategy_family": p.get("strategy_family")})
+    return out
+
+
 def registry_status() -> dict:
     """예측 레지스트리 현황 — 상태/결과/confidence/source 분포. 생존편향 방지: graded vs pending 명시."""
     preds = list_predictions()

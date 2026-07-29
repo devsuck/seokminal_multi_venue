@@ -79,3 +79,7 @@ def validate_system() -> dict:
             "is_advisory": True, "is_decision": False,
             "note": ("전체 시스템 검증(읽기전용) — 워크플로·위원회·거버넌스·모니터링·지표·대시보드·무중복. "
                      "각 계층 validation 재사용, 새 저장소 없음. 거래·집행 없음.")}
+
+
+# ── P206 Deprecated (삭제 아님, ≥1 릴리스 유지) — 외부 직접 호출 대신 governance.validate(domain="architecture") ──
+__deprecated__ = {"since": "P206", "use": "governance.validate(domain='architecture')", "domain": "architecture"}

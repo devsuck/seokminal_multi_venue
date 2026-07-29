@@ -128,3 +128,7 @@ def intelligence_safety() -> dict:
                        "no execute/trade/place_order/allocate/approve", "no broker/capital deployment",
                        "advisory only, requires_human_review"],
             "is_advisory": True, "is_decision": False}
+
+
+# ── P206 Deprecated (삭제 아님, ≥1 릴리스 유지) — 외부 직접 호출 대신 governance.validate(domain="research") ──
+__deprecated__ = {"since": "P206", "use": "governance.validate(domain='research')", "domain": "research"}

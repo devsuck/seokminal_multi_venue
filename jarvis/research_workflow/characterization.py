@@ -15,8 +15,10 @@ knowledge graph→recall→governance)이 코드 정리 후에도 동일한 의�
 """
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
+import pathlib
 
 # recall 연결이 깨지지 않았는지 확인할 고정 질의(과거 실패가 걸리는 것들)
 _CANONICAL_QUERIES = ("momentum", "kr_pure_momentum_v1 reversal", "buyback drift")
@@ -130,6 +132,61 @@ def build_meaning_snapshot() -> dict:
             "is_advisory": True, "is_decision": False,
             "note": ("Golden Research Snapshot(읽기전용) — meaning==meaning 안전망. "
                      "data_meaning 은 예측 무관 하드 불변. composed 는 리팩터링 가드(세션 내 재생성 기준).")}
+
+
+# ── Call Graph Golden (P204) — 호출 구조 보존 검증 ──
+# 리팩터링이 의미(meaning)뿐 아니라 **호출 구조**(누가 누구를 조율하는가)까지 보존하는지 확인.
+# 파사드가 내부 모듈을 재구현하지 않고 정말 '조율'만 하는지 AST 로 지문화(결정적).
+_SRC_DIR = pathlib.Path(__file__).resolve().parent
+# 호출 구조를 감시할 서브시스템(P204 hypothesis discovery)
+CALL_GRAPH_MODULES = ("research_discovery", "hypothesis_discovery", "creative_hypothesis",
+                      "hypothesis_generator", "research_search", "research_expansion",
+                      "research_critic", "research_priority", "experiment_prioritization")
+
+
+def _module_refs(src: str) -> set:
+    """AST — 이 모듈이 참조하는 research_workflow 형제 모듈 집합(import + __import__ 문자열)."""
+    refs = set()
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and \
+                node.module.startswith("jarvis.research_workflow."):
+            refs.add(node.module.split(".")[-1])
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "__import__":
+            for arg in node.args:
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and \
+                        arg.value.startswith("jarvis.research_workflow."):
+                    refs.add(arg.value.split(".")[-1])
+    return refs
+
+
+def build_call_graph(modules=CALL_GRAPH_MODULES) -> dict:
+    """서브시스템 호출 그래프(결정적) — {module: sorted[참조하는 형제 모듈]}. 파사드 조율 구조 지문."""
+    graph = {}
+    for m in modules:
+        path = _SRC_DIR / f"{m}.py"
+        refs = _module_refs(path.read_text(encoding="utf-8")) if path.exists() else set()
+        # 서브시스템 내부 참조만(구조 핵심) — 외부 잡음 제외
+        graph[m] = sorted(refs & set(modules))
+    return {"schema": "call_graph_v1", "modules": list(modules), "graph": graph,
+            "graph_hash": _fp(graph), "is_advisory": True, "is_decision": False,
+            "note": ("Call Graph Golden(읽기전용) — 파사드가 내부 모듈을 재구현 않고 조율만 하는지 "
+                     "AST 호출 구조로 검증. 리팩터링이 호출 위상을 바꾸면 감지.")}
+
+
+def compare_call_graph(golden: dict) -> dict:
+    """현재 호출 그래프 vs 골든 — 호출 구조 동일성(결정적)."""
+    cur = build_call_graph()
+    same = cur["graph_hash"] == golden.get("graph_hash")
+    diffs = []
+    if not same:
+        g, c = golden.get("graph", {}), cur["graph"]
+        for m in set(g) | set(c):
+            if g.get(m) != c.get(m):
+                diffs.append({"module": m, "golden": g.get(m), "current": c.get(m)})
+    return {"call_graph_identical": same, "diffs": diffs,
+            "is_advisory": True, "is_decision": False,
+            "note": "Call Graph 비교 — 호출 구조 보존 증명(파사드 조율 위상 불변)."}
 
 
 def compare_to_golden(golden: dict) -> dict:

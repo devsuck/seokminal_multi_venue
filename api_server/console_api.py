@@ -2005,3 +2005,26 @@ def data_connection() -> dict:
             "is_advisory": True, "is_decision": False,
             "disclaimer": ("Data Connection — READ ONLY. 우선순위 소스 availability·freshness·quality·lineage. "
                            "키 없으면 정직하게 NEEDS_CREDENTIALS. 데이터만 개선, 지능/실행/포트폴리오 없음.")}
+
+
+# ── Research Factory — 약한 아이디어 조기 REJECT 깔때기 (READ ONLY) ──
+@router.get("/research-factory")
+def research_factory() -> dict:
+    """실제 전략 이력에 연구 공장 깔때기 적용 — 각 게이트에서 무엇이 REJECT/HELD 되는지.
+    **READ ONLY. LLM 은 economic rationale 심판 전용(생성 아님). judge 미주입 → economic 게이트 HELD.
+    자동 백테스트/실행/배분 없음.**"""
+    f = _safe(lambda: __import__("jarvis.research_workflow.research_factory",
+                                 fromlist=["run_on_registry"]).run_on_registry(), {}) or {}
+    return {"funnel": {"entered": f.get("entered"), "paper_candidates": f.get("paper_candidates"),
+                       "rejected": f.get("rejected"), "held": f.get("held"),
+                       "survival_rate_pct": f.get("survival_rate_pct")},
+            "gates": f.get("gates", []),
+            "rejected_by_gate": f.get("rejected_by_gate", {}),
+            "held_by_gate": f.get("held_by_gate", {}),
+            "failure_categories": f.get("failure_categories", {}),
+            "candidates": f.get("candidates", []),
+            "llm_usage": f.get("llm_usage"),
+            "is_advisory": True, "is_decision": False,
+            "disclaimer": ("Research Factory — READ ONLY. 약한 아이디어 조기 REJECT 깔때기. "
+                           "LLM=economic rationale 심판 전용(생성 아님), judge 없으면 economic 게이트 HELD. "
+                           "그 외 결정적. 자동 백테스트·실행·배분·포트폴리오 없음. 사람이 결정.")}

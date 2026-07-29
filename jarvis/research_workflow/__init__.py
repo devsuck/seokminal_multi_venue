@@ -152,6 +152,12 @@ from jarvis.research_workflow.data_connection import (  # noqa: F401
     data_connection_status,
 )
 from jarvis.research_workflow.research_capture import capture_tracked_research  # noqa: F401
+# Research Factory — 약한 아이디어 조기 REJECT 깔때기. LLM 은 economic rationale 심판 전용.
+from jarvis.research_workflow.research_factory import (  # noqa: F401
+    ECONOMIC_JUDGE_PROMPT,
+    run_factory,
+    run_on_registry as run_research_factory,
+)
 from jarvis.research_workflow.prediction_capture_hook import (  # noqa: F401
     capture_from_agent,
     capture_from_committee,

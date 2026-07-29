@@ -146,6 +146,12 @@ from jarvis.research_workflow import research_discovery  # noqa: F401
 from jarvis.research_workflow.prediction_coverage_audit import build_coverage_audit  # noqa: F401
 from jarvis.research_workflow.research_validation_score import build_validation_score  # noqa: F401
 from jarvis.research_workflow.governance import deprecations as governance_deprecations  # noqa: F401
+# Data integration — 기존 provider 재사용, 데이터만 개선(지능 추가 없음).
+from jarvis.research_workflow.data_connection import (  # noqa: F401
+    connect_source,
+    data_connection_status,
+)
+from jarvis.research_workflow.research_capture import capture_tracked_research  # noqa: F401
 from jarvis.research_workflow.prediction_capture_hook import (  # noqa: F401
     capture_from_agent,
     capture_from_committee,

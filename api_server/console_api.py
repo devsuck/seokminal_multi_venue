@@ -1974,3 +1974,34 @@ def autonomous_research(q: str = "Does momentum work in KR equities?") -> dict:
             "disclaimer": ("Autonomous Research OS v3.0 — READ ONLY. 관찰→기회→가설→실험제안→사람 체크포인트→"
                            "외부테스트→검증→랭킹→지식→다음 사이클. 연구 자동화 ON, 실행 OFF, 자동 백테스트 없음. "
                            "BUY/SELL/EXECUTE/ALLOCATE 없음. 모든 결정은 사람.")}
+
+
+# ── Data Integration — 우선순위 소스 연결 상태 + 예측 커버리지 (READ ONLY) ──
+@router.get("/data-connection")
+def data_connection() -> dict:
+    """KRX/OpenDART/SEC-EDGAR 연결 상태 — availability·freshness·quality·lineage + 예측 커버리지.
+    **READ ONLY. 데이터만, 지능 추가 없음. 기존 provider 재사용. 실행·포트폴리오 없음.**"""
+    status = _safe(lambda: __import__("jarvis.research_workflow.data_connection",
+                                      fromlist=["data_connection_status"]).data_connection_status(), {}) or {}
+    coverage = _safe(lambda: __import__("jarvis.research_workflow.prediction_coverage_audit",
+                                        fromlist=["build_coverage_audit"]).build_coverage_audit(), {}) or {}
+    score = _safe(lambda: __import__("jarvis.research_workflow.research_validation_score",
+                                     fromlist=["build_validation_score"]).build_validation_score(), {}) or {}
+    return {"data_sources": {"priority": status.get("priority_sources", []),
+                             "sources": status.get("sources", []),
+                             "dimensions_known": status.get("dimensions_known"),
+                             "dimensions_unknown": status.get("dimensions_unknown"),
+                             "known_pct": status.get("known_pct"),
+                             "objectives": status.get("objectives", [])},
+            "prediction_coverage": {"total": coverage.get("total_predictions"),
+                                    "by_source": coverage.get("source_distribution", {}),
+                                    "by_confidence": coverage.get("confidence_distribution", {}),
+                                    "missing_invalidation_pct": coverage.get("missing_invalidation_pct"),
+                                    "missing_horizon_pct": coverage.get("missing_horizon_pct"),
+                                    "pending": coverage.get("pending"), "evaluated": coverage.get("evaluated")},
+            "validation_score": {"status": score.get("status"), "score": score.get("score"),
+                                 "graded_scorable": score.get("graded_scorable"),
+                                 "needed": score.get("needed")},
+            "is_advisory": True, "is_decision": False,
+            "disclaimer": ("Data Connection — READ ONLY. 우선순위 소스 availability·freshness·quality·lineage. "
+                           "키 없으면 정직하게 NEEDS_CREDENTIALS. 데이터만 개선, 지능/실행/포트폴리오 없음.")}

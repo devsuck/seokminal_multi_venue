@@ -39,3 +39,4 @@ research/data/paper_pipeline/
 research/data/polymarket_tick/
 research/data/polymarket_updown_arb/
 research/data/polymarket_whale/
+jarvis/_state/writer_lock.json

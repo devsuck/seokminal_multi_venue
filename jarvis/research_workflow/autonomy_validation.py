@@ -195,3 +195,7 @@ def validate_autonomy() -> dict:
             "requires_human_review": True, "is_advisory": True, "is_decision": False,
             "note": ("Autonomous Research Validation(읽기전용) — P171-180 안전·재사용 검증. "
                      "새 아키텍처 없음, 자문 전용, 사람 체크포인트 보존. 모든 결정은 사람.")}
+
+
+# ── P206 Deprecated (삭제 아님, ≥1 릴리스 유지) — 외부 직접 호출 대신 governance.validate(domain="safety") ──
+__deprecated__ = {"since": "P206", "use": "governance.validate(domain='safety')", "domain": "safety"}

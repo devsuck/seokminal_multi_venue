@@ -135,3 +135,7 @@ def audit_production() -> dict:
             "requires_human_review": True, "is_advisory": True, "is_decision": False,
             "note": ("Production Readiness Audit(읽기전용, P199) — 중복/실행/브로커/결정성/재현성/감사추적. "
                      "새 엔진/원장 없음.")}
+
+
+# ── P206 Deprecated (삭제 아님, ≥1 릴리스 유지) — 외부 직접 호출 대신 governance.validate(domain="operations") ──
+__deprecated__ = {"since": "P206", "use": "governance.validate(domain='operations')", "domain": "operations"}

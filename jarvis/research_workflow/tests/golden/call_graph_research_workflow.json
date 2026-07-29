@@ -1,0 +1,50 @@
+{
+  "graph": {
+    "experiment_designer": [],
+    "hypothesis_discovery": [],
+    "market_observation": [],
+    "research_brief": [
+      "hypothesis_discovery",
+      "market_observation",
+      "research_gate",
+      "research_priority"
+    ],
+    "research_cycle": [
+      "hypothesis_discovery",
+      "market_observation",
+      "research_priority"
+    ],
+    "research_gate": [
+      "experiment_designer"
+    ],
+    "research_loop_v3": [
+      "experiment_designer",
+      "research_cycle",
+      "research_gate",
+      "research_selection",
+      "validation_intelligence"
+    ],
+    "research_priority": [],
+    "research_selection": [
+      "validation_intelligence"
+    ],
+    "validation_intelligence": []
+  },
+  "graph_hash": "sha1:1d45f8412248b3d1",
+  "is_advisory": true,
+  "is_decision": false,
+  "modules": [
+    "research_loop_v3",
+    "research_cycle",
+    "market_observation",
+    "hypothesis_discovery",
+    "experiment_designer",
+    "research_priority",
+    "research_gate",
+    "validation_intelligence",
+    "research_selection",
+    "research_brief"
+  ],
+  "note": "Call Graph Golden(읽기전용) — 파사드가 내부 모듈을 재구현 않고 조율만 하는지 AST 호출 구조로 검증. 리팩터링이 호출 위상을 바꾸면 감지.",
+  "schema": "call_graph_v1"
+}

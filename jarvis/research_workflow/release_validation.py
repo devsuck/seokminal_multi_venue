@@ -113,3 +113,7 @@ def safety_check() -> dict:
             "checks": ["no execute()/trade()/place_order()/allocate()/approve()",
                        "no broker connection", "no live trading", "advisory only"],
             "is_advisory": True, "is_decision": False}
+
+
+# ── P206 Deprecated (삭제 아님, ≥1 릴리스 유지) — 외부 직접 호출 대신 governance.validate(domain="architecture") ──
+__deprecated__ = {"since": "P206", "use": "governance.validate(domain='architecture')", "domain": "architecture"}

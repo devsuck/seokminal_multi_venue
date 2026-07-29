@@ -2085,3 +2085,27 @@ def investment_os(notional: float = 1_000_000.0) -> dict:
             "disclaimer": ("Investment OS — READ ONLY. 연구=생산, 투자=소비. 모두 추천/시뮬레이션. "
                            "AUTO_EXECUTION 영구 비활성, 사람 승인 필수, Risk/Compliance/Portfolio/Kill 우회 불가. "
                            "Research OS 무변경, 실행/주문 라우팅 없음. 모든 결정은 사람.")}
+
+
+@router.post("/investment-os/advance")
+def investment_os_advance(current_rung: str = "PAPER", approve: bool = False) -> dict:
+    """실행 사다리 승인 전진 — 사람 승인(approve) + 4게이트 통과 필요. AUTO_EXECUTION 영구 차단.
+    **주문/실행 없음** — 준비도 사다리 상태 전이(자문)일 뿐. 각 전진은 명시적 사람 승인 필수."""
+    import jarvis.investment_os as ios
+    k = _safe(lambda: ios.consume_research(), {}) or {}
+    p = _safe(lambda: ios.construct_portfolio(k.get("candidates", [])), {"weights": {}}) or {}
+    gates = _safe(lambda: ios.evaluate_gates(p), {"passed": False, "gates": [], "failed_gates": []}) or {}
+    res = _safe(lambda: ios.advance_rung(current_rung, p, human_approved=bool(approve)),
+                {"advanced": False, "blocked_reason": "error"}) or {}
+    return {"requested_from": current_rung, "approved": bool(approve),
+            "advanced": res.get("advanced", False),
+            "new_rung": res.get("rung", current_rung),
+            "blocked_reason": res.get("blocked_reason"),
+            "gates": gates.get("gates", []),
+            "gates_passed": gates.get("passed"),
+            "failed_gates": gates.get("failed_gates", []),
+            "auto_execution_enabled": ios.AUTO_EXECUTION_ENABLED,
+            "human_approval_mandatory": ios.HUMAN_APPROVAL_MANDATORY,
+            "is_advisory": True, "is_decision": False,
+            "note": ("Ladder Advance(자문 상태전이) — 사람 승인 + 4게이트 필수. AUTO 영구 차단. "
+                     "주문/실행 없음. Investment OS 는 자본을 움직이지 않는다.")}

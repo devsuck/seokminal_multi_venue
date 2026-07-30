@@ -12,14 +12,19 @@ import time
 
 import requests
 
+from research.net_utils import call_with_hard_timeout
+
 _BASE = "https://gamma-api.polymarket.com"
 _TIMEOUT = 15
+_HARD_TIMEOUT = _TIMEOUT + 5.0  # requests timeout이 못 막는 DNS/connect 단계 방어
 
 
 def _get(path: str, params: dict, retries: int = 3) -> list | dict:
     for a in range(retries):
         try:
-            r = requests.get(f"{_BASE}{path}", params=params, timeout=_TIMEOUT)
+            r = call_with_hard_timeout(
+                lambda: requests.get(f"{_BASE}{path}", params=params, timeout=_TIMEOUT), _HARD_TIMEOUT
+            )
             if r.status_code == 429:
                 time.sleep(2 * (a + 1))
                 continue
@@ -75,16 +80,31 @@ def _map_market(m: dict) -> dict | None:
     }
 
 
+# Gamma API가 limit>100 요청을 에러 없이 조용히 100개로 잘라버림(2026-07-30 실측:
+# limit=150/300/500 전부 100개만 반환, status 200). offset 페이지네이션으로 직접 모아야
+# 호출부(limit=300/500 넘기는 콜렉터 6곳)가 의도한 개수를 실제로 받는다.
+_PAGE_SIZE = 100
+
+
 def get_markets(limit: int = 200, active: bool = True, closed: bool = False) -> list[dict]:
     """활성 시장 목록 (거래량 내림차순). 이진(YES/NO) 시장만, 정규화된 dict로."""
-    raw = _get("/markets", {
-        "limit": limit, "active": str(active).lower(), "closed": str(closed).lower(),
-        "order": "volume", "ascending": "false",
-    })
-    if not isinstance(raw, list):
-        return []
+    raw_all: list[dict] = []
+    offset = 0
+    while len(raw_all) < limit:
+        page_limit = min(_PAGE_SIZE, limit - offset)
+        page = _get("/markets", {
+            "limit": page_limit, "offset": offset,
+            "active": str(active).lower(), "closed": str(closed).lower(),
+            "order": "volume", "ascending": "false",
+        })
+        if not isinstance(page, list) or not page:
+            break
+        raw_all.extend(page)
+        if len(page) < page_limit:
+            break
+        offset += page_limit
     out = []
-    for m in raw:
+    for m in raw_all:
         mapped = _map_market(m)
         if mapped:
             out.append(mapped)

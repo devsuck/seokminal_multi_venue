@@ -1,4 +1,6 @@
-from polymarket.client import _map_market
+from unittest.mock import patch
+
+from polymarket.client import _map_market, get_markets
 
 
 def _raw_market(**over):
@@ -64,3 +66,36 @@ def test_map_market_slug_and_end_datetime_default_to_empty_string():
     assert mapped["slug"] == ""
     assert mapped["end_datetime"] == ""
     assert mapped["end_date"] == ""
+
+
+def test_get_markets_paginates_past_gamma_100_cap():
+    """2026-07-30 실측: Gamma API가 limit>100을 조용히 100개로 잘라버림.
+    limit=250 요청 시 offset 0/100/200으로 3번 나눠 불러 250개 다 채워야 한다."""
+    calls = []
+
+    def fake_get(path, params):
+        calls.append(dict(params))
+        offset, page_limit = params["offset"], params["limit"]
+        return [_raw_market(conditionId=f"c{offset + i}") for i in range(page_limit)]
+
+    with patch("polymarket.client._get", side_effect=fake_get):
+        result = get_markets(limit=250)
+
+    assert len(result) == 250
+    assert [c["offset"] for c in calls] == [0, 100, 200]
+    assert [c["limit"] for c in calls] == [100, 100, 50]
+
+
+def test_get_markets_stops_paginating_when_data_exhausted():
+    """실제 시장이 limit보다 적으면(짧은 페이지 응답) 거기서 멈춰야 함 — 무한 재요청 방지."""
+
+    def fake_get(path, params):
+        offset, page_limit = params["offset"], params["limit"]
+        remaining = max(0, 120 - offset)
+        n = min(page_limit, remaining)
+        return [_raw_market(conditionId=f"c{offset + i}") for i in range(n)]
+
+    with patch("polymarket.client._get", side_effect=fake_get):
+        result = get_markets(limit=300)
+
+    assert len(result) == 120

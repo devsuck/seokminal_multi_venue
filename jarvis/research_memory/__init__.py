@@ -1,5 +1,7 @@
 """jarvis.research_memory — Research Memory Intelligence Layer (P10.14). **연구 기억 보존·검색 전용.**
 
+**ARCHIVED (Phase1 STEP3-B, 2026-07-31):** no active real-import caller found; distinct from the protected jarvis.research_memory_intelligence package (name-collision risk — do not confuse the two). Migration: no active consumer identified; re-evaluate for full removal in a later phase.
+
 P10.5·P10.7·P10.8·P10.11·P10.12·P10.13 을 READ ONLY 로 소비해 성공 패턴·실패 실험·발견 인사이트·
 재사용 방법론·연구 교훈·역사적 맥락을 장기 기억으로 보존·검색·연결한다.
 

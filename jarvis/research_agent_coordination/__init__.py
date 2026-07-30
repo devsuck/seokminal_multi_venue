@@ -1,5 +1,7 @@
 """jarvis.research_agent_coordination — Autonomous Research Agent Coordination Layer (P26). **협업 조정 전용.**
 
+**ARCHIVED (Phase1 STEP3-B, 2026-07-31):** no active real-import caller found; only historically referenced by security_audit's dynamic AUDIT_TARGETS scan (outside default testpaths). Migration: if security_audit scanning is revived, this is a listed consumer; otherwise safe candidate for full removal in a later phase.
+
 복수 연구 에이전트의 조정·역할 관리·작업 위임 기록·협업 이력·합의 추적·연구 토론 계보를 관리한다. Research Agent
 Registry·Agent Role Definitions·Research Team Structures·Agent Collaboration Sessions·Task Delegation Records·
 Research Discussion Events·Consensus Records·Coordination Reports·Agent Collaboration Lineage 를 소유한다.

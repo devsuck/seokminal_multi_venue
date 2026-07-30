@@ -4,6 +4,7 @@ terminal 모듈에서 가져온다 — 둘 다 원래 router_autopilot.py 한 �
 그대로 옮긴 것뿐, 로직 변경 없음."""
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import json
 import os

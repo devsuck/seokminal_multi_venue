@@ -115,7 +115,10 @@ def test_contract_resolves_mnq_as_future_not_stock():
     assert contract.exchange == "CME"
 
 
-async def test_stream_yields_trade_classified_by_bidask_then_book_snapshot():
+async def test_stream_yields_trade_classified_by_bidask_then_book_snapshot(monkeypatch):
+    # .env의 실제 IB_PORT(7498)가 다른 모듈 임포트 체인의 load_dotenv()로 새어들어와
+    # 기본값(7497) assertion과 충돌하는 걸 방지 — 이 테스트는 기본값 자체를 검증한다.
+    monkeypatch.delenv("IB_PORT", raising=False)
     t = dt.datetime(2026, 7, 9, 12, 0, 0, tzinfo=dt.timezone.utc)
     ib = FakeMultiIB(
         last_batches=[[FakeTickByTickLast(time=t, price=101.0, size=2.0)]],

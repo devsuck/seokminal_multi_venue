@@ -3,7 +3,18 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from backends.kis import auth as kis_auth
 from backends.kis.auth import KISAuth
+
+
+@pytest.fixture(autouse=True)
+def _isolated_token_cache(tmp_path, monkeypatch):
+    # KISAuth는 ~/.cache/kis_tokens/<hash(app_key+base_url)>.json에 토큰을 영구
+    # 캐시함(프로세스 간 공유 목적). 테스트가 고정 app_key="key"를 쓰면 이전 테스트
+    # 실행이 남긴 파일을 다음 실행이 읽어버려 격리가 깨짐 — 실제로 이 문제 때문에
+    # session mock을 무시하고 디스크의 stale 토큰을 반환해 테스트가 실패했었음.
+    # 실제 KIS 캐시 디렉토리(~/.cache/kis_tokens)도 오염시키고 있었음.
+    monkeypatch.setattr(kis_auth, "_CACHE_DIR", tmp_path / "kis_tokens")
 
 
 def _mock_session(token: str = "tok123", expires_in: int = 86400) -> MagicMock:

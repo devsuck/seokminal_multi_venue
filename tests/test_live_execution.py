@@ -165,6 +165,7 @@ def test_live_adapter_rejected_even_with_ready_arm():
 
 # ── 11. no autonomous trigger (repo-wide: nothing outside live_execution imports it) ──
 def test_no_autonomous_trigger():
+    import ast
     import pathlib
     root = pathlib.Path(__file__).resolve().parents[1] / "jarvis"
     offenders = []
@@ -173,8 +174,18 @@ def test_no_autonomous_trigger():
         if rel.startswith("jarvis/live_execution/"):
             continue
         txt = py.read_text(encoding="utf-8", errors="ignore")
-        if "jarvis.live_execution" in txt or "import live_execution" in txt:
-            offenders.append(rel)
+        if "live_execution" not in txt:
+            continue
+        # AST로 실제 import문만 판정 — "jarvis.live_execution"을 forbidden-import
+        # 문자열 리스트로 참조하는 자체 분리검증 모듈(separation.py 등)은 오탐이었음.
+        tree = ast.parse(txt, filename=rel)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import) and any("live_execution" in n.name for n in node.names):
+                offenders.append(rel)
+                break
+            if isinstance(node, ast.ImportFrom) and node.module and "live_execution" in node.module:
+                offenders.append(rel)
+                break
     # 스케줄러/플래너/포트폴리오/전략 어느 것도 집행을 호출하지 않음
     assert offenders == [], f"live_execution imported by: {offenders}"
 

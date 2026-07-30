@@ -1,0 +1,27 @@
+{
+  "phase": "P1-STEP2",
+  "target": "governance_duplication_cluster",
+  "baseline_ref": {
+    "registry_hash": "sha1:5069a54942fd5b5f326a6cbd24ad96af3547d504",
+    "experiment_total_rows": 616,
+    "governance_status": "compliant"
+  },
+  "targets": [
+    {"name": "governance_evolution", "note": "hits in self_audit_intelligence/governance_orchestration tests are negative anti-coupling assertions (`for up in (\"import jarvis.governance_evolution\", ...): assert not imported`) -- confirmed false positive"},
+    {"name": "governance_feedback", "note": "hits in governance_evolution/governance_memory tests are negative anti-coupling assertions -- confirmed false positive"},
+    {"name": "governance_memory", "note": "hits include knowledge_intelligence.failed_experiment_retrieval(source_layer=\"governance_memory\") -- this is a SOURCE_LEDGERS declarative string key resolved to a local jsonl filename, not an import of jarvis.governance_memory -- confirmed false positive"},
+    {"name": "governance_orchestration", "note": "hits are negative anti-coupling assertions + EXPECTED_GOVERNANCE_LAYERS string-literal membership check in self_audit_intelligence -- confirmed false positive"},
+    {"name": "access_governance", "note": "0 hits outside own dir"},
+    {"name": "policy_governance", "note": "0 hits outside own dir"},
+    {"name": "model_governance", "note": "0 hits outside own dir"},
+    {"name": "production_readiness", "note": "console_api.py:1838 `def production_readiness(...)` is a same-named LOCAL FastAPI endpoint function (P161-170 dashboard aggregator) that only dynamically imports jarvis.research_workflow.* submodules -- confirmed unrelated to jarvis.production_readiness module (false positive, same collision pattern as STEP1's autonomous_research)"},
+    {"name": "recovery_control", "note": "0 hits outside own dir"}
+  ],
+  "verification": {
+    "imports": 0,
+    "runtime_callers": 0,
+    "dashboard_dependency": false,
+    "state_dependency": false
+  },
+  "decision": "REMOVE"
+}

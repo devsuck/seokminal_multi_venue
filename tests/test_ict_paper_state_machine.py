@@ -85,6 +85,11 @@ def test_no_reentry_on_same_zone_after_exit(engine_with_open_bullish_position):
     assert engine.position is None
 
 
+def test_entry_stage_counts_track_successful_entry(engine_with_open_bullish_position):
+    engine, _, _ = engine_with_open_bullish_position
+    assert engine._entry_stage_counts["entered"] == 1
+
+
 def test_skips_entry_when_no_opposing_swing_level_yet(tmp_path):
     state_path = str(tmp_path / "state.json")
     journal_path = str(tmp_path / "journal.csv")
@@ -106,3 +111,5 @@ def test_skips_entry_when_no_opposing_swing_level_yet(tmp_path):
 
     assert engine.position is None
     assert not os.path.exists(state_path)
+    assert engine._entry_stage_counts["target_none"] == 1
+    assert engine._entry_stage_counts["entered"] == 0

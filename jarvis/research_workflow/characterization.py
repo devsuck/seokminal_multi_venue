@@ -1,8 +1,12 @@
 """Golden Research Snapshot / Characterization (P202-1) — 리팩터링 안전망. **읽기 전용, 결정적.**
 
 목적: P203(validation 통합)·P204(hypothesis 파사드) 리팩터링이 **의미를 보존**하는지 증명한다.
-`output == output` 이 아니라 **`meaning == meaning`** — 553건 연구 이력의 연결(registry→experiments→
+`output == output` 이 아니라 **`meaning == meaning`** — 연구 이력의 연결(registry→experiments→
 knowledge graph→recall→governance)이 코드 정리 후에도 동일한 의미를 내는지 지문(fingerprint)으로 고정.
+data_meaning(특히 experiments.total_rows)은 실제 연구량 증가에 따라 자연 성장하므로 골든은
+"리팩터링 시작 직전" 기준 스냅샷이지 영구 고정값이 아님 — 정상적인 연구 활동으로 골든이 stale해지면
+`build_meaning_snapshot()`으로 재생성(단, composed_checks 4종이 모두 그대로 통과함을 재생성 전에
+반드시 확인 — 그게 진짜 "회귀 없음"의 증거).
 
 두 계층:
   ① Data meaning — registry·experiment_registry·ingestion(예측과 무관, 영구 하드 불변).

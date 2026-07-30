@@ -39,9 +39,9 @@
   },
   "data_meaning": {
     "experiments": {
-      "per_strategy_fingerprint": "sha1:31990b41909fea40",
+      "per_strategy_fingerprint": "sha1:a21bf27ec0ba47e8",
       "strategies_with_data": 55,
-      "total_rows": 553
+      "total_rows": 613
     },
     "ingestion": {
       "by_outcome": {
@@ -63,7 +63,7 @@
       "strategy_fingerprint": "sha1:e8dde7764bf4d1ba"
     }
   },
-  "data_meaning_hash": "sha1:0d5bd5a812fd82a4",
+  "data_meaning_hash": "sha1:d03d2150c6fe35ac",
   "is_advisory": true,
   "is_decision": false,
   "note": "Golden Research Snapshot(읽기전용) — meaning==meaning 안전망. data_meaning 은 예측 무관 하드 불변. composed 는 리팩터링 가드(세션 내 재생성 기준).",

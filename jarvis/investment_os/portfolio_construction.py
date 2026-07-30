@@ -33,10 +33,28 @@ def construct_portfolio(candidates=None, *, method: str = "evidence_weighted") -
         w = _GRADE_WEIGHT.get(str(c.get("evidence_grade")), 0.4) if method == "evidence_weighted" else 1.0
         raw[sid] = w
     total = sum(raw.values()) or 1.0
-    weights = {k: round(min(_MAX_WEIGHT, v / total), 4) for k, v in raw.items()}
-    # 집중 제한 적용 후 재정규화
-    s = sum(weights.values()) or 1.0
-    weights = {k: round(v / s, 4) for k, v in weights.items()}
+    weights = {k: v / total for k, v in raw.items()}
+    # 집중 제한 water-filling(반복 캡+재정규화) — 단일 패스는 재정규화 후 캡 재위반 가능
+    ids = list(weights.keys())
+    fixed: dict[str, float] = {}
+    for _ in range(len(ids) + 1):
+        free = [k for k in ids if k not in fixed]
+        if not free:
+            break
+        rem = 1.0 - sum(fixed.values())
+        s = sum(weights[k] for k in free) or 1.0
+        changed = False
+        for k in free:
+            nv = weights[k] / s * rem
+            if nv > _MAX_WEIGHT + 1e-9:
+                weights[k] = _MAX_WEIGHT
+                fixed[k] = _MAX_WEIGHT
+                changed = True
+        if not changed:
+            for k in free:
+                weights[k] = weights[k] / s * rem
+            break
+    weights = {k: round(v, 4) for k, v in weights.items()}
     return {"weights": weights, "method": method, "count": len(weights),
             "max_weight_cap": _MAX_WEIGHT,
             "requires_human_review": True, "is_advisory": True, "is_decision": False,

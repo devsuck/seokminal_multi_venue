@@ -30,7 +30,19 @@ launchctl load ~/Library/LaunchAgents/com.seokminal.watchdog.plist
 launchctl list | grep seokminal          # 로드 확인
 ```
 
-## 2. 의존성 락파일 (재현성)
+## 2. 개발 프로세스 방치 감시 (`dev_process_watchdog.py`)
+
+`npm test`는 `vitest run`(1회성)이지만, 터미널에서 인자 없이 `vitest`를 직접 치면
+watch 모드라 안 닫고 자리를 뜨면 CPU 100%로 몇 시간~며칠 방치될 수 있다(발열 사건
+실사례, 2026-07-30). 5분마다 ps 스캔해서 30분 넘게 살아있는 vitest worker 프로세스만
+SIGTERM — vitest 패턴에만 반응하므로 uvicorn/수집기/next dev 같은 상시 프로세스는
+안전.
+
+```bash
+tmux new-session -d -s dev-process-watchdog "cd $(pwd) && python -m ops.dev_process_watchdog"
+```
+
+## 3. 의존성 락파일 (재현성)
 
 컨테이너/맥 환경 드리프트(nautilus 버전 등)로 스위트가 깨지는 걸 막으려면 맥에서:
 ```bash
@@ -39,7 +51,7 @@ pip freeze > requirements.lock          # 현재 동작하는 정확한 버전 �
 커밋해두면 새 환경에서 `pip install -r requirements.lock`으로 동일 재현. (컨테이너에서
 생성하면 맥과 다른 버전이라 의미없음 — **맥에서** 떠야 함.)
 
-## 3. 집행 안전 (참고)
+## 4. 집행 안전 (참고)
 
 `execution/broker.py`는 기본 페이퍼(dry-run). `make_broker(mode="live")`는 등록된 실어댑터가
 없으면 거부하므로 실수로 실주문이 나갈 경로가 없다. 실집행은 엣지 확정 후 별도 태스크.

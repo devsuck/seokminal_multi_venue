@@ -1313,3 +1313,38 @@
 - `npx` wrapper만 alarm에 죽고 실제 vitest(forks worker)는 PID 1로 reparent된 채 CPU 98.9%로 계속 살아있던 걸 뒤늦게 발견 → `kill -9`로 직접 정리 완료(확인됨, 잔여 프로세스 없음).
 - **결론**: 특정 테스트 코드 버그 아님(전부 통과), 앱 코드의 미정리 setInterval/WebSocket도 아님(`lib/`·`app/`·`components/`·`hooks/` 전수 grep — interval 있는 컴포넌트는 전부 useEffect cleanup 있고, 애초에 테스트가 마운트 안 하는 페이지 컴포넌트들). vitest 4.1.9 자체(또는 forks pool)가 run 모드 완료 후 프로세스를 안 놓는 걸로 보이는 환경/툴링성 이슈로 잠정 결론 — 더 깊게(디펜던시 단위 bisect) 파고들 실익 낮다고 판단해 중단(`dev_process_watchdog.py`가 어차피 30분 넘으면 blanket으로 죽여줌).
 - **막힌 부분**: vitest 프로세스가 정확히 왜 안 죽는지(어느 open handle인지)는 미확정. 재발하면 `node --trace-warnings` 또는 vitest `pool: "forks"` → `"threads"` 전환 테스트로 좁혀볼 것.
+
+## 2026-07-30 (이어서 2): 오더북 히스토리 저장(Bookmap식 DOM 리플레이) 백엔드
+
+유저 지시("용량 안 잡아먹게 만들어줘, 플랫폼화 가능여부도 알려줘")의 백엔드 절반. 프론트 절반+상세는 `seokminal-dashboard/docs/progress.md` Phase 188 참조.
+
+### 완료된 작업
+- `research/run_hl_orderflow_tick_collect.py`(기존 상시가동 `hl-orderflow-tick` tmux 수집기 확장, 신규 수집기 안 만듦): `snapshot_append_fn` 주입 추가. `SNAPSHOT_THROTTLE_SEC=3.0`(이벤트 자체 ts 기준 스로틀, wall-clock 아님 — 테스트 결정론성 위해), `SNAPSHOT_LEVELS=15`, `[price,size]` 압축 배열 인코딩. `research/data/hl_orderbook_snapshot/{coin}_{date}.jsonl`에 append. 기존 `compress_old_data.py`가 파일명 패턴 기반 rglob이라 코드 변경 없이 자동 gzip 대상됨. 예상 용량 ~10MB/일(3코인).
+- `api_server/router_orderflow.py`: `GET /orderflow/history/{symbol}/dates`, `GET /orderflow/history/{symbol}?date=&start=&end=&limit=`(plain/gzip 듀얼 리더, `_HISTORY_SNAPSHOT_MAX_LIMIT=20000` 캡).
+- 테스트: `test_run_hl_orderflow_tick_collect.py` 14 passed, `test_router_orderflow.py` 14 passed(신규분 포함). 전체 pytest 재실행 `2022 passed`(pre-existing 실패 없음, 기존 기록과 일치).
+- `hl-orderflow-tick` tmux 세션 kill 후 `ensure_collectors.sh`로 재기동(신규 코드는 프로세스 재시작 없이는 반영 안 됨) — 재기동 15초 만에 `research/data/hl_orderbook_snapshot/{BTC,ETH,PAXG}_2026-07-30.jsonl` 실제 기록 확인.
+
+### 변경된 파일
+- `research/run_hl_orderflow_tick_collect.py`, `tests/test_run_hl_orderflow_tick_collect.py`
+- `api_server/router_orderflow.py`, `tests/test_router_orderflow.py`
+
+### 다음 세션 확인
+- `research/data/hl_orderbook_snapshot/` 용량이 며칠 뒤 예상(~10MB/일)대로 가는지 확인 — 벗어나면 `SNAPSHOT_THROTTLE_SEC`/`SNAPSHOT_LEVELS` 재조정.
+- `ensure_collectors.sh`/`lab_api.py`는 무변경(기존 `hl-orderflow-tick` 세션명 그대로 재사용) — 별도 등록 작업 불필요, 확인 완료.
+
+## 2026-07-30 (이어서 3): 오더플로우 페이지 발열 — heatmap_delta 백엔드 스로틀 누락
+
+유저 리포트("오더플로우 키면 발열 심해지는데") systematic-debugging으로 조사. 1차(프론트 useMemo) 픽스는 유저가 "여전히 뜨겁다"로 반려 → 백엔드 WS 직접 측정으로 재조사(프론트 상세는 `seokminal-dashboard/docs/progress.md` Phase 189 참조).
+
+### 완료된 작업
+- `websockets` 클라이언트로 `/ws/orderflow/BTC.HL` 직접 붙어 메시지 타입별 실측: `heatmap_delta` 61.5/sec — book_snapshot(1.5/sec, 스로틀 정상)과 달리 스로틀이 안 걸려있는 게 실제 원인으로 확인.
+- `orderflow/manager.py`: `_SymbolWorker.pending_heatmap` dict 추가 — `aggregator.on_book_snapshot()`은 매 틱 그대로 호출(스푸핑 감시 등 내부 상태 유지 위해 필수)하되, 반환된 heatmap_delta는 `BOOK_SNAPSHOT_THROTTLE_SEC`(0.15s) 창 안에서 키(ts,price)별 최신값만 모았다가 flush하도록 변경. book_snapshot과 같은 창/타임스탬프 재사용.
+- `tests/test_orderflow_manager.py`: 신규 테스트 2건 작성 중 tick_size=10(BTC.HL) 라운딩으로 bid(100.0)/ask(101.0)가 같은 heatmap 버킷(100.0)에 충돌해 pending_heatmap 값이 서로 덮어쓰는 테스트 픽스처 버그 발견 — ask 가격을 200.0으로 분리해 수정. 전체 pytest 2024 passed(pre-existing 실패 없음).
+- 재기동 후 재측정: heatmap_delta 61.5→48.1/sec로 감소했으나 완전 해소는 아님 — 같은 150ms 창 안에서도 여러 개별 가격 레벨이 실제로 바뀌는 게 정상 시장 데이터라 메시지 수 자체가 크게 안 줆(스로틀은 "같은 키 중복"만 제거, distinct 레벨 fan-out은 못 줄임). 더 지배적인 원인은 프론트 쪽 메시지당 O(n) Map 카피로 확인됨(Phase 189 참조) — 그쪽도 같이 수정함.
+- `bash scripts/restart_api.sh`로 uvicorn 재기동 완료(PID 42613, `--reload` 없음).
+
+### 변경된 파일
+- `orderflow/manager.py`, `tests/test_orderflow_manager.py`
+
+### 다음 세션 확인
+- 유저가 실제 발열 해소 확인했는지 — 아직 미확인. 안 되면 systematic-debugging Phase 4.5(픽스 2회 시도 후 아키텍처 재검토) 단계로 넘어갈 것.

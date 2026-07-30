@@ -171,10 +171,10 @@ def pipeline() -> dict:
 def council(limit: int = 20) -> dict:
     """포트폴리오 의사결정 엔진 산출(있으면) — AI Council 결정 피드."""
     def _decisions():
-        from jarvis.portfolio.journal import read_decisions  # noqa
-        return read_decisions()
+        from jarvis.portfolio.journal import read_latest
+        return read_latest(limit)
     rows = _safe(_decisions, None)
-    if rows is None:
+    if not rows:
         # 대체: 감사 로그 tail
         def _audit_tail():
             from jarvis.audit import tail
@@ -503,6 +503,34 @@ def allocation() -> dict:
     return {"allocations": allocs, "decisions": journal, "rebalances": [],
             "derived_proposal": derived, "derived_note": "활성 전략 동일비중 파생(제안 전용·미집행)",
             "note": "" if allocs else "포트폴리오 오케스트레이터 원장 없음 — 활성 전략 기반 파생 제안 표시"}
+
+
+@router.get("/fusion")
+def fusion() -> dict:
+    """시그널 퓨전 — 합성신호 원장(읽기전용). 라이브 재계산 없음(원장에 이미 쓰인 결과만)."""
+    def _ledger():
+        from jarvis.fusion.ledger import read_latest
+        return read_latest(30)
+    signals = _safe(_ledger, []) or []
+    return {"fusion_signals": signals,
+            "note": "" if signals else "합성신호 원장 없음 — CLI 미실행(어드바이저리 전용, 자동집행 아님)"}
+
+
+@router.get("/overlay")
+def overlay() -> dict:
+    """시그널 오버레이 — 전략비중×종목신호 합성(참고용). journal 최신 배분에만 적용, 재계산 없음."""
+    def _journal():
+        from jarvis.portfolio.journal import read_latest
+        return read_latest(1)
+    def _rows(weights: dict):
+        from jarvis.portfolio.signal_overlay import compute_overlay
+        return compute_overlay(weights, _now_iso())
+    latest = _safe(_journal, []) or []
+    weights = latest[0].get("after", {}) if latest else {}
+    rows = _safe(lambda: _rows(weights), []) or []
+    return {"strategy_weights": weights, "overlay": rows,
+            "note": "" if rows else "전략 신호/저널 없음 — orchestrator evaluate 선행 필요",
+            "warn": "제안 전용 — 종목 포지션 재계산·주문 없음"}
 
 
 @router.get("/positions")

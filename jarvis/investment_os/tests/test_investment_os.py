@@ -9,6 +9,8 @@ from __future__ import annotations
 import ast
 import pathlib
 
+import pytest
+
 import jarvis.investment_os as ios
 
 IOS_DIR = pathlib.Path(ios.__file__).resolve().parent
@@ -35,6 +37,21 @@ def test_portfolio_recommendations_not_execution():
     assert ios.recommend_position_sizes(p, notional=1e6)["allocates_capital"] is False
     assert ios.recommend_capital_allocation(p, total_capital=1e6)["executes_allocation"] is False
     assert ios.analyze_exposure(p, k["candidates"])["is_decision"] is False
+
+
+def test_construct_portfolio_cap_survives_renormalization():
+    """단일 후보가 과반 가중이면 단순 캡+재정규화는 캡을 재위반함(반정규화 후 다시 0.4 초과) —
+    water-filling(반복 캡)이어야 정확히 0.4로 수렴."""
+    candidates = [
+        {"strategy_id": "a", "evidence_grade": "STRONG"},
+        {"strategy_id": "b", "evidence_grade": "WEAK"},
+        {"strategy_id": "c", "evidence_grade": "WEAK"},
+    ]
+    p = ios.construct_portfolio(candidates, method="evidence_weighted")
+    assert p["weights"]["a"] == 0.4
+    assert p["weights"]["b"] == pytest.approx(0.3, abs=1e-4)
+    assert p["weights"]["c"] == pytest.approx(0.3, abs=1e-4)
+    assert sum(p["weights"].values()) == pytest.approx(1.0, abs=1e-4)
 
 
 # ── 리스크/시나리오 ──

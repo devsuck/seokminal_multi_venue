@@ -6,6 +6,7 @@ import time
 import requests
 
 from research.ict.primitives import fair_value_gaps, order_blocks, swings
+from research.net_utils import call_with_hard_timeout
 
 HL_INFO_URL = "https://api.hyperliquid.xyz/info"
 IFVG_WINDOW = 8
@@ -18,10 +19,13 @@ def fetch_htf_bars(coin: str, interval: str = "15m", bars: int = 100, timeout: f
     interval_sec = _INTERVAL_SEC[interval]
     now = int(time.time() * 1000)
     start = now - bars * interval_sec * 1000
-    resp = requests.post(
-        HL_INFO_URL,
-        json={"type": "candleSnapshot", "req": {"coin": coin, "interval": interval, "startTime": start, "endTime": now}},
-        timeout=timeout,
+    resp = call_with_hard_timeout(
+        lambda: requests.post(
+            HL_INFO_URL,
+            json={"type": "candleSnapshot", "req": {"coin": coin, "interval": interval, "startTime": start, "endTime": now}},
+            timeout=timeout,
+        ),
+        timeout + 5.0,
     )
     resp.raise_for_status()
     data = resp.json()

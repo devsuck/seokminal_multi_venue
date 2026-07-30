@@ -131,3 +131,49 @@ def test_run_forever_continues_after_fetch_exception():
             poll_interval_s=0.0, market_refresh_interval_s=1000.0, max_cycles=2,
         )
     assert [t["transactionHash"] for t in appended] == ["a"]
+
+
+def test_run_forever_fetch_keeps_running_when_market_refresh_keeps_failing():
+    """2026-07-30 재현 버그: refresh_fn이 계속 실패하면(DNS 등) market_refresh_interval_s를
+    매 사이클 넘겨서 refresh가 계속 재시도되는데, 예전엔 이게 fetch_fn까지 같은 try에
+    묶여있어서 매 사이클 refresh 단계에서 raise → fetch_fn이 단 한 번도 안 불림.
+    지금은 별개 try라 refresh가 매번 실패해도 fetch_fn은 매 사이클 정상 호출돼야 함."""
+    appended = []
+    fetch_calls = {"n": 0}
+
+    def always_failing_refresh():
+        raise ConnectionError("dns down")
+
+    def counting_fetch():
+        fetch_calls["n"] += 1
+        return [_trade(ts=float(fetch_calls["n"]), tx=f"t{fetch_calls['n']}")]
+
+    with patch("time.sleep"):
+        runner.run_forever(
+            fetch_fn=counting_fetch, refresh_fn=always_failing_refresh,
+            append_fn=lambda t: appended.extend(t),
+            poll_interval_s=0.0, market_refresh_interval_s=0.0, max_cycles=5,
+        )
+    assert fetch_calls["n"] == 5  # refresh가 매 사이클 실패해도 fetch는 5번 다 돎
+    assert appended == []  # target_markets가 계속 {}라 필터에서 다 걸러짐(정상)
+
+
+def test_run_forever_starts_even_when_initial_refresh_fails():
+    """최초 refresh_fn() 호출은 예전엔 try 밖이라 실패하면 프로세스 자체가 죽었음
+    (unguarded). 지금은 감싸져서 빈 target으로라도 루프가 시작돼야 함."""
+    fetch_calls = {"n": 0}
+
+    def counting_fetch():
+        fetch_calls["n"] += 1
+        return []
+
+    def failing_refresh():
+        raise ConnectionError("dns down")
+
+    with patch("time.sleep"):
+        runner.run_forever(
+            fetch_fn=counting_fetch, refresh_fn=failing_refresh,
+            append_fn=lambda t: None,
+            poll_interval_s=0.0, market_refresh_interval_s=1000.0, max_cycles=3,
+        )
+    assert fetch_calls["n"] == 3

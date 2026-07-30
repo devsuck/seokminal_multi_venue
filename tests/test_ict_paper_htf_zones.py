@@ -1,4 +1,26 @@
-from research.ict.paper.htf_zones import ZoneTracker, ifvg_zones
+from unittest.mock import patch
+
+import pytest
+
+from research.ict.paper.htf_zones import ZoneTracker, fetch_htf_bars, ifvg_zones
+
+
+def test_fetch_htf_bars_raises_timeout_error_when_post_hangs():
+    """2026-07-30 event_divergence 콜렉터 DNS 행 재현과 동일 클래스 버그 방어 —
+    requests.post가 OS 레벨에서 안 돌아오면 TimeoutError로 전환돼야 함(무한 행 금지).
+    call_with_hard_timeout을 짧은 timeout으로 몽키패치해서 실제 5초+ 대기 없이 검증."""
+    def fake_hard_timeout(fn, timeout_s):
+        from research.net_utils import call_with_hard_timeout as real
+        return real(fn, timeout_s=0.05)
+
+    def hang(*a, **kw):
+        import time
+        time.sleep(10)
+
+    with patch("research.ict.paper.htf_zones.call_with_hard_timeout", side_effect=fake_hard_timeout), \
+         patch("requests.post", side_effect=hang):
+        with pytest.raises(TimeoutError):
+            fetch_htf_bars("BTC", interval="15m", bars=10, timeout=0.1)
 
 
 def test_ifvg_zones_detects_bullish_zone_after_bearish_fvg_violation():

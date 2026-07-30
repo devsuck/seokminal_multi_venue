@@ -195,3 +195,6 @@
 {"ts": 1785019450.988246, "verdict": "candidate", "min_p_value": 0.012, "n_survivors": 2, "n_tested": 18, "n_events": 6666, "significant": true}
 {"ts": 1785020055.7974641, "verdict": "candidate", "min_p_value": 0.01, "n_survivors": 8, "n_tested": 18, "n_events": 6668, "significant": true}
 {"ts": 1785020670.801486, "verdict": "candidate", "min_p_value": 0.002, "n_survivors": 10, "n_tested": 18, "n_events": 6668, "significant": true}
+{"ts": 1785369253.794179, "verdict": "candidate", "min_p_value": 0.002, "n_survivors": 12, "n_tested": 18, "n_events": 9604, "significant": true}
+{"ts": 1785404300.9828732, "verdict": "candidate", "min_p_value": 0.002, "n_survivors": 11, "n_tested": 18, "n_events": 9980, "significant": true}
+{"ts": 1785409495.720473, "verdict": "candidate", "min_p_value": 0.002, "n_survivors": 11, "n_tested": 18, "n_events": 10010, "significant": true}

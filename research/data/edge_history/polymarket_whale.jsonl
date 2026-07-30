@@ -195,3 +195,6 @@
 {"ts": 1785019450.988246, "verdict": "no_edge", "min_p_value": 0.1996, "n_survivors": 0, "n_tested": 3, "n_events": 58, "significant": false}
 {"ts": 1785020055.7974641, "verdict": "no_edge", "min_p_value": 0.0818, "n_survivors": 0, "n_tested": 6, "n_events": 75, "significant": false}
 {"ts": 1785020670.801486, "verdict": "no_edge", "min_p_value": 0.0818, "n_survivors": 0, "n_tested": 6, "n_events": 75, "significant": false}
+{"ts": 1785369253.794179, "verdict": "no_edge", "min_p_value": 0.0878, "n_survivors": 0, "n_tested": 3, "n_events": 62, "significant": false}
+{"ts": 1785404300.9828732, "verdict": "no_edge", "min_p_value": 0.0659, "n_survivors": 0, "n_tested": 3, "n_events": 63, "significant": false}
+{"ts": 1785409495.720473, "verdict": "no_edge", "min_p_value": 0.0838, "n_survivors": 0, "n_tested": 3, "n_events": 62, "significant": false}

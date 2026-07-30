@@ -1,0 +1,2 @@
+{"previous_state": "INITIALIZING", "new_state": "MONITORING", "reason": "orchestrator_init", "timestamp": "2026-07-29T22:09:07Z"}
+{"previous_state": "MONITORING", "new_state": "RISK_REDUCTION", "reason": "decision=RISK_REDUCTION", "timestamp": "2026-07-29T22:09:07Z"}

@@ -1,9 +1,12 @@
 import asyncio
+import gzip
+import json
 from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import api_server.router_orderflow as router_orderflow
 from api_server.router_orderflow import router
 
 
@@ -80,3 +83,86 @@ def test_get_funding_uppercases_coin():
     with patch("api_server.router_orderflow.get_cached_funding", return_value=None) as mock_get:
         client.get("/orderflow/funding/btc")
     mock_get.assert_called_once_with("BTC")
+
+
+def test_get_history_dates_returns_empty_for_non_hl_symbol():
+    client = TestClient(_app())
+    r = client.get("/orderflow/history/NQ/dates")
+    assert r.json() == {"symbol": "NQ", "dates": []}
+
+
+def test_get_history_dates_lists_dates_for_coin_only(tmp_path):
+    (tmp_path / "BTC_2026-07-28.jsonl").write_text("")
+    (tmp_path / "BTC_2026-07-29.jsonl.gz").write_text("")
+    (tmp_path / "ETH_2026-07-29.jsonl").write_text("")  # 다른 코인은 제외
+    (tmp_path / "not_a_snapshot_file.txt").write_text("")
+    client = TestClient(_app())
+    with patch.object(router_orderflow, "_SNAPSHOT_DATA_DIR", tmp_path):
+        r = client.get("/orderflow/history/BTC.HL/dates")
+    assert r.json() == {"symbol": "BTC.HL", "dates": ["2026-07-28", "2026-07-29"]}
+
+
+def test_get_history_dates_when_dir_missing(tmp_path):
+    client = TestClient(_app())
+    with patch.object(router_orderflow, "_SNAPSHOT_DATA_DIR", tmp_path / "missing"):
+        r = client.get("/orderflow/history/BTC.HL/dates")
+    assert r.json() == {"symbol": "BTC.HL", "dates": []}
+
+
+def test_get_history_404_for_non_hl_symbol():
+    client = TestClient(_app())
+    r = client.get("/orderflow/history/NQ", params={"date": "2026-07-29"})
+    assert r.status_code == 404
+
+
+def test_get_history_returns_empty_when_no_file(tmp_path):
+    client = TestClient(_app())
+    with patch.object(router_orderflow, "_SNAPSHOT_DATA_DIR", tmp_path):
+        r = client.get("/orderflow/history/BTC.HL", params={"date": "2026-07-29"})
+    assert r.json() == {"symbol": "BTC.HL", "date": "2026-07-29", "snapshots": [], "truncated": False}
+
+
+def test_get_history_reads_plain_jsonl_and_filters_by_range(tmp_path):
+    path = tmp_path / "BTC_2026-07-29.jsonl"
+    rows = [{"ts": t, "bids": [], "asks": []} for t in (1.0, 5.0, 10.0)]
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    client = TestClient(_app())
+    with patch.object(router_orderflow, "_SNAPSHOT_DATA_DIR", tmp_path):
+        r = client.get("/orderflow/history/BTC.HL", params={"date": "2026-07-29", "start": 2.0, "end": 9.0})
+    body = r.json()
+    assert [s["ts"] for s in body["snapshots"]] == [5.0]
+    assert body["truncated"] is False
+
+
+def test_get_history_reads_gzip_when_plain_missing(tmp_path):
+    path = tmp_path / "BTC_2026-07-29.jsonl.gz"
+    row = {"ts": 1.0, "bids": [[100.0, 1.0]], "asks": []}
+    with gzip.open(path, "wt") as f:
+        f.write(json.dumps(row) + "\n")
+    client = TestClient(_app())
+    with patch.object(router_orderflow, "_SNAPSHOT_DATA_DIR", tmp_path):
+        r = client.get("/orderflow/history/BTC.HL", params={"date": "2026-07-29"})
+    assert r.json()["snapshots"] == [row]
+
+
+def test_get_history_prefers_plain_over_gzip_when_both_exist(tmp_path):
+    plain_row = {"ts": 1.0, "bids": [], "asks": []}
+    (tmp_path / "BTC_2026-07-29.jsonl").write_text(json.dumps(plain_row) + "\n")
+    with gzip.open(tmp_path / "BTC_2026-07-29.jsonl.gz", "wt") as f:
+        f.write(json.dumps({"ts": 999.0, "bids": [], "asks": []}) + "\n")
+    client = TestClient(_app())
+    with patch.object(router_orderflow, "_SNAPSHOT_DATA_DIR", tmp_path):
+        r = client.get("/orderflow/history/BTC.HL", params={"date": "2026-07-29"})
+    assert r.json()["snapshots"] == [plain_row]
+
+
+def test_get_history_truncates_at_limit(tmp_path):
+    path = tmp_path / "BTC_2026-07-29.jsonl"
+    rows = [{"ts": float(t), "bids": [], "asks": []} for t in range(5)]
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    client = TestClient(_app())
+    with patch.object(router_orderflow, "_SNAPSHOT_DATA_DIR", tmp_path):
+        r = client.get("/orderflow/history/BTC.HL", params={"date": "2026-07-29", "limit": 2})
+    body = r.json()
+    assert len(body["snapshots"]) == 2
+    assert body["truncated"] is True

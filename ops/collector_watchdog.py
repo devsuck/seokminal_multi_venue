@@ -19,9 +19,9 @@ POLL_INTERVAL_S = 120.0
 
 
 def to_restart(fleet: dict, restart_stale: bool = False) -> list[str]:
-    """함대 응답 → 재기동할 수집기 key 리스트. dead는 항상, stale은 옵션.
+    """함대 응답 → 재기동할 수집기 key 리스트. dead는 항상, stale/stuck은 옵션.
     순수함수(IO 없음)."""
-    targets = {"dead"} | ({"stale"} if restart_stale else set())
+    targets = {"dead"} | ({"stale", "stuck"} if restart_stale else set())
     return [c["key"] for c in fleet.get("collectors", []) if c.get("verdict") in targets]
 
 
@@ -38,8 +38,24 @@ def _post(url: str, timeout: float = 15.0) -> None:
 
 
 def run_once(base_url: str = DEFAULT_BASE_URL, restart_stale: bool = False) -> list[str]:
-    """한 사이클: fleet 조회 → 대상 재기동. 재기동한 key 리스트 반환."""
+    """한 사이클: fleet 조회 → 대상 재기동. 재기동한 key 리스트 반환.
+
+    stuck(장시간 stale 방치)과 flapping(반복 재기동 중)은 restart_stale이 꺼져 있어도
+    재기동과 무관하게 로그를 남긴다 — polymarket_event_divergence가 9시간 stale로
+    방치됐던 사건은 아무도 /lab/fleet을 안 봐서 생긴 문제였고, stale은 기본적으로
+    워치독이 손대지 않는 상태라 로그로라도 티를 내야 한다."""
     fleet = _get_json(f"{base_url}/lab/fleet")
+
+    for c in fleet.get("collectors", []):
+        if c.get("verdict") == "stuck":
+            logging.error("watchdog: %s 장시간 stale(stuck, %ss) — 수동 확인 필요", c["key"], c.get("age_sec"))
+        if c.get("flapping"):
+            logging.warning("watchdog: %s 24h 내 %d회 재기동 — 반복 다운 의심", c["key"], c.get("restart_count_24h", 0))
+
+    disk = fleet.get("disk") or {}
+    if disk.get("verdict") in ("warn", "critical"):
+        logging.warning("watchdog: 디스크 여유공간 %s (%.1fGB)", disk["verdict"], disk.get("free_gb") or -1)
+
     targets = to_restart(fleet, restart_stale)
     for key in targets:
         try:

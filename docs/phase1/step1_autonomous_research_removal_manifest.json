@@ -1,0 +1,31 @@
+{
+  "phase": "P1-STEP1",
+  "target": "autonomous_research_cluster",
+  "baseline_ref": {
+    "registry_hash": "sha1:5069a54942fd5b5f326a6cbd24ad96af3547d504",
+    "experiment_total_rows": 616,
+    "governance_status": "compliant"
+  },
+  "modules": [
+    {"name": "autonomous_research", "note": "console_api.py:1944 hit is a same-named LOCAL FUNCTION (`def autonomous_research(...)`), not an import of jarvis.autonomous_research -- confirmed false positive"},
+    {"name": "autonomous_research_os", "note": "0 hits outside own dir"},
+    {"name": "autonomous_research_pipeline", "note": "0 hits outside own dir"},
+    {"name": "autonomous_research_evaluation", "note": "0 hits outside own dir"},
+    {"name": "autonomous_experiment_scheduler", "note": "0 hits outside own dir"},
+    {"name": "adaptive_research_loop", "note": "0 hits outside own dir"},
+    {"name": "agent_governance", "note": "0 hits outside own dir"},
+    {"name": "agent_runtime", "note": "0 hits outside own dir"},
+    {"name": "decision_intelligence", "note": "only hit is negative anti-coupling assertion in jarvis/research_risk_intelligence/tests -- asserts module is NOT imported"},
+    {"name": "causal_intelligence", "note": "0 hits outside own dir"},
+    {"name": "alpha_intelligence", "note": "only hit is negative anti-coupling assertion in jarvis/research_risk_intelligence/tests -- asserts module is NOT imported"},
+    {"name": "meta_research_intelligence", "note": "0 hits outside own dir"},
+    {"name": "meta_intelligence", "note": "7 hits, all negative anti-coupling assertions across sibling test suites -- assert module is NOT imported"}
+  ],
+  "verification": {
+    "imports": 0,
+    "runtime_callers": 0,
+    "dashboard_dependency": false,
+    "data_dependency": false
+  },
+  "decision": "REMOVE"
+}

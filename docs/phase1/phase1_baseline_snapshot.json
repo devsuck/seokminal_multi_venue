@@ -1,0 +1,35 @@
+{
+  "timestamp": "2026-07-31T00:00:00+09:00",
+  "module_count": 150,
+  "module_count_note": "jarvis/ top-level dirs excluding _state, __pycache__",
+  "registry_hash": "sha1:5069a54942fd5b5f326a6cbd24ad96af3547d504",
+  "registry_hash_source": "sha1 of jarvis/_state/registry.jsonl raw bytes (195 rows)",
+  "experiment_count": 55,
+  "experiment_count_source": "characterization.build_meaning_snapshot().data_meaning.experiments.strategies_with_data == expt_experiments.jsonl line count",
+  "experiment_total_rows": 616,
+  "ledger_count": 21,
+  "ledger_count_note": "file count under jarvis/_state/ (flat, no subdirs). NOTE: 'ALL_LEDGERS==3' phrase does not map to any single global invariant in code -- ALL_LEDGERS is a per-module tuple constant (e.g. jarvis/research_workflow/ledger.py: (RUNS, SESSIONS, LOOPS) = 3 entries, jarvis/research_ingestion/ledger.py: (INGESTIONS,) = 1 entry). If 'ALL_LEDGERS==3' referred to jarvis/research_workflow specifically, that one is unaffected by Phase1 (protected module) and its ALL_LEDGERS stays (RUNS, SESSIONS, LOOPS) throughout.",
+  "governance_status": "compliant",
+  "governance_status_detail": {
+    "governance_compliant": true,
+    "recall_connections_preserved": true,
+    "hypothesis_discovery_stable": true,
+    "knowledge_grade_stable": true
+  },
+  "golden_status": "FAIL (advisory-only, pre-existing, unrelated to Phase1)",
+  "golden_status_detail": {
+    "test": "jarvis/research_workflow/tests/test_p202_safety_net.py::test_meaning_snapshot_matches_golden",
+    "result": "1 failed, 9 passed",
+    "failure_reason": "data_meaning.experiments changed: total_rows 613(golden) -> 616(live), strategies_with_data unchanged at 55",
+    "root_cause": "live autoresearch/experiment collectors kept writing new experiment rows after golden snapshot was captured on 2026-07-30 -- natural data growth, not a code regression",
+    "is_advisory": true,
+    "is_decision": false,
+    "composed_checks_all_stable": true,
+    "conclusion": "meaning-preserving invariants intact; this failure predates Phase1 and will not be treated as a Phase1-introduced regression. Re-check after each Phase1 commit: composed_checks must stay all-true and data_meaning.experiments.total_rows must not DECREASE."
+  },
+  "test_suite_baseline": {
+    "command": "pytest tests/ -q",
+    "result": "2033 passed, 7 warnings",
+    "collected": 2033
+  }
+}

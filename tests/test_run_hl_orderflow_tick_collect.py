@@ -88,6 +88,60 @@ def test_append_depth_skips_write_when_empty(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
+def test_append_snapshot_writes_jsonl_to_coin_dated_file(tmp_path):
+    with patch.object(runner, "_SNAPSHOT_DATA_DIR", tmp_path):
+        runner.append_snapshot("BTC", [{"ts": 1.0, "bids": [[100.0, 1.0]], "asks": [[101.0, 2.0]]}])
+        path = tmp_path / f"BTC_{dt.datetime.now(dt.timezone.utc).date().isoformat()}.jsonl"
+        lines = path.read_text().strip().splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["bids"] == [[100.0, 1.0]]
+
+
+def test_append_snapshot_skips_write_when_empty(tmp_path):
+    with patch.object(runner, "_SNAPSHOT_DATA_DIR", tmp_path):
+        runner.append_snapshot("BTC", [])
+    assert list(tmp_path.iterdir()) == []
+
+
+async def test_run_coin_forever_persists_snapshot_sorted_and_capped_to_top_n():
+    from orderflow.models import OrderBookLevel
+
+    bids = [OrderBookLevel(price=p, size=1.0) for p in [90.0, 92.0, 88.0]]
+    asks = [OrderBookLevel(price=p, size=1.0) for p in [111.0, 109.0, 113.0]]
+    book = _book(ts=100.0, bids=bids, asks=asks)
+    client = FakeClient([[book]])
+    snapshots = []
+    with patch.object(runner, "SNAPSHOT_LEVELS", 2):
+        await runner.run_coin_forever(
+            "BTC", client=client,
+            append_fn=lambda coin, trades: None,
+            depth_append_fn=lambda coin, deltas: None,
+            snapshot_append_fn=lambda coin, snaps: snapshots.extend(snaps),
+            max_cycles=1,
+        )
+    assert len(snapshots) == 1
+    assert snapshots[0]["ts"] == 100.0
+    assert snapshots[0]["bids"] == [[92.0, 1.0], [90.0, 1.0]]  # 내림차순 top-2
+    assert snapshots[0]["asks"] == [[109.0, 1.0], [111.0, 1.0]]  # 오름차순 top-2
+
+
+async def test_run_coin_forever_throttles_snapshot_persistence_by_event_ts():
+    base_ts = 1_000_000.0  # last_snapshot_ts는 0.0에서 시작하므로 첫 스냅샷은 항상 저장됨
+    first_book = _book(ts=base_ts)
+    within_throttle_book = _book(ts=base_ts + runner.SNAPSHOT_THROTTLE_SEC - 0.1)
+    past_throttle_book = _book(ts=base_ts + runner.SNAPSHOT_THROTTLE_SEC)
+    client = FakeClient([[first_book, within_throttle_book, past_throttle_book]])
+    snapshots = []
+    await runner.run_coin_forever(
+        "BTC", client=client,
+        append_fn=lambda coin, trades: None,
+        depth_append_fn=lambda coin, deltas: None,
+        snapshot_append_fn=lambda coin, snaps: snapshots.extend(snaps),
+        max_cycles=1,
+    )
+    assert [s["ts"] for s in snapshots] == [base_ts, base_ts + runner.SNAPSHOT_THROTTLE_SEC]
+
+
 async def test_run_coin_forever_backs_off_and_doubles_delay_on_repeated_failure():
     client = FakeClient([ConnectionError("boom"), ConnectionError("boom")])
     with patch("asyncio.sleep") as mock_sleep:

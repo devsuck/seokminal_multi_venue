@@ -1,5 +1,7 @@
 """jarvis.research_strategy_generation — Research Strategy Generation Intelligence Layer (P29). **생성 전용.**
 
+**ARCHIVED (Phase1 STEP3-B, 2026-07-31):** no active real-import caller found; only historically referenced by security_audit's dynamic AUDIT_TARGETS scan (outside default testpaths). Migration: if security_audit scanning is revived, this is a listed consumer; otherwise safe candidate for full removal in a later phase.
+
 역사적 지식(P10~P28)에서 연구 전략 후보·가설을 생성한다. Strategy Candidates·Hypotheses·Generation Sessions·
 Novelty Analysis·Evidence·Generation Reports 를 소유한다.
 

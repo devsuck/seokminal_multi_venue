@@ -1,5 +1,7 @@
 """jarvis.research_resource_manager — Research Resource Manager Layer (P32). **자동 배분·프로비저닝 없음.**
 
+**ARCHIVED (Phase1 STEP3-B, 2026-07-31):** no active real-import caller found; only historically referenced by security_audit's dynamic AUDIT_TARGETS scan (outside default testpaths). Migration: if security_audit scanning is revived, this is a listed consumer; otherwise safe candidate for full removal in a later phase.
+
 연구 자원을 추적한다: 데이터셋·컴퓨트·스토리지·연구 예산·GPU 사용·실험 배분. Resource Registry·Usage·Budget·
 Allocation·Reports·Lineage 를 소유한다.
 

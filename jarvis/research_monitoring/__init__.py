@@ -1,5 +1,7 @@
 """jarvis.research_monitoring — Research Monitoring & Observability Layer (P23). **관찰 전용.**
 
+**ARCHIVED (Phase1 STEP3-B, 2026-07-31):** no active real-import caller found; only historically referenced by security_audit's dynamic AUDIT_TARGETS scan (outside default testpaths). Migration: if security_audit scanning is revived, this is a listed consumer; otherwise safe candidate for full removal in a later phase.
+
 연구 생태계의 건강·품질·활동·무결성을 관찰·기록만 한다. Research Monitoring Registry·Health Metrics·Pipeline
 Observations·Activity Events·Quality Signals·System Anomalies·Snapshots·Observability Reports·Lineage 를 소유한다.
 

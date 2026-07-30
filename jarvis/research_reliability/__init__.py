@@ -1,5 +1,7 @@
 """jarvis.research_reliability — Research Self-Healing & Reliability Engineering Layer (P24). **기록 전용.**
 
+**ARCHIVED (Phase1 STEP3-B, 2026-07-31):** no active real-import caller found; only historically referenced by security_audit's dynamic AUDIT_TARGETS scan (outside default testpaths). Migration: if security_audit scanning is revived, this is a listed consumer; otherwise safe candidate for full removal in a later phase.
+
 연구 인프라 장애를 탐지·기록, 복구 계획·시도를 기록, 무결성을 검증, 신뢰성 이력을 유지, 반복 장애를 분석한다. Research
 Reliability Registry·Failure Incident Records·Recovery Plans·Recovery Attempts·Integrity Checks·Reliability
 Metrics·Postmortem Records·Reliability Reports·Reliability Lineage 를 소유한다.

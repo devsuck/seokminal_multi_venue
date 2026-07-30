@@ -7,6 +7,7 @@ forward return 라벨링까지 조립한다. 상수는 전부 설계 시점 고�
 """
 from __future__ import annotations
 
+import gzip
 import json
 from pathlib import Path
 
@@ -24,14 +25,21 @@ HORIZONS_S = [5, 15, 60]
 
 
 def load_venue_snapshots(venue: str, coin: str, dates: list[str]) -> pd.DataFrame:
-    """research/data/cross_venue_skew/{venue}_{coin}_{date}.jsonl 로드.
-    반환 컬럼: ts(float), bids(list[dict]), asks(list[dict]). ts 오름차순 정렬."""
+    """research/data/cross_venue_skew/{venue}_{coin}_{date}.jsonl(.gz) 로드.
+    보관정책(`research/compress_old_data.py`)이 오래된 날짜는 .jsonl.gz로 압축하므로
+    둘 다 찾아본다(평문 우선, 없으면 gz). 반환 컬럼: ts(float), bids(list[dict]),
+    asks(list[dict]). ts 오름차순 정렬."""
     rows = []
     for date in dates:
-        path = _DATA_DIR / f"{venue}_{coin}_{date}.jsonl"
-        if not path.exists():
+        plain = _DATA_DIR / f"{venue}_{coin}_{date}.jsonl"
+        gz = _DATA_DIR / f"{venue}_{coin}_{date}.jsonl.gz"
+        if plain.exists():
+            opener = plain.open
+        elif gz.exists():
+            opener = lambda: gzip.open(gz, "rt")
+        else:
             continue
-        with path.open() as f:
+        with opener() as f:
             for line in f:
                 line = line.strip()
                 if not line:

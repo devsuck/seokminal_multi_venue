@@ -2,6 +2,8 @@
 진입, 스탑/다음 반대편 유동성 레벨 목표로 청산. 단일 포지션만 추적(겹치면 저널 채점이 꼬임)."""
 from __future__ import annotations
 
+import logging
+
 from research.ict.paper.htf_zones import ZoneTracker
 from research.ict.paper.journal_writer import append_trade_row
 from research.ict.paper.position_state import (
@@ -18,6 +20,11 @@ CONFLUENCE_WINDOW_BARS = 5
 
 _TRIGGER_TO_ZONE_TYPE = {"buy": "bullish", "sell": "bearish"}
 
+# 10일간 0건 진입 근본원인 조사(2026-07-30)에서 "4중 AND 컨플루언스가 구조적으로
+# 희소한 것"이 유력 가설로 결론났으나 계측 없이는 반증 불가 — 이 주기마다 단계별
+# 누적 탈락 카운트를 로그로 남겨 어느 필터가 병목인지 실측 가능하게 한다.
+LOG_INTERVAL_BARS = 500
+
 
 class PaperEngine:
     def __init__(self, symbol: str, state_path: str, journal_path: str) -> None:
@@ -28,6 +35,10 @@ class PaperEngine:
         self._ltf_bars: list[dict] = []
         self._recent_ltf_triggers: list[dict] = []  # {"bar_index","of_trigger","side"}
         self.position: PositionState | None = load_position_state(state_path)
+        self._entry_stage_counts = {
+            "checked": 0, "zone_none": 0, "cisd_miss": 0, "trigger_miss": 0,
+            "risk_invalid": 0, "target_none": 0, "entered": 0,
+        }
 
     def on_htf_bar(self, bar: dict) -> None:
         self.zones.update(bar)
@@ -68,8 +79,11 @@ class PaperEngine:
                 self._exit(price, hit="target")
 
     def _check_entry(self, bar: dict) -> None:
+        self._entry_stage_counts["checked"] += 1
         zone = self.zones.zone_at_price(bar["close"])
         if zone is None:
+            self._entry_stage_counts["zone_none"] += 1
+            self._maybe_log_entry_funnel()
             return
 
         o = [b["open"] for b in self._ltf_bars]
@@ -82,6 +96,8 @@ class PaperEngine:
         cisd = cisd_events(o, h, l, c)
         cisd_in_window = any(e["idx"] >= window_start and e["type"] == zone["type"] for e in cisd)
         if not cisd_in_window:
+            self._entry_stage_counts["cisd_miss"] += 1
+            self._maybe_log_entry_funnel()
             return
 
         matching_trigger = next(
@@ -92,6 +108,8 @@ class PaperEngine:
             None,
         )
         if matching_trigger is None:
+            self._entry_stage_counts["trigger_miss"] += 1
+            self._maybe_log_entry_funnel()
             return
 
         entry_price = bar["close"]
@@ -102,10 +120,14 @@ class PaperEngine:
             stop = zone["zone_hi"]
             risk = stop - entry_price
         if risk <= 0:
+            self._entry_stage_counts["risk_invalid"] += 1
+            self._maybe_log_entry_funnel()
             return  # 존 경계가 진입가와 같거나 역전된 기형 케이스 — 진입 스킵
 
         target = self.zones.next_opposing_level(zone["type"], entry_price)
         if target is None:
+            self._entry_stage_counts["target_none"] += 1
+            self._maybe_log_entry_funnel()
             return  # 다음 반대편 유동성 레벨이 아직 안 잡힘 — 목표 미확정, 진입 스킵
 
         self.position = PositionState(
@@ -115,6 +137,13 @@ class PaperEngine:
         )
         self.zones.mark_consumed(zone)
         save_position_state(self._state_path, self.position)
+        self._entry_stage_counts["entered"] += 1
+        self._maybe_log_entry_funnel()
+
+    def _maybe_log_entry_funnel(self) -> None:
+        if self._entry_stage_counts["checked"] % LOG_INTERVAL_BARS != 0:
+            return
+        logging.info("ICT paper engine 진입조건 단계별 누적 카운트: %s", self._entry_stage_counts)
 
     def _exit(self, price: float, hit: str) -> None:
         pos = self.position

@@ -1257,3 +1257,59 @@
 ### 다음 세션 확인
 - 위 "맥 검증 체크리스트"(엣지 메타-대시보드/함대헬스) 항목들은 이번 세션 중 이미 일부 확인됨(`/lab/edges` curl 스모크). `/edges` 프론트 페이지 브라우저 렌더는 아직 미확인 — 다음 세션에서 확인 권장.
 - MLB 데이터는 여전히 축적 대기(수집기 상시구동 중, 표본 쌓이면 자동 계산).
+
+---
+
+## 2026-07-30: Investment OS 자문전용(is_advisory/is_decision) 불변식 재점검 + jarvis 테스트 스윕 + CPU 발열 원인 제거
+
+- 세션 앞부분(컨텍스트 컴팩션으로 세부 로그 유실)에서 Portfolio OS 계열(`prediction_registry.py`/`portfolio_construction.py`/`signal_overlay.py`/대시보드 `allocation/page.tsx`) 대상으로 "제안 전용·실행 없음" 불변식 재점검 라운드 진행 중이었음. 컴팩션 이후 재개해서 확인한 것만 기록:
+  - **`jarvis/research_workflow/prediction_registry.py`**: `_snapshot_hash()`가 해싱하는 `core` dict가 `immutable_fields`로 선언한 5개 필드(`evaluation_framework`/`success_rule`/`thresholds`/`thesis`/`invalidation_condition`)를 정확히 커버 — 선언과 실제 해시 대상 불일치 없음. 사후 변조 검증용 `verify_snapshot_hash()` 같은 함수는 없지만, 저장처가 `rmi_` append-only 원장이라 별도 검증 없이도 위조 경로 자체가 없음 — 문제 없다고 판단.
+  - jarvis 테스트 스윕 2건 모두 그린: `pytest tests/ -k jarvis` 276 passed / `pytest tests/`(전체) 15036 passed, 0 failed, 150초. CLAUDE.md에 명시된 기존 known-failure(test_auth×3~4, test_backtest_happy_path)는 이번 러너 스코프에서 안 걸림(별도 subset이라 무관).
+- **CPU 발열 원인 진단 및 제거** (`seokminal-dashboard` 쪽 문제, 백엔드 `--reload` 아님 — 그건 이미 안 켜져 있었음 확인함): `ps -Ao pcpu` 로 프로세스 스캔 → `seokminal-dashboard`의 vitest fork worker(`node .../vitest/dist/workers/forks.js`, pid 78025)가 CPU 100% 고정으로 9시간12분째 돌아가고 있던 게 원인. 오래된 `npm test` watch 모드 세션이 안 닫히고 방치된 것으로 추정. `kill`로 종료, 프로세스 소멸 확인. (참고로 `research.run_cross_venue_skew_collect` 파이썬 프로세스도 24.9% CPU로 5일+ 계속 도는 중인데, 이건 의도된 상시 수집기로 보여 안 건드림 — 다음 세션에서 이 트랙이 뭔지 확인 필요, 메모리에 기록 없음.)
+
+### 다음 세션 확인
+- `run_cross_venue_skew_collect` — 정체 불명 장기 실행 수집기(5일+, PPID 83664). 의도된 것인지, 좀비인지 다음 세션에서 확인.
+- Portfolio OS 불변식 점검 라운드 ①②는 컴팩션으로 세부 내용 유실 — 필요하면 재확인.
+- `docs/progress.md`(양쪽 레포 다) 파일 크기 커짐(dashboard 쪽 3800줄/326KB) — 당장 문제는 아니지만 다음에 오래된 Phase 아카이빙 고려.
+
+---
+
+## 2026-07-30 (이어서): 디스크 정리 + 함대 헬스 모니터링 업그레이드(stuck tier/flapping/디스크 경보)
+
+### 완료된 작업
+- **디스크 정리**: `research/compress_old_data.py`로 `cross_venue_skew`(89개) + `polymarket_tick`(19개) 오래된 `.jsonl`→`.jsonl.gz` 압축. 디스크 여유 38GB→81.6GB로 회복.
+- **`collector-watchdog` tmux 로그 점검 중 실사고 발견**: `polymarket_event_divergence`가 stale 상태로 **9.7시간** 방치돼 있었음(마지막 write 07-29 13:21). 원인: `stale`은 워치독이 기본적으로 손 안 대는 상태(`--restart-stale` 꺼짐)라 아무 데도 안 걸리고, `/lab/fleet`을 수동으로 안 보면 무기한 방치됨. 같은 로그에서 `polymarket_arb`/`polymarket_updown_arb`가 하루에 6번씩(1~2h 간격) 죽었다 재기동되는 flapping 패턴도 발견 — 지금까지 카운트되는 곳이 없어서 "워치독이 알아서 처리 중"으로 안 보였을 뿐 근본원인 미해결 상태.
+- **`api_server/fleet_health.py`**: verdict에 `stuck` 티어 추가(`age > stale_after_s × STUCK_MULTIPLIER(4)` — stale 방치를 dead/stale과 별도로 눈에 띄게). `classify()`에 `restart_count_24h`/`flapping`(≥`FLAPPING_THRESHOLD`=3) 필드 추가. `classify_disk()`(ok/warn<20GB/critical<8GB) + `count_restarts_by_key()` 신규.
+- **`api_server/lab_api.py`**: `/collectors/{key}/restart` 호출마다 `research/data/_ops/restart_log.jsonl`에 append(`_log_restart`, HUD 수동 클릭·워치독 자동 재기동 공통 계측점). `/lab/fleet` 응답에 `disk` 필드(`shutil.disk_usage`) + 각 collector row에 24h 재기동 카운트 반영.
+- **`ops/collector_watchdog.py`**: `stuck`/`flapping`/디스크 warn·critical은 `restart_stale` 옵션과 무관하게 항상 로그(stuck은 `logging.error`) — 9시간 방치 재발 방지가 목적이라 재기동 여부와 로그 노출을 분리. `to_restart()`는 `restart_stale=True`일 때 `stuck`도 `stale`과 함께 재기동 대상에 포함.
+- **프론트 `/edges`**: `lib/api.ts`(`FleetCollector`/`FleetResponse`에 `stuck`/`restart_count_24h`/`flapping`/`disk` 반영), `app/edges/page.tsx`(디스크 여유공간 칩, flapping 뱃지 `재기동×N`, `stuck` 별도 색조 — 토큰 재사용만, 새 컬러 없음).
+- **테스트**: `tests/test_fleet_health.py` 신규 8건(stuck 분류/랭킹/flapping/디스크 tier/재기동 카운트), `tests/test_collector_watchdog.py` 신규 2건(stuck 재기동 정책). 백엔드 전체 1993 passed(기존 known-failure 4건 + 이번 세션 무관 환경성 실패 1건(`test_orderflow_ib_adapter` IB_PORT 환경변수 불일치) 그대로). 대시보드 `tsc --noEmit` 클린.
+- **실제 조치**: 위에서 발견한 `polymarket_event_divergence`를 새 `stuck` verdict로 재확인 후 `/lab/collectors/polymarket_event_divergence/restart` 호출로 직접 재기동(tmux pane에 python 프로세스 정상 기동 확인, 크래시 로그 없음).
+
+### 변경된 파일
+- `seokminal-multi-venue/api_server/fleet_health.py`, `api_server/lab_api.py`, `ops/collector_watchdog.py`
+- `seokminal-multi-venue/tests/test_fleet_health.py`, `tests/test_collector_watchdog.py`
+- `seokminal-dashboard/lib/api.ts`, `app/edges/page.tsx`
+
+### 다음 세션 확인
+- `polymarket_event_divergence` 재기동 후 실제로 다시 write 시작하는지(다음 세션에서 `/lab/fleet` age_sec 확인) — 재기동만 했고 근본원인(왜 9시간 멈췄는지)은 조사 안 함.
+- `polymarket_arb`/`polymarket_updown_arb` flapping(하루 6회+ 재기동) 근본원인 미조사 — 이제 `restart_count_24h`/`flapping` 필드로 눈에는 띄니 다음에 왜 자꾸 죽는지 확인 권장(재기동이 kill-then-spawn이라 죽을 때 stderr가 안 남는 것도 갭 — 필요해지면 재기동 시 이전 pane 로그를 파일로 떠두는 것도 고려).
+- `--restart-stale`/새 `stuck` 자동재기동은 여전히 기본 꺼짐(README 권장 유지) — 워치독은 로그만, 사람이 보고 판단하는 흐름 그대로.
+
+### 막힌 부분/결정사항
+- 없음. flapping/stuck을 기존 bot 전용 alert rule 엔진(`api_server/main.py` `_ALERT_CONDITION_TYPES`)에 끼워넣지 않고 `/lab/fleet`+워치독 로그로만 노출하기로 결정 — 그 엔진은 `bot_id` 기반 스키마라 수집기엔 안 맞고, 억지로 넣으면 과설계.
+
+### 추가: 발열 재발방지 — `ops/dev_process_watchdog.py` 신규
+- 유저가 재기동 직후 CPU 발열 체감("지금 왜뜨거워?") → 원인 진단: (1) uvicorn(방금 재기동)이 `main.py` 스타트업 훅의 `research.lab.service.SERVICE.start()`로 parquet 카탈로그 읽는 중이었음(정상, 몇 분 내 자연 idle 확인됨), (2) 세션 중 직접 돌린 `npm test`(`vitest run`, 1회성)가 오래 걸리는 중.
+- 유저 후속 요청("이거 발열 안나게 플랫폼 운영 처리 안되나") → 진짜 반복 위험은 `vitest`를 watch모드(인자 없이)로 켜놓고 방치하는 경우(`package.json`의 `test`는 이미 `vitest run`으로 고정돼 안전, 문제는 터미널에서 직접 `vitest` 치는 경우) — 09-30(이날 앞부분) 9시간+ 방치 사건과 같은 계열.
+- `collector_watchdog.py`와 동일 모양(순수 `classify_processes`/`parse_etime` + 얇은 IO `run_once`/`run_forever`)으로 `ops/dev_process_watchdog.py` 작성: vitest worker 프로세스 패턴만 명시 매칭, 30분 넘게 살아있으면 SIGTERM. uvicorn/수집기/next dev는 패턴에 안 걸려 안전. `tests/test_dev_process_watchdog.py` 9건(테스트 카운트 갱신: 총 2002 passed). `ops/README.md`에 섹션 추가, tmux `dev-process-watchdog` 세션으로 상시가동 시작함(5분 간격).
+
+### 다음 세션 확인 (추가)
+- `dev-process-watchdog` tmux 세션이 실제로 몇 사이클 돌면서 오탐(정상 프로세스 잘못 kill) 없는지 확인.
+
+### 추가: vitest run(1회성) 자체가 완료 후 안 죽는 문제 확인
+- 유저 요청("지금 바로 죽이고 원인 봐줘")로 돌던 `npm test` 프로세스 `TaskStop`으로 정리 후, `vitest run --reporter=verbose` 재현 시도(perl alarm 60s로 강제종료 — macOS에 `timeout` 없음).
+- verbose 로그 확인: 27개 테스트 파일 전부 개별 테스트 통과(✓) — 즉 테스트 로직 자체는 정상 완료. 그런데도 프로세스가 60s 넘게 안 죽음.
+- `npx` wrapper만 alarm에 죽고 실제 vitest(forks worker)는 PID 1로 reparent된 채 CPU 98.9%로 계속 살아있던 걸 뒤늦게 발견 → `kill -9`로 직접 정리 완료(확인됨, 잔여 프로세스 없음).
+- **결론**: 특정 테스트 코드 버그 아님(전부 통과), 앱 코드의 미정리 setInterval/WebSocket도 아님(`lib/`·`app/`·`components/`·`hooks/` 전수 grep — interval 있는 컴포넌트는 전부 useEffect cleanup 있고, 애초에 테스트가 마운트 안 하는 페이지 컴포넌트들). vitest 4.1.9 자체(또는 forks pool)가 run 모드 완료 후 프로세스를 안 놓는 걸로 보이는 환경/툴링성 이슈로 잠정 결론 — 더 깊게(디펜던시 단위 bisect) 파고들 실익 낮다고 판단해 중단(`dev_process_watchdog.py`가 어차피 30분 넘으면 blanket으로 죽여줌).
+- **막힌 부분**: vitest 프로세스가 정확히 왜 안 죽는지(어느 open handle인지)는 미확정. 재발하면 `node --trace-warnings` 또는 vitest `pool: "forks"` → `"threads"` 전환 테스트로 좁혀볼 것.

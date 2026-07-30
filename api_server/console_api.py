@@ -2137,3 +2137,22 @@ def investment_os_advance(current_rung: str = "PAPER", approve: bool = False) ->
             "is_advisory": True, "is_decision": False,
             "note": ("Ladder Advance(자문 상태전이) — 사람 승인 + 4게이트 필수. AUTO 영구 차단. "
                      "주문/실행 없음. Investment OS 는 자본을 움직이지 않는다.")}
+
+
+# ── Forward Learning — thesis vs 실제 결과 (READ ONLY) ──
+@router.get("/forward-learning")
+def forward_learning() -> dict:
+    """paper_active/paper_candidate/watchlist 전략별 Forward Learning Record.
+    **READ ONLY projection.** registry(FSM)·experiment_registry(증거)·prediction_registry(P201)·
+    paper.deploy(forward 배포+러너)를 strategy_id 로 조인. 새 원장/새 schema 없음. 실행 없음."""
+    import jarvis.investment_os as ios
+    r = _safe(lambda: ios.build_forward_learning_records(), {}) or {}
+    return {"records": r.get("records", []), "count": r.get("count", 0),
+            "tracked_statuses": r.get("tracked_statuses", []),
+            "coverage_gaps": r.get("coverage_gaps", {}),
+            "is_advisory": True, "is_decision": False,
+            "disclaimer": ("Forward Learning — READ ONLY. 왜 믿는가(thesis+evidence) · 어디까지 검증됐는가"
+                           "(validation_status) · 실제가 기대와 일치하는가(expected_behavior vs "
+                           "current_behavior) · 다음 판단·승인자(next_possible+human_approval_required_next). "
+                           "기존 registry/experiment_registry/prediction_registry/paper.deploy 조인, "
+                           "새 원장 없음. Research OS 무변경, 실행 없음. 모든 결정은 사람.")}

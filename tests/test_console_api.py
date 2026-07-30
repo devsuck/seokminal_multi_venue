@@ -65,11 +65,26 @@ def test_knowledge_derives_graph():
         assert "factor" in types or "strategy" in types
 
 
+def test_fusion_shape():
+    f = c.fusion()
+    assert isinstance(f, dict) and "fusion_signals" in f
+    assert isinstance(f["fusion_signals"], list)
+
+
+def test_overlay_shape():
+    o = c.overlay()
+    assert isinstance(o, dict)
+    for k in ("strategy_weights", "overlay", "warn"):
+        assert k in o
+    assert isinstance(o["overlay"], list)
+    assert "제안 전용" in o["warn"]
+
+
 def test_read_only_endpoints_never_crash():
     """모든 엔드포인트가 방어적으로 dict 반환(원장 부재에도)."""
     for fn in (c.status, c.pipeline, c.regime, c.council, c.strategies, c.experiments,
                c.validation, c.agents, c.logs, c.knowledge, c.research, c.market,
-               c.allocation, c.positions, c.risk, c.orders, c.broker, c.monitor):
+               c.allocation, c.fusion, c.overlay, c.positions, c.risk, c.orders, c.broker, c.monitor):
         out = fn()
         assert isinstance(out, dict), f"{fn.__name__} did not return dict"
 

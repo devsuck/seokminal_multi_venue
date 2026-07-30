@@ -109,6 +109,22 @@ def _cmd_evaluate(commit: bool) -> int:
     return 0
 
 
+def _cmd_overlay() -> int:
+    from datetime import datetime, timezone
+    from jarvis.portfolio.journal import read_latest
+    from jarvis.portfolio.signal_overlay import compute_overlay
+    as_of = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    latest = read_latest(1)
+    weights = latest[0]["after"] if latest else {}
+    rows = compute_overlay(weights, as_of)
+    out = {"as_of": as_of, "source_decision": "journal_latest" if latest else "none",
+           "strategy_weights": weights, "overlay": rows,
+           "note": ("" if rows else "전략 신호/저널 없음(정직) — orchestrator evaluate --commit 먼저 실행 필요"),
+           "warn": "제안 전용 — 종목 포지션 재계산·주문 없음"}
+    print(json.dumps(out, ensure_ascii=False, indent=2, default=str))
+    return 0
+
+
 def _cmd_quality() -> int:
     from jarvis.portfolio.returns_matrix import ReturnMatrix, buyback_source
     from jarvis.portfolio.risk_quality import check_matrix
@@ -129,6 +145,7 @@ def main(argv=None) -> int:
     s.add_argument("--auto-regime", action="store_true")
     s.add_argument("--quality-gate", action="store_true")
     sub.add_parser("quality")
+    sub.add_parser("overlay")
     rb = sub.add_parser("rebalance")
     rb.add_argument("--write", action="store_true")
     ev = sub.add_parser("evaluate")
@@ -143,6 +160,8 @@ def main(argv=None) -> int:
         return _cmd_scale(args.regime, args.auto_regime, args.quality_gate)
     if args.cmd == "quality":
         return _cmd_quality()
+    if args.cmd == "overlay":
+        return _cmd_overlay()
     if args.cmd == "rebalance":
         return _cmd_rebalance(args.write)
     if args.cmd == "evaluate":

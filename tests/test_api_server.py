@@ -57,12 +57,23 @@ def test_backtest_happy_path_returns_all_metric_keys():
     )
     assert response.status_code == 200
     body = response.json()
+    # BacktestResponse(api_server/main.py) 필드 전체 — sortino/beta/volatility/
+    # win_rate/profit_loss_ratio/avg_win/avg_loss/trades 는 리스크 대시보드
+    # 단계에서 추가됐으나 이 스모크 테스트는 최초 5개 키에서 갱신 안 돼있었음.
     assert set(body.keys()) == {
         "sharpe_ratio",
+        "sortino_ratio",
         "max_drawdown",
+        "volatility",
+        "beta",
         "total_pnl",
         "total_pnl_pct",
+        "win_rate",
+        "profit_loss_ratio",
+        "avg_win",
+        "avg_loss",
         "bar_count",
+        "trades",
     }
 
 

@@ -235,6 +235,53 @@ COLLECTOR_SESSIONS: dict[str, dict[str, str]] = {
 }
 
 
+_RESTART_LOG_PATH = "research/data/_ops/restart_log.jsonl"
+
+
+def _log_restart(key: str, path: str = _RESTART_LOG_PATH) -> None:
+    """재기동 1건을 append. HUD 수동 클릭과 워치독 자동 재기동이 같은 엔드포인트를
+    쓰므로 여기 한 곳만 계측하면 둘 다 잡힌다(flapping 판정용, fleet_health.classify 참고)."""
+    import json
+    import time
+    from pathlib import Path
+
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("a") as f:
+        f.write(json.dumps({"key": key, "ts": time.time()}) + "\n")
+
+
+def _read_restart_counts(path: str = _RESTART_LOG_PATH, window_s: float = 86400.0) -> dict[str, int]:
+    import json
+    import time
+    from pathlib import Path
+
+    from api_server import fleet_health
+
+    p = Path(path)
+    if not p.exists():
+        return {}
+    events = []
+    with p.open() as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except ValueError:
+                continue
+    return fleet_health.count_restarts_by_key(events, time.time(), window_s=window_s)
+
+
+def _disk_free_total_gb(path: str = "research/data") -> tuple[float, float]:
+    import shutil
+
+    usage = shutil.disk_usage(path)
+    gb = 1024 ** 3
+    return usage.free / gb, usage.total / gb
+
+
 @router.post("/collectors/{key}/restart")
 def restart_collector(key: str) -> dict:
     """죽었거나 멎은 수집기를 kill 후 같은 세션명으로 재기동. HUD의 재시작 버튼용."""
@@ -258,6 +305,7 @@ def restart_collector(key: str) -> dict:
     if result.returncode != 0:
         raise HTTPException(status_code=500, detail=f"재기동 실패: {result.stderr[:200]}")
 
+    _log_restart(key)
     return _tmux_process_status(session, cfg["data_dir"])
 
 
@@ -267,6 +315,7 @@ def lab_fleet() -> dict:
     하나가 조용히 죽으면 엣지가 소리없이 썩으므로 '기계 살아있나'를 한눈에. 읽기전용.
     api_server/fleet_health.py(순수 판정) 참고."""
     from api_server import fleet_health
+    restart_counts = _read_restart_counts()
     rows = []
     for key, cfg in COLLECTOR_SESSIONS.items():
         try:
@@ -274,8 +323,14 @@ def lab_fleet() -> dict:
         except Exception as exc:  # noqa: BLE001
             status = {"running": False, "session_exists": False, "last_write": None,
                       "age_sec": None, "error": str(exc)[:120]}
-        rows.append(fleet_health.classify(key, status))
-    return fleet_health.fleet_summary(rows)
+        rows.append(fleet_health.classify(key, status, restart_counts.get(key, 0)))
+    summary = fleet_health.fleet_summary(rows)
+    try:
+        free_gb, total_gb = _disk_free_total_gb()
+        summary["disk"] = fleet_health.classify_disk(free_gb, total_gb)
+    except OSError as exc:
+        summary["disk"] = {"verdict": "unknown", "reason": str(exc)[:120], "free_gb": None, "total_gb": None}
+    return summary
 
 
 @router.get("/status")

@@ -14,6 +14,14 @@ def test_restarts_stale_when_enabled():
     assert to_restart(_fleet("fresh", "stale", "dead"), restart_stale=True) == ["c1", "c2"]
 
 
+def test_stuck_not_restarted_by_default():
+    assert to_restart(_fleet("fresh", "stuck", "dead")) == ["c2"]
+
+
+def test_stuck_restarted_when_stale_enabled():
+    assert to_restart(_fleet("fresh", "stuck", "stale"), restart_stale=True) == ["c1", "c2"]
+
+
 def test_all_fresh_no_restart():
     assert to_restart(_fleet("fresh", "fresh")) == []
 

@@ -35,6 +35,11 @@ class _SymbolWorker:
     aggregator: OrderflowAggregator
     subscribers: set = field(default_factory=set)
     last_book_broadcast_ts: float = 0.0
+    # heatmap_delta는 원장 뎁스 변화마다(측정상 초당 60건+) 무조건 나가서 book_snapshot과
+    # 별개로 스로틀이 안 걸려있었음 — 프론트 Map 카피+리렌더가 그 속도로 돌아 발열 원인.
+    # book_snapshot과 같은 창(BOOK_SNAPSHOT_THROTTLE_SEC)에 묶어 키별 최신값만 모았다가
+    # 방출 — on_book_snapshot 자체는 매 틱 그대로 호출해 내부 상태(스푸핑 감시 등)는 안 건드림.
+    pending_heatmap: dict = field(default_factory=dict)
 
 
 class OrderflowManager:
@@ -116,12 +121,19 @@ class OrderflowManager:
                             }
                         ]
                     else:
-                        deltas = aggregator.on_book_snapshot(event)
+                        raw_deltas = aggregator.on_book_snapshot(event)
                         worker = self._workers.get(symbol)
                         now = self._now_fn()
-                        if worker is not None and now - worker.last_book_broadcast_ts >= BOOK_SNAPSHOT_THROTTLE_SEC:
-                            worker.last_book_broadcast_ts = now
-                            deltas = [aggregator.latest_book(event), *deltas]
+                        deltas = [d for d in raw_deltas if d["type"] != "heatmap_delta"]
+                        if worker is not None:
+                            for d in raw_deltas:
+                                if d["type"] == "heatmap_delta":
+                                    worker.pending_heatmap[(d["ts"], d["price"])] = d
+                            if now - worker.last_book_broadcast_ts >= BOOK_SNAPSHOT_THROTTLE_SEC:
+                                worker.last_book_broadcast_ts = now
+                                flushed = list(worker.pending_heatmap.values())
+                                worker.pending_heatmap.clear()
+                                deltas = [aggregator.latest_book(event), *flushed, *deltas]
                     self._broadcast(symbol, deltas)
                 self._broadcast_status(symbol, "reconnecting")
                 was_reconnecting = True

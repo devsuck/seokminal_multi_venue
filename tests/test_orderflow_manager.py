@@ -134,6 +134,90 @@ async def test_book_snapshot_throttled_within_150ms_window():
     manager.unsubscribe("BTC.HL", queue)
 
 
+def _book_with_bid_size(ts, size):
+    return OrderBookSnapshot(
+        symbol="BTC.HL", ts=ts,
+        bids=[OrderBookLevel(price=100.0, size=size)],
+        # ask는 tick_size=10(BTC.HL)로 라운딩되는 bid(100.0)와 같은 버킷에 안 걸리게 200.0으로 뗀다.
+        # 101.0을 쓰면 라운딩 후 100.0으로 같이 뭉쳐서 pending_heatmap 키가 충돌해 서로 덮어씀.
+        asks=[OrderBookLevel(price=200.0, size=1.0)],
+    )
+
+
+async def test_heatmap_delta_coalesced_within_throttle_window():
+    """book_snapshot과 별개로 스로틀 없이 매 틱 나가던 heatmap_delta가 발열 원인이었음(실측 61.5/sec) —
+    같은 150ms 창에 묶어 키별 최신값만 방출하는지 확인.
+    1틱째는 book_snapshot과 동일 규칙(최초 이벤트는 즉시 flush)으로 단독 방출되고,
+    2·3틱째는 같은 창 안이라 pending에 쌓였다가 4틱째(창 경과, now_fn 수동 전진)에 합쳐져 나간다."""
+    clock = {"t": 1000.0}
+
+    def now_fn():
+        return clock["t"]
+
+    events = [
+        _book_with_bid_size(1000.0, 1.0),
+        _book_with_bid_size(1000.0, 2.0),
+        _book_with_bid_size(1000.0, 3.0),
+        _book_with_bid_size(1000.2, 3.0),
+    ]
+    call_count = {"n": 0}
+
+    async def stream(symbol):
+        for e in events:
+            call_count["n"] += 1
+            if call_count["n"] == 4:
+                clock["t"] = 1000.2
+            yield e
+
+    manager = OrderflowManager(adapter_factory=stream, now_fn=now_fn)
+    queue, _ = manager.subscribe("BTC.HL")
+
+    msgs = []
+    try:
+        while True:
+            msgs.append(await asyncio.wait_for(queue.get(), timeout=0.2))
+    except asyncio.TimeoutError:
+        pass
+
+    heatmap_msgs = [m for m in msgs if m["type"] == "heatmap_delta" and m["price"] == 100.0]
+    # 2,3틱(size 2.0, 3.0)은 같은 창 안이라 한 번에 3.0으로만 나가고 2.0은 안 나감
+    assert [m["size"] for m in heatmap_msgs] == [1.0, 3.0]
+
+    manager.unsubscribe("BTC.HL", queue)
+
+
+async def test_heatmap_delta_flushes_again_after_throttle_window_elapses():
+    clock = {"t": 1000.0}
+
+    def now_fn():
+        return clock["t"]
+
+    events = [_book_with_bid_size(1000.0, 1.0), _book_with_bid_size(1000.2, 2.0)]
+    call_count = {"n": 0}
+
+    async def stream(symbol):
+        for e in events:
+            call_count["n"] += 1
+            if call_count["n"] == 2:
+                clock["t"] = 1000.2
+            yield e
+
+    manager = OrderflowManager(adapter_factory=stream, now_fn=now_fn)
+    queue, _ = manager.subscribe("BTC.HL")
+
+    msgs = []
+    try:
+        while True:
+            msgs.append(await asyncio.wait_for(queue.get(), timeout=0.2))
+    except asyncio.TimeoutError:
+        pass
+
+    heatmap_msgs = [m for m in msgs if m["type"] == "heatmap_delta" and m["price"] == 100.0]
+    assert [m["size"] for m in heatmap_msgs] == [1.0, 2.0]
+
+    manager.unsubscribe("BTC.HL", queue)
+
+
 async def test_book_snapshot_broadcast_again_after_throttle_window_elapses():
     clock = {"t": 1000.0}
 

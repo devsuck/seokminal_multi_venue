@@ -26,7 +26,7 @@ def committee_packet(question, *, topic=None, metrics=None, portfolio=None, stra
     council = deliberate(question, assistant=assistant)
 
     decision_history = _decision_history(t)
-    return {"question": question, "thesis": memo.get("recommendation"),
+    return {"question": question, "thesis": memo.get("rationale") or memo.get("recommendation"),
             "rationale": memo.get("rationale"), "evidence": memo.get("evidence"),
             "supporting_arguments": memo.get("supporting_arguments"),
             "counter_arguments": memo.get("counter_arguments"),

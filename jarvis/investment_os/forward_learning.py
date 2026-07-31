@@ -114,6 +114,13 @@ def _deployment(strategy_id: str) -> dict | None:
                                     fromlist=["deployment_of"]).deployment_of(strategy_id))
 
 
+def _first_deployment(strategy_id: str) -> dict | None:
+    """paper_start_date 전용 — 최초 배포 행. 반복 재배포 기록 때문에 deployment_of()(최신 행)을 쓰면
+    forward 추적 시작일이 계속 "지금"으로 밀린다(STEP5 audit P4)."""
+    return _safe(lambda: __import__("jarvis.paper.deploy",
+                                    fromlist=["first_deployment_of"]).first_deployment_of(strategy_id))
+
+
 def _next_transitions(status: str) -> dict:
     from jarvis.registry import ALLOWED_TRANSITIONS, Status
     try:
@@ -136,6 +143,7 @@ def build_record(strategy_id: str) -> dict:
     evidence_rows = _experiment_evidence(strategy_id)
     prediction = _prediction_for(strategy_id)
     dep = _deployment(strategy_id)
+    first_dep = _first_deployment(strategy_id)
     fwd = _forward_report(strategy_id)
     latest_ev = evidence_rows[-1] if evidence_rows else {}
 
@@ -158,7 +166,7 @@ def build_record(strategy_id: str) -> dict:
                            "wf_second_sharpe": e.get("wf_second_sharpe"),
                            "cost_robust": e.get("cost_robust"), "verdict": e.get("verdict")}
                           for e in evidence_rows],
-        "paper_start_date": (dep or {}).get("deployed_at"),
+        "paper_start_date": (first_dep or {}).get("deployed_at"),
         "forward_period_months": len((fwd or {}).get("forward_months") or {}),
         "expected_behavior": expected_behavior,
         "current_behavior": current_behavior,

@@ -59,8 +59,8 @@ def build_committee_packet(question: str, *, spec: dict | None = None, metrics: 
                                   "historical_counterexamples": debate.get("historical_counterexamples", [])},
             "confidence": packet.get("confidence"),
             "confidence_breakdown": packet.get("confidence_breakdown", {}),
-            "limitations": (debate.get("missing_evidence", []) +
-                            packet.get("remaining_unknowns", []))[:8] or ["근거 축적 초기 — 사람 검토 필수"],
+            "limitations": (packet.get("remaining_unknowns", []) +
+                            debate.get("missing_evidence", []))[:8] or ["근거 축적 초기 — 사람 검토 필수"],
             "questions_for_human": questions,
             "decision_history": packet.get("decision_history", []),
             "requires_human_review": True, "requires_human_decision": True,

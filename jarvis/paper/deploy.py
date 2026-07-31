@@ -53,6 +53,12 @@ def deployment_of(strategy_id: str) -> dict | None:
     return rows[-1] if rows else None
 
 
+def first_deployment_of(strategy_id: str) -> dict | None:
+    """최초 배포 레코드(paper_start_date 용) — deployment_of() 는 최신 행(현재 러너/설정)을 준다."""
+    rows = [d for d in _deployments() if d.get("strategy_id") == strategy_id]
+    return rows[0] if rows else None
+
+
 def all_deployments() -> list[dict]:
     """전략별 최신 배포(중복 제거)."""
     latest: dict = {}

@@ -31,6 +31,30 @@ def _capture(**kw):
     return capture_prediction(**kw)
 
 
+def _evidence_from_committee(p: dict) -> list:
+    """supporting_evidence(dict: evidence/arguments/bull_case) → 실제 근거 텍스트 최대 5개.
+
+    build_committee_packet() 이 반환하는 supporting_evidence 는 카테고리별 dict — 리스트가 아니다.
+    bull_case.evidence[].text(개별 실험 근거) 우선, 없으면 arguments[].rationale(렌즈별 논거),
+    그래도 없으면 evidence.sources(카테고리명)로 폴백.
+    """
+    se = p.get("supporting_evidence")
+    if isinstance(se, list):
+        return [str(e) for e in se][:5]
+    se = se or {}
+    out = []
+    for e in (se.get("bull_case") or {}).get("evidence", []) or []:
+        text = e.get("text") if isinstance(e, dict) else str(e)
+        if text:
+            out.append(str(text))
+    for a in se.get("arguments") or []:
+        if isinstance(a, dict) and a.get("rationale"):
+            out.append(f"{a.get('lens', '')}: {a['rationale']}".strip(": "))
+    if not out:
+        out = [str(s) for s in (se.get("evidence") or {}).get("sources", []) or []]
+    return out[:5]
+
+
 def capture_from_committee(packet: dict, *, strategy_id: str = "", strategy_family: str = "",
                            now: str = "", commit: bool = False) -> dict:
     """Investment Committee packet → 예측 사전등록. thesis=research_summary, source=committee."""
@@ -41,7 +65,7 @@ def capture_from_committee(packet: dict, *, strategy_id: str = "", strategy_fami
     return _capture(thesis=thesis, strategy_id=strategy_id, strategy_family=strategy_family,
                     confidence=_norm_conf(p.get("confidence")), source="committee",
                     invalidation_condition=invalidation,
-                    evidence_used=[str(e) for e in (p.get("supporting_evidence") or [])][:5],
+                    evidence_used=_evidence_from_committee(p),
                     now=now, commit=commit)
 
 

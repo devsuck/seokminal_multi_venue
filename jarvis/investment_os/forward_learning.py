@@ -1,8 +1,11 @@
 """jarvis.investment_os.forward_learning — Forward Learning Record (STEP4-A). **읽기전용 프로젝션.**
 
 기존 registry(FSM)·research/agents/experiment_registry(백테스트 증거)·research_workflow.prediction_registry
-(P201, thesis·invalidation·evidence 사전등록)·jarvis.paper.deploy(forward 배포+러너 실행)를 strategy_id 로
-조인한 읽기모델. **새 원장·새 schema·새 store 없음** — 순수 in-memory projection.
+(P201, thesis·invalidation·evidence 사전등록)·jarvis.paper.deploy(배포 메타)+각 forward 러너가 이미
+기록해 둔 ledger(.jsonl)/report(.md) 파일을 strategy_id 로 조인한 읽기모델. **새 원장·새 schema·새 store
+없음** — 순수 in-memory projection. **러너의 generate()/run_forward() 는 절대 호출하지 않는다** — 이미
+기록된 파일만 읽는다(호출 시 매번 실데이터 로드+백테스트 재실행 = 요청 스레드에서 무거운 연산, 읽기전용
+원칙 위반. 최초 구현에서 이 실수를 했다가 동시요청 시 CPU 100%+·99초 지연으로 발견, 파일 읽기로 수정).
 
 답하는 질문(STEP4 완료 기준): "어디까지 검증됐는가"(validation_status) · "왜 믿는가"(thesis+evidence_used) ·
 "실제 결과가 thesis와 일치하는가"(expected_behavior vs current_behavior) · "다음 판단·승인자는 누구인가"
@@ -57,11 +60,53 @@ def _prediction_for(strategy_id: str) -> dict | None:
     return matches[-1] if matches else None
 
 
+_ENVELOPE_RE = __import__("re").compile(
+    r"Sharpe ([\d.\-]+) · maxDD ([\d.\-]+) · 월수익 평균 ([\d.\-]+) std ([\d.\-]+) · "
+    r"P10 ([\d.\-]+) / P90 ([\d.\-]+)")
+
+
 def _forward_report(strategy_id: str) -> dict | None:
-    """전용 forward 러너(tsmom/tom/buyback 등) 있으면 backtest_envelope/forward_months 리포트. 없으면 None."""
-    res = _safe(lambda: __import__("jarvis.paper.deploy",
-                                   fromlist=["run_forward"]).run_forward(strategy_id), {}) or {}
-    return res.get("report") if res.get("available") else None
+    """전용 forward 러너(tsmom/tom/buyback 등)의 **이미 기록된** ledger/report 파일만 읽는다.
+
+    중요: `jarvis.paper.deploy.run_forward()` 는 러너의 `generate(write=False)` 를 호출해
+    실데이터 로드+전체 백테스트를 **매 호출마다 재실행**한다 — 대시보드 페이지 로드마다 부르면
+    무거운 연산이 요청 스레드에서 동시에 여러 번 실행되어 원인이 된다(측정: 동시 4-endpoint
+    로드 시 99초). "읽기전용 projection, 실행 없음" 원칙에도 어긋남 — 여기서는 절대 generate()
+    를 부르지 않고 이미 주기적으로 기록된 ledger(.jsonl)/report(.md) 파일만 읽는다.
+    """
+    import importlib
+    import json
+    import os
+
+    dep = _safe(lambda: __import__("jarvis.paper.deploy",
+                                   fromlist=["deployment_of"]).deployment_of(strategy_id))
+    if not dep or dep.get("runner") in (None, "generic"):
+        return None
+    mod_name = dep["runner"].split(":")[0]
+    mod = _safe(lambda: importlib.import_module(mod_name))
+    ledger_path = getattr(mod, "LEDGER", None)
+    report_path = getattr(mod, "REPORT", None)
+    if not ledger_path or not os.path.exists(ledger_path):
+        return None
+
+    last = None
+    with open(ledger_path) as f:
+        for ln in f:
+            if ln.strip():
+                last = json.loads(ln)
+    if last is None:
+        return None
+
+    envelope = None
+    if report_path and os.path.exists(report_path):
+        with open(report_path) as f:
+            m = _ENVELOPE_RE.search(f.read())
+        if m:
+            envelope = {"sharpe": float(m.group(1)), "max_dd": float(m.group(2)),
+                        "monthly_p10": float(m.group(5)), "monthly_p90": float(m.group(6))}
+
+    return {"as_of": last.get("as_of"), "backtest_envelope": envelope,
+            "forward_months": last.get("forward_months"), "envelope_deviation": None}
 
 
 def _deployment(strategy_id: str) -> dict | None:

@@ -5179,6 +5179,20 @@ async def _start_dart_bot() -> None:
         SERVICE.start()
     except Exception:  # noqa: BLE001
         pass
+    # console_api.py 가 요청 스레드 안에서 __import__(...) 로 지연 임포트하는 패키지들을
+    # 부팅 시(메인 스레드, 단일 스레드) 미리 한 번 임포트해 둔다. jarvis.research_workflow
+    # 는 자체 __init__.py 안에서 순환 임포트(prediction_registry 등)를 하는데, 두 요청
+    # 스레드가 동시에 "첫 임포트"를 트리거하면 CPython import lock 이 서로 맞물려
+    # deadlock(무한 spin, CPU 100%+)로 이어짐 — 대시보드에 이 패키지를 동시에 부르는
+    # 화면이 없어 지금까지 드러나지 않았을 뿐, 잠재해 있던 버그. 부팅 시 1회 임포트해
+    # sys.modules 에 캐시해두면 이후 동시 요청은 락 없이 단순 조회만 한다.
+    try:
+        import jarvis.research_workflow  # noqa: F401
+        import jarvis.investment_os  # noqa: F401
+        import jarvis.paper.deploy  # noqa: F401
+        import jarvis.portfolio.regime  # noqa: F401
+    except Exception:  # noqa: BLE001
+        pass
     # Living Knowledge Graph 6h 자동 업데이트 스케줄러.
     # 토요일·일요일 낮은 미국/한국 증시 휴장이라 스킵. 단 일요일 저녁(KST)은
     # 월요일 개장 전 주말 사이 이벤트를 한 번 훑어야 하므로 실행.

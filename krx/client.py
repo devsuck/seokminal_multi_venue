@@ -59,11 +59,23 @@ class KRXClient:
         path = path_map.get(index_type.upper(), "idx/krx_dd_trd")
         return self._post(path, {"basDd": bas_dd})
 
-    def get_stock_base_info(self, market: str = "KOSPI") -> list[dict]:
-        """종목 기본정보 (시가총액, 상장주수 등). market: 'KOSPI' | 'KOSDAQ'"""
+    def get_stock_base_info(self, market: str = "KOSPI", lookback_days: int = 7) -> list[dict]:
+        """종목 기본정보 (시가총액, 상장주수 등). market: 'KOSPI' | 'KOSDAQ'
+
+        당일 basDd는 KRX 쪽 반영 지연으로 빈 배열이 오는 경우가 잦음(장중/공휴일 등) —
+        오늘부터 최대 lookback_days 영업일 역순으로 내려가며 첫 비어있지 않은 응답을 반환.
+        """
         path = "sto/stk_isu_base_info" if market.upper() == "KOSPI" else "sto/ksq_isu_base_info"
-        today = date.today().strftime("%Y%m%d")
-        return self._post(path, {"basDd": today})
+        cur = date.today()
+        tried = 0
+        while tried < lookback_days:
+            if cur.weekday() < 5:
+                rows = self._post(path, {"basDd": cur.strftime("%Y%m%d")})
+                if rows:
+                    return rows
+                tried += 1
+            cur -= timedelta(days=1)
+        return []
 
     def get_derivatives_daily(self, bas_dd: str, kind: str = "futures") -> list[dict]:
         """선물/옵션 일별 매매정보. kind: 'futures' | 'options'"""

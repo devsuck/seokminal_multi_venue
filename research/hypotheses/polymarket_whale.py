@@ -24,7 +24,8 @@ HORIZONS_S = [30, 120, 300]
 
 def load_whale_trades(dates: list[str]) -> pd.DataFrame:
     """research/data/polymarket_whale/{date}.jsonl 로드. notional_usd=price*size
-    컬럼 추가. 반환 컬럼: ts, condition_id, side, price, size, notional_usd, family.
+    컬럼 추가. 반환 컬럼: ts, condition_id, side, price, size, notional_usd, family,
+    proxy_wallet(lowercase, 원본 API 응답에 이미 있던 필드 — 지갑 역추적용).
     ts 오름차순 정렬."""
     rows = []
     for date in dates:
@@ -39,13 +40,15 @@ def load_whale_trades(dates: list[str]) -> pd.DataFrame:
                 row = json.loads(line)
                 price = float(row["price"])
                 size = float(row["size"])
+                wallet = row.get("proxyWallet")
                 rows.append({
                     "ts": float(row["timestamp"]), "condition_id": row["conditionId"],
                     "side": row["side"], "price": price, "size": size,
                     "notional_usd": price * size, "family": row.get("family"),
+                    "proxy_wallet": wallet.lower() if wallet else None,
                 })
     df = pd.DataFrame(rows, columns=[
-        "ts", "condition_id", "side", "price", "size", "notional_usd", "family",
+        "ts", "condition_id", "side", "price", "size", "notional_usd", "family", "proxy_wallet",
     ])
     return df.sort_values("ts").reset_index(drop=True)
 
@@ -72,12 +75,14 @@ def build_notional_zscore(df: pd.DataFrame) -> pd.DataFrame:
 def build_spike_signal(df_with_z: pd.DataFrame, threshold: float = WHALE_ZSCORE_THRESHOLD) -> pd.DataFrame:
     """|notional_z| >= threshold인 행만 남긴다(고래 체결). direction: side가 BUY면
     +1.0(가격 상승 방향), 그 외(SELL)면 -1.0. 반환 컬럼: ts, condition_id, family,
-    side, direction, notional_usd, notional_z."""
+    side, direction, notional_usd, notional_z, proxy_wallet."""
     mask = df_with_z["notional_z"].abs() >= threshold
     spikes = df_with_z[mask.fillna(False)].copy()
     spikes["direction"] = spikes["side"].apply(lambda s: 1.0 if str(s).upper() == "BUY" else -1.0)
+    if "proxy_wallet" not in spikes.columns:
+        spikes["proxy_wallet"] = None
     return spikes[[
-        "ts", "condition_id", "family", "side", "direction", "notional_usd", "notional_z",
+        "ts", "condition_id", "family", "side", "direction", "notional_usd", "notional_z", "proxy_wallet",
     ]].reset_index(drop=True)
 
 
@@ -132,8 +137,9 @@ def build_labels_multi_horizon(
                 "ts": t_grid, "condition_id": cid, "family": row["family"], "horizon_s": h,
                 "entry_price": entry_price, "exit_price": exit_price,
                 "direction": row["direction"], "forward_return": forward_return,
+                "proxy_wallet": row.get("proxy_wallet"),
             })
     return pd.DataFrame(records, columns=[
         "ts", "condition_id", "family", "horizon_s", "entry_price", "exit_price",
-        "direction", "forward_return",
+        "direction", "forward_return", "proxy_wallet",
     ])

@@ -28,6 +28,14 @@ CONFIDENCE = ("HIGH", "MEDIUM", "LOW")
 SOURCES = ("committee", "agent", "human_hypothesis", "automatic_discovery")
 _DEFAULT_NODE = "local"
 
+# ── Prediction Integrity(Phase 5-F) — capture 품질 분류. state/outcome 과 별개 축, append-only. ──
+# LEGACY_CAPTURE: 기록 자체는 유효하나 현재 scoring 기준 이전 데이터.
+# INVALIDATED   : capture 과정 오류(source 불명확·규칙 위반 등) — 예측 실패(WRONG)와 무관, 기록 품질 문제.
+# RECAPTURED    : thesis 는 유지, capture 만 문제 — supersedes/superseded_by 로 신구 연결.
+INTEGRITY_STATUSES = ("LEGACY_CAPTURE", "INVALIDATED", "RECAPTURED")
+# Validation Score 대상에서 제외(단, 제외 이유는 append-only 원장에 남음 — 삭제 아님).
+SCORE_INELIGIBLE_INTEGRITY = ("LEGACY_CAPTURE", "INVALIDATED", "RECAPTURED")
+
 # strategy_family → 평가 프레임워크(결정적 유도, capturer 선택 불가). 유형별 적정 지표.
 EVALUATION_FRAMEWORKS = {
     "momentum": {"framework": "risk_adjusted_vs_baseline", "primary_metric": "sharpe",
@@ -142,6 +150,31 @@ def transition(prediction_id: str, to_state: str, *, outcome: str = "", reason: 
     return {**rec, "persisted": written}
 
 
+def set_integrity_status(prediction_id: str, integrity_status: str, *, reason: str = "",
+                         supersedes: str = "", superseded_by: str = "",
+                         node_id: str = _DEFAULT_NODE, now: str = "", commit: bool = False) -> dict:
+    """Prediction capture 품질 분류(Phase 5-F, append-only). 원본 스냅샷 필드는 **절대 수정하지 않음**.
+
+    LEGACY_CAPTURE/INVALIDATED/RECAPTURED 중 하나만. state/outcome 생명주기와 별개 축 —
+    이미 EVALUATED 된 예측이라도 capture 품질 문제는 독립적으로 기록 가능(과거를 안 건드리고 상태만 추가).
+    """
+    st = str(integrity_status or "").upper()
+    if st not in INTEGRITY_STATUSES:
+        return {"error": f"unknown integrity_status: {integrity_status}",
+                "integrity_statuses": list(INTEGRITY_STATUSES), "is_decision": False}
+    rec = {"prediction_id": prediction_id, "integrity_status": st, "reason": reason,
+           "supersedes": supersedes or None, "superseded_by": superseded_by or None, "at": now,
+           "score_eligible": st not in SCORE_INELIGIBLE_INTEGRITY,
+           "requires_human_review": True, "is_advisory": True, "is_decision": False}
+    written = "preview"
+    if commit:
+        written = _persist(prediction_id, f"integrity→{st}", rec, impact="prediction_integrity",
+                           node_id=node_id, now=now)
+    return {**rec, "persisted": written,
+            "note": ("Prediction Integrity(Phase 5-F) — capture 품질만 분류, 원 스냅샷 불변. "
+                     "INVALIDATED≠예측실패(WRONG). 기존 rmi_ 재사용, 새 원장 없음. 사람이 결정.")}
+
+
 def evaluate(prediction_id: str, forward_result: dict, *, node_id: str = _DEFAULT_NODE,
              now: str = "", commit: bool = False) -> dict:
     """동결된 success_rule 로 결정적 채점 → RIGHT/WRONG/INVALIDATED/INCONCLUSIVE. (달력 시간 후 호출.)
@@ -212,17 +245,41 @@ def _latest_outcomes() -> tuple:
     return latest_state, latest_outcome
 
 
-def graded_predictions() -> list:
-    """평가 완료된 예측 [{prediction_id, confidence, source, outcome}] — P204.5/P205 입력. 읽기전용."""
+def _latest_integrity() -> dict:
+    """무결성 원장에서 예측별 최신 integrity_status 추출(append-only 재구성). 기록 없으면 미분류(=정상)."""
+    recs = [r.get("evidence") or {} for r in _prediction_records("prediction_integrity")]
+    latest: dict = {}
+    for r in recs:
+        pid = r.get("prediction_id")
+        if pid:
+            latest[pid] = r
+    return latest
+
+
+def graded_predictions(*, include_score_ineligible: bool = False) -> list:
+    """평가 완료된 예측 [{prediction_id, confidence, source, outcome, score_eligible}] — P204.5/P205 입력.
+
+    기본적으로 Score Eligibility Gate(Phase 5-F) 적용 — capture 무결성 문제(LEGACY_CAPTURE/INVALIDATED/
+    RECAPTURED)로 분류된 예측은 채점 집계에서 제외(레지스트리 행 자체는 그대로 보존, 삭제 아님).
+    include_score_ineligible=True 로 감사용 전체 목록 조회 가능. 읽기전용.
+    """
     _, latest_outcome = _latest_outcomes()
+    latest_integrity = _latest_integrity()
     out = []
     for p in list_predictions():
         pid = p.get("prediction_id")
         oc = latest_outcome.get(pid)
-        if oc:
-            out.append({"prediction_id": pid, "confidence": p.get("confidence"),
-                        "source": p.get("source"), "outcome": oc,
-                        "strategy_family": p.get("strategy_family")})
+        if not oc:
+            continue
+        ig = latest_integrity.get(pid)
+        eligible = ig.get("score_eligible", True) if ig else True
+        if not eligible and not include_score_ineligible:
+            continue
+        out.append({"prediction_id": pid, "confidence": p.get("confidence"),
+                    "source": p.get("source"), "outcome": oc,
+                    "strategy_family": p.get("strategy_family"),
+                    "score_eligible": eligible,
+                    "integrity_status": ig.get("integrity_status") if ig else None})
     return out
 
 
@@ -240,36 +297,50 @@ def registry_status() -> dict:
         if t.get("outcome"):
             latest_outcome[pid] = t.get("outcome")
 
+    latest_integrity = _latest_integrity()
     by_conf: dict = {}
     by_source: dict = {}
     by_state: dict = {}
     by_outcome: dict = {}
+    by_integrity: dict = {}
+    excluded_from_score = 0
     for p in preds:
         pid = p.get("prediction_id")
         by_conf[p.get("confidence", "?")] = by_conf.get(p.get("confidence", "?"), 0) + 1
         by_source[p.get("source", "?")] = by_source.get(p.get("source", "?"), 0) + 1
         st = latest_state.get(pid, p.get("state", "PENDING"))
         by_state[st] = by_state.get(st, 0) + 1
+        ig = latest_integrity.get(pid)
+        ig_label = ig.get("integrity_status") if ig else "VALID"
+        by_integrity[ig_label] = by_integrity.get(ig_label, 0) + 1
         oc = latest_outcome.get(pid)
         if oc:
-            by_outcome[oc] = by_outcome.get(oc, 0) + 1
+            eligible = ig.get("score_eligible", True) if ig else True
+            if eligible:
+                by_outcome[oc] = by_outcome.get(oc, 0) + 1
+            else:
+                excluded_from_score += 1
 
     graded = sum(by_outcome.values())
-    # INVALIDATED/INCONCLUSIVE 는 RIGHT/WRONG 채점 대상에서 분리(정직)
+    # INVALIDATED/INCONCLUSIVE 는 RIGHT/WRONG 채점 대상에서 분리(정직). capture 무결성 제외분은 excluded_from_score.
     scorable = by_outcome.get("RIGHT", 0) + by_outcome.get("WRONG", 0)
     return {"total_predictions": len(preds),
             "by_confidence": dict(sorted(by_conf.items())),
             "by_source": dict(sorted(by_source.items())),
             "by_state": dict(sorted(by_state.items())),
             "by_outcome": dict(sorted(by_outcome.items())),
+            "by_integrity": dict(sorted(by_integrity.items())),
+            "excluded_from_score_capture_integrity": excluded_from_score,
             "graded": graded, "scorable_right_wrong": scorable, "pending": len(preds) - graded,
             "sufficient_sample_for_score": scorable >= MIN_GRADED_SAMPLE,
             "min_graded_sample": MIN_GRADED_SAMPLE,
             "captures_all_confidence": True,  # STRONG만 아님 — 생존편향 차단
             "requires_human_review": True, "is_advisory": True, "is_decision": False,
             "note": ("Prediction Registry 현황(읽기전용) — 모든 예측 기록(생존편향 차단). "
-                     "INVALIDATED/INCONCLUSIVE 는 RIGHT/WRONG 과 분리. graded<20 이면 점수 미표시(P205). "
-                     "기존 rmi_ 재사용, 새 원장 없음.")}
+                     "INVALIDATED/INCONCLUSIVE 는 RIGHT/WRONG 과 분리. capture 무결성(LEGACY_CAPTURE/"
+                     "INVALIDATED/RECAPTURED) 문제 예측은 excluded_from_score_capture_integrity 로 분리 집계"
+                     "(제외 이유는 prediction_integrity 원장에 append-only 로 남음, 삭제 아님). "
+                     "graded<20 이면 점수 미표시(P205). 기존 rmi_ 재사용, 새 원장 없음.")}
 
 
 def _persist(origin: str, summary: str, payload: dict, *, impact: str, node_id: str, now: str):

@@ -8,9 +8,22 @@ assumptions·invalidation conditions 를 포함하고, **기존 메모리 인프
 """
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 
 from jarvis.research_workflow import models as M
+
+
+def _topic_tokens(topic) -> set:
+    """목표 텍스트 → 매칭용 토큰 집합(결정적, 한글/영문 모두)."""
+    return {w for w in re.split(r"[^a-z0-9가-힣]+", str(topic or "").lower()) if len(w) >= 2}
+
+
+def _relevance(hyp, tokens: set) -> int:
+    if not tokens:
+        return 0
+    text = f"{hyp.statement} {hyp.rationale}".lower()
+    return sum(1 for t in tokens if t in text)
 
 # 소스(제안 kind) → 가정/무효화 조건 템플릿 (결정적)
 _TEMPLATES = {
@@ -37,6 +50,10 @@ _TEMPLATES = {
     "PORTFOLIO": {
         "assumptions": ["신규 전략이 기존과 낮은 상관", "분산이 리스크조정 수익을 개선"],
         "invalidation": ["상관 상승으로 분산 소멸", "집중 리스크 증가"],
+    },
+    "TOPIC": {
+        "assumptions": ["가설이 데이터로 검증 가능하다", "충분한 표본이 확보된다"],
+        "invalidation": ["표본 부족으로 통계적 검정력 없음", "walk-forward 에서 엣지 소멸"],
     },
 }
 _EDGE = {"HIGH": "HIGH", "MEDIUM": "MEDIUM", "LOW": "LOW"}
@@ -108,8 +125,18 @@ class HypothesisGenerator:
             rationale="포트폴리오 컨텍스트 — 낮은 상관 신규 전략은 분산 이점 후보.",
             edge="MEDIUM", source="portfolio", confidence="MEDIUM", template_key="PORTFOLIO")]
 
+    def _from_topic(self, topic: str) -> Hypothesis:
+        t = topic.strip()
+        return self._hyp(
+            statement=f"{t} produces a persistent, cost-robust edge",
+            rationale=(f"연구 목표 '{t}' 자체를 가설화함 — 기존 조합/실패/레짐 백로그(목표 무관 전역 제안)에 "
+                       f"토큰이 겹치는 후보 없음. 처음부터 설계·검증 필요."),
+            edge="LOW", source="topic", confidence="LOW", template_key="TOPIC")
+
     def generate(self, topic=None, *, regime=None, portfolio=None, events=None, limit=8) -> list:
-        """후보 가설 생성(결정적). 큐 재사용 + 공급망 + (선택)포트폴리오. 사람 검토 필요."""
+        """후보 가설 생성(결정적). 큐 재사용 + 공급망 + (선택)포트폴리오 + 목표 관련도 재정렬.
+        topic 토큰이 백로그 후보와 하나도 안 겹치면 topic 자체를 1순위 가설로 합성(항상 목표 반영). 사람 검토 필요.
+        """
         from jarvis.research_assistant.research_queue import ResearchQueueEngine
         q = ResearchQueueEngine(assistant=self._asst).generate(regime=regime, events=events, limit=limit)
         queue_hyps = [self._from_proposal(p) for p in q.proposals]
@@ -118,6 +145,13 @@ class HypothesisGenerator:
             extras += self._portfolio(portfolio)
         keep_q = max(1, limit - len(extras))
         hyps = queue_hyps[:keep_q] + extras
+
+        topic_toks = _topic_tokens(topic)
+        if topic_toks:
+            hyps.sort(key=lambda h: -_relevance(h, topic_toks))
+            if not any(_relevance(h, topic_toks) for h in hyps):
+                hyps.insert(0, self._from_topic(topic))
+
         seen, out = set(), []
         for h in hyps:
             if h.hypothesis_id not in seen:

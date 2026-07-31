@@ -562,9 +562,28 @@ def _generate_signals(old_nodes: dict, new_nodes: dict, finnhub_key: str) -> lis
     return signals
 
 
+def _mark_to_market(paper: dict) -> dict:
+    """오픈 포지션에 live quote 반영 — entry_price/value(원가)는 청산정산용이라 그대로 두고
+    current_price/market_value/unrealized_pnl만 얹어서 반환(디스크엔 저장 안 함)."""
+    finnhub_key = os.environ.get("FINNHUB_API_KEY", "")
+    positions = []
+    for pos in paper["positions"]:
+        price = _fetch_quote(pos["symbol"], finnhub_key)
+        current_price = price if price else pos["entry_price"]
+        market_value = round(pos["qty"] * current_price, 2)
+        unrealized_pnl = round(
+            (current_price - pos["entry_price"]) * pos["qty"] if pos["side"] == "BUY"
+            else (pos["entry_price"] - current_price) * pos["qty"],
+            2,
+        )
+        positions.append({**pos, "current_price": current_price,
+                           "market_value": market_value, "unrealized_pnl": unrealized_pnl})
+    return {**paper, "positions": positions}
+
+
 @router.get("/paper")
 def get_paper() -> dict:
-    return _load_paper()
+    return _mark_to_market(_load_paper())
 
 
 @router.post("/paper/reset")

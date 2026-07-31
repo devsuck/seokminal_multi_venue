@@ -13,8 +13,10 @@ score tercile은 버킷과 완전히 분리된 신규 BH-FDR 풀로 correction�
 가설/축 p-value를 섞지 않는 프로젝트 전역 컨벤션).
 
 ⚠️ 스크리닝 스크립트. 결과는 통계적 유의미성 확인일 뿐 실집행 근거 아님.
-walk-forward는 생략(신규 라이브 수집 직후라 표본기간 미달 — BH-FDR 통과 시
-전체 파이프라인 승격 검토).
+
+2026-07-31: BH-FDR 생존군이 07-25 이후 9일 안정 유지되어 walk-forward 추가
+— run_ict.py 컨벤션 재사용(그룹별 이벤트 시간순 반분, 전반/후반 평균 pnl
+둘 다 양수여야 통과). experiment_registry 정식 등록도 함께 수행.
 """
 from __future__ import annotations
 
@@ -24,6 +26,7 @@ import re
 
 import pandas as pd
 
+from research.agents.experiment_registry import log_experiment
 from research.hypotheses.polymarket_sharp_wallet import (
     build_convergence_count,
     build_convergence_score,
@@ -35,6 +38,8 @@ from research.validation.baselines import empirical_p_value
 from research.validation.cost_model import polymarket_effective_cost_bps
 from research.validation.metrics import trade_metrics
 from research.validation.multiple_testing import benjamini_hochberg
+
+HYPOTHESIS_ID = "polymarket_sharp_wallet_convergence_v1"
 
 DATA_DIR = "research/data/polymarket_sharp_wallet"
 CONVERGENCE_BUCKETS = [1, 2, 3]
@@ -79,7 +84,21 @@ def _score_horizons(group_labels: pd.DataFrame) -> dict[str, dict]:
                 total += rsign * (ex - en) * TRADE_SIZE - c
             random_totals.append(round(total, 6))
         pval = empirical_p_value(strat["total_pnl"], random_totals)
-        horizons[f"{int(h)}s"] = {"strategy": strat, "random": pval, "n_events": len(sub)}
+
+        # walk-forward: sub는 labels(ts 오름차순)에서 필터링돼 시간순 유지 —
+        # run_ict.py와 동일하게 시간순 반분해 전반/후반 평균 pnl 둘 다 양수인지 확인.
+        mid = len(actual_pnls) // 2
+        first, second = actual_pnls[:mid], actual_pnls[mid:]
+        wf1 = sum(first) / len(first) if first else None
+        wf2 = sum(second) / len(second) if second else None
+        wf_pass = wf1 is not None and wf2 is not None and wf1 > 0 and wf2 > 0
+
+        horizons[f"{int(h)}s"] = {
+            "strategy": strat, "random": pval, "n_events": len(sub),
+            "wf_first": round(wf1, 6) if wf1 is not None else None,
+            "wf_second": round(wf2, 6) if wf2 is not None else None,
+            "wf_pass": wf_pass,
+        }
     return horizons
 
 
@@ -127,7 +146,8 @@ def _group_to_dict(gname: str, r: dict) -> tuple[dict, list[float], list[str]]:
     for hk, hv in r["horizons"].items():
         horizons.append({"horizon": hk, "n_events": hv["n_events"],
                          "total_pnl": hv["strategy"]["total_pnl"],
-                         "p_value": hv["random"]["p_value"], "percentile": hv["random"]["percentile"]})
+                         "p_value": hv["random"]["p_value"], "percentile": hv["random"]["percentile"],
+                         "wf_first": hv["wf_first"], "wf_second": hv["wf_second"], "wf_pass": hv["wf_pass"]})
         pvals.append(hv["random"]["p_value"])
         keys.append(f"{gname}:{hk}")
     return {"group": gname, "blocked": False, "horizons": horizons}, pvals, keys
@@ -173,9 +193,24 @@ def compute_report(trades: pd.DataFrame, dates: list[str]) -> dict:
 
     pools = [_pool_dict("bucket", b_pvals, b_keys), _pool_dict("score_tercile", t_pvals, t_keys)]
     n_surv = sum(p["n_survivors"] for p in pools)
+
+    horizon_by_key = {f"{g['group']}:{h['horizon']}": h for g in groups if not g["blocked"] for h in g["horizons"]}
+    survivor_keys = [k for p in pools for k in p["survivors"]]
+    wf_results = [horizon_by_key[k] for k in survivor_keys if k in horizon_by_key]
+    n_wf_pass = sum(1 for h in wf_results if h["wf_pass"])
+    wf_all_pass = bool(wf_results) and n_wf_pass == len(wf_results)
+
+    if n_surv == 0:
+        verdict = "no_edge"
+    elif wf_all_pass:
+        verdict = "candidate"
+    else:
+        verdict = "paper_candidate_forward_test_required"
+
     return {"hypothesis": "polymarket_sharp_wallet", "cost_bps": COST_BPS, "dates": dates,
             "n_anchors": int(len(anchors)), "groups": groups, "pools": pools,
-            "verdict": "candidate" if n_surv > 0 else "no_edge"}
+            "n_survivors": n_surv, "n_wf_pass": n_wf_pass, "n_wf_tested": len(wf_results),
+            "wf_all_pass": wf_all_pass, "verdict": verdict}
 
 
 def load_and_report() -> dict:
@@ -197,14 +232,33 @@ def main() -> None:
             continue
         for h in g["horizons"]:
             print(f"{g['group']}:{h['horizon']} n_events={h['n_events']} "
-                  f"total_pnl={h['total_pnl']} p_value={h['p_value']} percentile={h['percentile']}")
+                  f"total_pnl={h['total_pnl']} p_value={h['p_value']} percentile={h['percentile']} "
+                  f"wf_first={h['wf_first']} wf_second={h['wf_second']} wf_pass={h['wf_pass']}")
     for pool in rep["pools"]:
         label = ("신규 Polymarket sharp-wallet 풀" if pool["name"] == "bucket"
                  else "score tercile 풀, 버킷 풀과 분리")
         print(f"\n=== BH-FDR ({label}, alpha={pool['alpha']}) ===")
         print(f"survivors: {pool['survivors']}")
         print(f"n_survivors: {pool['n_survivors']} / {pool['n_tested']}")
+    print(f"\nwalk-forward: {rep.get('n_wf_pass', 0)}/{rep.get('n_wf_tested', 0)} survivor groups pass "
+          f"(all_pass={rep.get('wf_all_pass')})")
     print(f"\nverdict: {rep['verdict']}")
+
+    if rep["verdict"] != "no_data":
+        log_experiment({
+            "hypothesis_id": HYPOTHESIS_ID,
+            "status": rep["verdict"],
+            "n_anchors": rep["n_anchors"],
+            "n_survivors": rep.get("n_survivors", 0),
+            "n_wf_pass": rep.get("n_wf_pass", 0),
+            "n_wf_tested": rep.get("n_wf_tested", 0),
+            "wf_all_pass": rep.get("wf_all_pass", False),
+            "cost_bps": rep["cost_bps"],
+            "dates": rep["dates"],
+            "survivors": [k for p in rep["pools"] for k in p["survivors"]],
+            "note": "score/bucket BH-FDR 풀 분리, walk-forward=시간순 반분 컨벤션(run_ict.py 동일)",
+        })
+        print(f"\nexperiment_registry 기록 완료: {HYPOTHESIS_ID} -> {rep['verdict']}")
 
 
 if __name__ == "__main__":

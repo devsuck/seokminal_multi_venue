@@ -3,6 +3,46 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-07-31) — Polymarket sharp_wallet/whale 검증 고도화
+
+### 완료된 작업
+- **sharp_wallet 정식 등록 + walk-forward**: `polymarket_sharp_wallet_convergence_v1`을
+  `experiment_registry`에 처음 등록. BH-FDR 생존 15개 그룹(bucket/tercile×horizon) 중
+  walk-forward(시간순 반분, 전반/후반 둘 다 양수) 통과 11/15 → `paper_candidate_forward_test_required`.
+  bucket2(정확히 2개 샤프월렛 컨버전스)만 전반/후반 둘 다 일관되게 음수 — 노이즈보다
+  실제 역효과에 가까움, bucket 축이 단조롭지 않다는 신호.
+- **whale 지갑 역추적 2건 신규 검증**: whale 원장 raw jsonl에 이미 있던 `proxyWallet`을
+  로더가 버리고 있던 걸 발견 → `hypotheses/polymarket_whale.py`에 `proxy_wallet` 컬럼 추가.
+  1) 리더보드 교차조회: whale 스파이크 176건 중 공식 리더보드(top50) 지갑 체결 **0건** —
+     "큰 거래"와 "검증된 실력"이 완전히 분리된 모집단임을 확인.
+  2) self-referential 지갑 스코어(prequential, lookahead 없음): 과거 평균 수익 상위 30%
+     지갑 필터링 시 30s/120s 유의미하게 나왔으나 표본 5~6건뿐 — 통계적으로 신뢰 안 함.
+  둘 다 `experiment_registry` 등록(`polymarket_whale_leaderboard_wallet_v1`,
+  `polymarket_whale_selfscore_wallet_v1`, 둘 다 `candidate`지만 표본 협소 명시).
+- 결론: whale 엣지가 약한 근본 원인은 "큰 체결 = 정보력"이라는 미검증 전제 + 이벤트
+  자체가 희귀(9일간 176건, sharp_wallet은 4451건)해서 표본이 안 쌓임. 지갑 정체를
+  넣어봐도(리더보드/자체스코어 둘 다) 표본 부족으로 결론 못 냄 — 더 오래 수집 필요.
+
+### 변경된 파일
+- `research/run_polymarket_sharp_wallet_validate.py` — walk-forward 추가, `log_experiment` 호출 추가
+- `research/hypotheses/polymarket_whale.py` — `proxy_wallet` 컬럼 3곳(load/spike/label)에 추가
+- `research/run_polymarket_whale_wallet_analysis.py` — 신규, 리더보드 교차조회 + self-referential 스코어
+- `docs/progress.md` — 본 항목
+
+### 다음 할 일
+- [ ] whale 원장 계속 쌓이는 대로 리더보드/self-score 재검증(표본 늘어야 결론 남)
+- [ ] ICT/orderflow 저널 1/30 — 계속 관찰(사용자 명시 요청: 채워질 때마다 N/30 보고)
+- [ ] cross-venue-skew 데이터 4.0G 수집됐지만 validation 스크립트 아직 미실행 — 다음 세션 후보
+
+### 막힌 부분 / 결정사항
+- git 작업트리에 이 세션과 무관한 미커밋 변경 다수 존재(`execution/broker.py`,
+  `orderflow/kis_adapter.py` 삭제, `api_server/graph_api.py`, `krx/client.py`,
+  `jarvis/research_workflow/hypothesis_generator.py` 수정, `jarvis/_state/*` 등) —
+  이번 커밋에서 의도적으로 제외함(범위 밖, 검토 안 된 삭제 포함). 별도 확인 필요.
+- `run_polymarket_whale_validate.py`의 walk-forward 게이트(`_walk_forward` 함수 +
+  관련 테스트)는 이전 세션에서 이미 구현돼 미커밋 상태였던 것 확인 — 같은 주제라
+  이번 커밋에 함께 포함.
+
 ## 현재 상태 (마지막 업데이트: 2026-07-11 liquidity pool 벤뉴 뱃지 UI)
 
 ### 완료된 작업

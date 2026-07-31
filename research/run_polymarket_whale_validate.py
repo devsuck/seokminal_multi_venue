@@ -5,9 +5,12 @@
 forward return을 계산하고, `research/run_cross_venue_skew_validate.py`와 동일하게
 랜덤 베이스라인(체결 방향 무작위 셔플) 대비 empirical p-value를 구한다. family
 (news/sports) x 호라이즌3 = 최대 6개 p-value를 신규 독립 BH-FDR 풀로 correction한다.
+호라이즌별 walk-forward(전반/후반 시간순 2분할, `research/lab/evaluator.py`·`research/run_tsmom.py`와
+동일 idiom, wf_first/wf_second 키는 `jarvis/agents/critic.py` 승격기준과 정렬)도 같이 게이트한다.
 
-⚠️ 스크리닝 스크립트. 결과는 통계적 유의미성 확인일 뿐 실집행 근거 아님. walk-forward는
-생략(신규 라이브 수집 직후라 표본기간 미달 — BH-FDR 통과 시 전체 파이프라인 승격 검토).
+⚠️ 스크리닝 스크립트. 결과는 통계적 유의미성 확인일 뿐 실집행 근거 아님. BH-FDR survivor라도
+walk-forward 양쪽 구간이 다 양수여야 최종 verdict의 candidate에 반영됨(p-hacking 방지 위해
+BH-FDR 자체는 전체 pvals로 correction, walk-forward는 그 위에 얹는 별도 게이트).
 """
 from __future__ import annotations
 
@@ -36,6 +39,20 @@ N_RUNS = 500
 SEED = 42
 COST_BPS = polymarket_effective_cost_bps()
 MIN_EVENTS = 10
+
+
+def _walk_forward(precomputed: list[tuple]) -> dict:
+    """시간순 전반/후반 2분할 PnL 부호 게이트 — `research/lab/evaluator.py`/`research/run_tsmom.py`
+    idiom 재사용. precomputed는 이미 sub(호라이즌 서브셋, ts 오름차순)에서 만들어져 시간순 유지."""
+    n = len(precomputed)
+    mid = n // 2
+
+    def _pnl(chunk):
+        return round(sum(d * (ex - en) * TRADE_SIZE - c for d, en, ex, c in chunk), 6)
+
+    first, second = _pnl(precomputed[:mid]), _pnl(precomputed[mid:])
+    return {"wf_first": first, "wf_second": second, "n_first": mid, "n_second": n - mid,
+            "both_positive": first > 0 and second > 0}
 
 
 def _available_dates() -> list[str]:
@@ -86,23 +103,27 @@ def run_family(family: str, df: pd.DataFrame) -> dict:
                 total += rsign * (ex - en) * TRADE_SIZE - c
             random_totals.append(round(total, 6))
         pval = empirical_p_value(strat["total_pnl"], random_totals)
-        horizons[f"{int(h)}s"] = {"strategy": strat, "random": pval, "n_events": len(sub)}
+        horizons[f"{int(h)}s"] = {"strategy": strat, "random": pval, "n_events": len(sub),
+                                   "walk_forward": _walk_forward(precomputed)}
 
     return {"family": family, "blocked": False, "horizons": horizons}
 
 
-def _group_to_dict(gname: str, r: dict) -> tuple[dict, list[float], list[str]]:
-    """run_family 결과 → 대시보드용 group dict + (pvals, keys) 기여분."""
+def _group_to_dict(gname: str, r: dict) -> tuple[dict, list[float], list[str], dict[str, bool]]:
+    """run_family 결과 → 대시보드용 group dict + (pvals, keys, key→walk_forward_both_positive) 기여분."""
     if r["blocked"]:
-        return {"group": gname, "blocked": True, "reason": r.get("reason", "")}, [], []
-    horizons, pvals, keys = [], [], []
+        return {"group": gname, "blocked": True, "reason": r.get("reason", "")}, [], [], {}
+    horizons, pvals, keys, wf_ok = [], [], [], {}
     for hk, hv in r["horizons"].items():
         horizons.append({"horizon": hk, "n_events": hv["n_events"],
                          "total_pnl": hv["strategy"]["total_pnl"],
-                         "p_value": hv["random"]["p_value"], "percentile": hv["random"]["percentile"]})
+                         "p_value": hv["random"]["p_value"], "percentile": hv["random"]["percentile"],
+                         "walk_forward": hv["walk_forward"]})
         pvals.append(hv["random"]["p_value"])
-        keys.append(f"{gname}:{hk}")
-    return {"group": gname, "blocked": False, "horizons": horizons}, pvals, keys
+        key = f"{gname}:{hk}"
+        keys.append(key)
+        wf_ok[key] = hv["walk_forward"]["both_positive"]
+    return {"group": gname, "blocked": False, "horizons": horizons}, pvals, keys, wf_ok
 
 
 def compute_report(df: pd.DataFrame, dates: list[str]) -> dict:
@@ -114,20 +135,24 @@ def compute_report(df: pd.DataFrame, dates: list[str]) -> dict:
     groups: list[dict] = []
     pvals: list[float] = []
     keys: list[str] = []
+    wf_ok: dict[str, bool] = {}
     n_labels = 0
     for family in FAMILIES:
-        g, pv, ks = _group_to_dict(family, run_family(family, df))
+        g, pv, ks, wf = _group_to_dict(family, run_family(family, df))
         groups.append(g)
         pvals += pv
         keys += ks
+        wf_ok |= wf
         if not g["blocked"]:
             n_labels += sum(h["n_events"] for h in g["horizons"])
 
     bh = benjamini_hochberg(pvals, alpha=0.1) if pvals else {
         "survivors": [], "n_survivors": 0, "threshold": None, "alpha": 0.1}
-    survivors = [k for k, s in zip(keys, bh["survivors"]) if s]
+    survivors_raw = [k for k, s in zip(keys, bh["survivors"]) if s]
+    survivors = [k for k in survivors_raw if wf_ok.get(k)]
     pool = {"name": "whale", "alpha": bh["alpha"], "n_tested": len(pvals),
-            "n_survivors": bh["n_survivors"], "survivors": survivors, "threshold": bh.get("threshold")}
+            "n_survivors": len(survivors), "survivors": survivors,
+            "survivors_before_walk_forward": survivors_raw, "threshold": bh.get("threshold")}
     return {"hypothesis": "polymarket_whale", "cost_bps": COST_BPS, "dates": dates,
             "n_anchors": n_labels, "groups": groups, "pools": [pool],
             "verdict": "candidate" if pool["n_survivors"] > 0 else "no_edge"}
@@ -149,11 +174,15 @@ def main() -> None:
             print(f"{g['group']} -> BLOCKED ({g['reason']})")
             continue
         for h in g["horizons"]:
+            wf = h["walk_forward"]
             print(f"{g['group']}:{h['horizon']} n_events={h['n_events']} "
-                  f"total_pnl={h['total_pnl']} p_value={h['p_value']} percentile={h['percentile']}")
+                  f"total_pnl={h['total_pnl']} p_value={h['p_value']} percentile={h['percentile']} "
+                  f"wf_first={wf['wf_first']}(n={wf['n_first']}) wf_second={wf['wf_second']}(n={wf['n_second']}) "
+                  f"wf_both_positive={wf['both_positive']}")
     for pool in rep["pools"]:
         print(f"\n=== BH-FDR (신규 Polymarket whale 풀, alpha={pool['alpha']}) ===")
-        print(f"survivors: {pool['survivors']}")
+        print(f"survivors before walk-forward gate: {pool['survivors_before_walk_forward']}")
+        print(f"survivors (BH-FDR + walk-forward both>0): {pool['survivors']}")
         print(f"n_survivors: {pool['n_survivors']} / {pool['n_tested']}")
     print(f"\nverdict: {rep['verdict']}")
 

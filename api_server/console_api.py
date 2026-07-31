@@ -2156,3 +2156,13 @@ def forward_learning() -> dict:
                            "current_behavior) · 다음 판단·승인자(next_possible+human_approval_required_next). "
                            "기존 registry/experiment_registry/prediction_registry/paper.deploy 조인, "
                            "새 원장 없음. Research OS 무변경, 실행 없음. 모든 결정은 사람.")}
+
+
+# ── Monthly Decision Loop — 월간 검토 절차 (READ ONLY, Phase 5-C) ──
+@router.get("/monthly-review")
+def monthly_review() -> dict:
+    """월간 Decision Loop: Current Positions → Strategy Status → Forward Progress →
+    Validation Changes → Risk Changes → Decision Required. 전부 기존 데이터 재사용, 새 원장 없음.
+    suggested_label(KEEP/WATCH/PAUSE/REJECT) 은 제안일 뿐 — 자동 결정/자동 갱신 없음."""
+    import jarvis.investment_os as ios
+    return _safe(lambda: ios.build_monthly_review(), {"strategies": [], "count": 0}) or {}

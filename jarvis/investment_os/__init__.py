@@ -25,6 +25,7 @@ EXECUTION_RUNGS = ("PAPER", "SHADOW", "SMALL_CAPITAL", "PRODUCTION_CANDIDATE", "
 
 from jarvis.investment_os.knowledge_consumer import consume_research  # noqa: E402,F401
 from jarvis.investment_os.forward_learning import build_forward_learning_records  # noqa: E402,F401
+from jarvis.investment_os.monthly_review import build_monthly_review  # noqa: E402,F401
 from jarvis.investment_os.portfolio_construction import (  # noqa: E402,F401
     analyze_exposure,
     construct_portfolio,

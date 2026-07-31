@@ -25,6 +25,15 @@ def _positions() -> list[dict]:
     return list(_safe(lambda: current_positions().values(), {}) or {})
 
 
+def _prediction_integrity() -> dict:
+    """Phase 5-F Step4 — prediction_registry.registry_status()의 by_integrity 읽기 재사용(신규 계산 없음)."""
+    st = _safe(lambda: __import__("jarvis.research_workflow.prediction_registry",
+                                  fromlist=["registry_status"]).registry_status(), {}) or {}
+    by = st.get("by_integrity") or {}
+    return {"valid": by.get("VALID", 0), "legacy_capture": by.get("LEGACY_CAPTURE", 0),
+            "invalidated": by.get("INVALIDATED", 0), "recapture_required": by.get("RECAPTURED", 0)}
+
+
 def _suggested_label(record: dict) -> dict:
     """기존에 이미 알려진 값(evidence/forward/risk/registry 상태)을 KEEP/WATCH/PAUSE/REJECT 로 매핑.
     새 판단 로직 없음 — dashboard가 이미 보여주는 3개 톤(Evidence/Forward/Risk)의 조합일 뿐."""
@@ -91,6 +100,7 @@ def build_monthly_review() -> dict:
         "strategies": strategies, "count": len(strategies),
         "risk_limits": {"max_notional": getattr(risk, "max_notional", None),
                         "kill_switch": getattr(risk, "kill_switch", None)} if risk else {},
+        "prediction_integrity": _prediction_integrity(),
         "labels": ["KEEP", "WATCH", "PAUSE", "REJECT"],
         "requires_human_review": True, "is_advisory": True, "is_decision": False,
         "note": ("Monthly Decision Loop(절차, Phase 5-C) — forward_learning·registry·risk governor·"

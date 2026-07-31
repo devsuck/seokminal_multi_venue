@@ -35,13 +35,18 @@
 - [ ] cross-venue-skew 데이터 4.0G 수집됐지만 validation 스크립트 아직 미실행 — 다음 세션 후보
 
 ### 막힌 부분 / 결정사항
-- git 작업트리에 이 세션과 무관한 미커밋 변경 다수 존재(`execution/broker.py`,
-  `orderflow/kis_adapter.py` 삭제, `api_server/graph_api.py`, `krx/client.py`,
-  `jarvis/research_workflow/hypothesis_generator.py` 수정, `jarvis/_state/*` 등) —
-  이번 커밋에서 의도적으로 제외함(범위 밖, 검토 안 된 삭제 포함). 별도 확인 필요.
+- git 작업트리에서 발견된, 이 세션과 무관한 미커밋 변경 6건 전부 검토·분리 커밋 완료:
+  1. `execution/broker.py` 삭제 — 실사용처 없는 죽은 코드 확인 (`b8e2705`)
+  2. `orderflow/kis_adapter.py` 삭제 — KIS 해외선물 폐기 결정 건([[project_kis_futures_data_shelved]]) (`b8e2705`)
+  3. `api_server/graph_api.py` mark-to-market 버그 수정 — 기존 테스트 4/4 통과 확인 후 (`f0c40d9`)
+  4. `krx/client.py` 당일 빈 응답 시 최근 영업일 fallback (`a4933eb`)
+  5. `jarvis/research_workflow/hypothesis_generator.py` topic 관련도 재정렬 — 테스트 전무 상태였어서
+     신규 테스트(`tests/test_hypothesis_generator.py`) 12건 작성 후 커밋 (`e20a1db`)
+  6. `jarvis/_state/*`, `research/data/*`, `research/autoresearch/*` — 백그라운드 tmux 에이전트가
+     상시 쌓는 런타임 로그/데이터, 코드 아님 — 커밋 대상 아니라 그대로 둠(정상)
 - `run_polymarket_whale_validate.py`의 walk-forward 게이트(`_walk_forward` 함수 +
   관련 테스트)는 이전 세션에서 이미 구현돼 미커밋 상태였던 것 확인 — 같은 주제라
-  이번 커밋에 함께 포함.
+  sharp_wallet 커밋(`88959bf`)에 함께 포함.
 
 ## 현재 상태 (마지막 업데이트: 2026-07-11 liquidity pool 벤뉴 뱃지 UI)
 

@@ -56,10 +56,11 @@ def test_compute_report_single_pool_and_pvalue():
     assert rep["verdict"] in ("no_edge", "candidate")
 
 
-def test_outcome_side_normalizes_yes_no_only():
-    assert val._outcome_side("Yes") == "YES"
-    assert val._outcome_side("no") == "NO"
-    assert val._outcome_side("Up") is None  # MLB 아닌 마켓(BTC updown 등) 혼입 방지
+def test_outcome_side_uses_outcome_index_not_label():
+    # MLB 마켓 outcome 라벨은 팀명/"Over"/"Under" 등 제각각이라 index로만 판별
+    assert val._outcome_side(0) == "YES"
+    assert val._outcome_side(1) == "NO"
+    assert val._outcome_side(999) is None  # 센티널/멀티아웃컴 제외
     assert val._outcome_side(None) is None
 
 
@@ -79,10 +80,10 @@ def test_build_resolutions_only_closed_with_prices():
 
 def test_daily_positions_groups_by_utc_date_and_drops_non_binary():
     rows = [
-        {"proxy_wallet": "w1", "condition_id": "m1", "outcome": "Yes", "ts": _ts(2026, 7, 19)},
-        {"proxy_wallet": "w2", "condition_id": "m1", "outcome": "No", "ts": _ts(2026, 7, 19, 23)},
-        {"proxy_wallet": "w1", "condition_id": "m2", "outcome": "Up", "ts": _ts(2026, 7, 19)},  # 비MLB 혼입 무시
-        {"proxy_wallet": "w1", "condition_id": "m3", "outcome": "Yes", "ts": _ts(2026, 7, 20)},
+        {"proxy_wallet": "w1", "condition_id": "m1", "outcome_index": 0, "ts": _ts(2026, 7, 19)},
+        {"proxy_wallet": "w2", "condition_id": "m1", "outcome_index": 1, "ts": _ts(2026, 7, 19, 23)},
+        {"proxy_wallet": "w1", "condition_id": "m2", "outcome_index": 999, "ts": _ts(2026, 7, 19)},  # 센티널 무시
+        {"proxy_wallet": "w1", "condition_id": "m3", "outcome_index": 0, "ts": _ts(2026, 7, 20)},
     ]
     by_day = val._daily_positions(rows)
     assert set(by_day) == {"2026-07-19", "2026-07-20"}
@@ -107,14 +108,14 @@ def test_load_and_report_smoke(tmp_path, monkeypatch):
 
     # day19: specialist "w1"이 ma1/ma2 각 YES 진입, 같은 날 정산(둘 다 승) → 다음날 랭킹에 반영.
     trades_19 = [
-        {"proxy_wallet": "w1", "condition_id": "ma1", "outcome": "Yes", "price": 0.5,
+        {"proxy_wallet": "w1", "condition_id": "ma1", "outcome_index": 0, "price": 0.5,
          "size": 10.0, "notional_usd": 5.0, "ts": _ts(2026, 7, 19, 10)},
-        {"proxy_wallet": "w1", "condition_id": "ma2", "outcome": "Yes", "price": 0.5,
+        {"proxy_wallet": "w1", "condition_id": "ma2", "outcome_index": 0, "price": 0.5,
          "size": 10.0, "notional_usd": 5.0, "ts": _ts(2026, 7, 19, 10)},
     ]
     # day20: 같은 스페셜리스트가 mb1에 신규 포지션 → 그날 컨센서스 신호 후보.
     trades_20 = [
-        {"proxy_wallet": "w1", "condition_id": "mb1", "outcome": "Yes", "price": 0.5,
+        {"proxy_wallet": "w1", "condition_id": "mb1", "outcome_index": 0, "price": 0.5,
          "size": 10.0, "notional_usd": 5.0, "ts": _ts(2026, 7, 20, 10)},
     ]
     (base / "2026-07-19.jsonl").write_text("\n".join(json.dumps(r) for r in trades_19))

@@ -115,14 +115,19 @@ def _load_jsonl_dir(dirpath: Path) -> list[dict]:
     return rows
 
 
-def _outcome_side(outcome) -> str | None:
-    """체결 outcome("Yes"/"No" 등, data-api 실응답 확인: 2026-07-22) → "YES"/"NO".
+def _outcome_side(outcome_index) -> str | None:
+    """체결 outcome_index(CLOB 토큰 0/1, 시장별 고정 — data-api 실응답 확인: 2026-08-01)
+    → "YES"/"NO". outcome 표시라벨은 팀명/"Over"/"Under" 등 마켓마다 달라(MLB 승자당첨
+    마켓은 "Yes"/"No"가 아님) 문자열로 못 씀 — index0=yes_price쪽 토큰, index1=no_price쪽
+    토큰이 market snapshot의 yes_price/no_price와 항상 1:1 대응(마켓 610190건 스냅샷으로
+    검증됨). index가 0/1이 아니면(예: 999 센티널) 제외.
     ⚠️ raw `side` 필드는 BUY/SELL(주문방향)이라 정산결과(winning_side)와 비교 불가 —
-    leaderboard/consensus가 쓰는 "side"는 outcome(보유 방향)이어야 함."""
-    if outcome is None:
-        return None
-    o = str(outcome).strip().upper()
-    return o if o in ("YES", "NO") else None
+    leaderboard/consensus가 쓰는 "side"는 outcome_index(보유 방향)이어야 함."""
+    if outcome_index == 0:
+        return "YES"
+    if outcome_index == 1:
+        return "NO"
+    return None
 
 
 def _build_resolutions(market_rows: list[dict]) -> dict[str, dict]:
@@ -165,7 +170,7 @@ def _daily_positions(trade_rows: list[dict]) -> dict[str, list[dict]]:
     단순화(레벨보드와 동일, 스펙 §3.1)라 그날 체결 전부를 그대로 포지션으로 취급."""
     out: dict[str, list[dict]] = {}
     for t in trade_rows:
-        side = _outcome_side(t.get("outcome"))
+        side = _outcome_side(t.get("outcome_index"))
         wallet, cid, ts = t.get("proxy_wallet"), t.get("condition_id"), t.get("ts")
         if side is None or not wallet or not cid or ts is None:
             continue
@@ -178,7 +183,7 @@ def _trades_df(trade_rows: list[dict]) -> pd.DataFrame:
     cols = ["proxy_wallet", "condition_id", "side", "price", "size", "notional_usd", "ts"]
     rows = []
     for t in trade_rows:
-        side = _outcome_side(t.get("outcome"))
+        side = _outcome_side(t.get("outcome_index"))
         if side is None:
             continue
         rows.append({

@@ -136,3 +136,70 @@ def test_scan_and_enter_market_fetch_failure_skips_anchor_but_continues():
     assert entered == 3  # c1 실패로 스킵, c2(bucket1)는 30/120/300s 3개 정상 진입
     assert all(p["condition_id"] == "c2" for p in cfg["positions"])
     assert cfg["last_anchor_ts"] == 200.0  # 실패한 c1도 "처리됨"으로 카운트, 재스캔 안 함
+
+
+def _pos(**over):
+    base = {"condition_id": "c1", "convergence_bucket": 1, "horizon_s": 30,
+            "direction": 1.0, "entry_price": 0.50, "entry_ts": 100.0, "exit_at": 130.0,
+            "usd": 10.0, "shares": 20.0, "entry_spread_bps": 100.0,
+            "wallet_positions_snapshot": []}
+    base.update(over)
+    return base
+
+
+def test_process_exits_marks_out_at_exit_at_with_real_spread():
+    cfg = _cfg()
+    cfg["positions"] = [_pos()]
+    cfg["spent"] = 10.0
+    with patch.object(bot, "_time") as mock_time, \
+         patch.object(bot, "get_market", return_value=_market(yes=0.60)), \
+         patch.object(bot, "_spread_bps_for_market", return_value=120.0), \
+         patch.object(bot, "_log_event"):
+        mock_time.time.return_value = 200.0  # exit_at(130) 지남
+        closed = bot._process_exits(cfg)
+    assert closed == 1
+    assert cfg["positions"] == []
+    assert cfg["spent"] == 0.0
+    # cost_bps = polymarket_effective_cost_bps(spread_bps=(100+120)/2) = 0 + 110/2 = 55
+    expected_cost = (0.50 + 0.60) * 20.0 * 55.0 / 10_000.0
+    expected_pnl = round(1.0 * (0.60 - 0.50) * 20.0 - expected_cost, 2)
+    assert cfg["realized_pnl"] == expected_pnl
+
+
+def test_process_exits_keeps_position_before_exit_at():
+    cfg = _cfg()
+    cfg["positions"] = [_pos(exit_at=130.0)]
+    with patch.object(bot, "_time") as mock_time:
+        mock_time.time.return_value = 129.0
+        closed = bot._process_exits(cfg)
+    assert closed == 0
+    assert len(cfg["positions"]) == 1
+
+
+def test_process_exits_retries_on_market_fetch_failure():
+    cfg = _cfg()
+    cfg["positions"] = [_pos(exit_at=130.0)]
+    with patch.object(bot, "_time") as mock_time, \
+         patch.object(bot, "get_market", return_value=None):
+        mock_time.time.return_value = 200.0
+        closed = bot._process_exits(cfg)
+    assert closed == 0
+    assert len(cfg["positions"]) == 1  # 다음 tick 재시도
+
+
+def test_process_exits_falls_back_to_default_cost_when_no_spread_data():
+    cfg = _cfg()
+    cfg["positions"] = [_pos(entry_spread_bps=None)]
+    cfg["spent"] = 10.0
+    with patch.object(bot, "_time") as mock_time, \
+         patch.object(bot, "get_market", return_value=_market(yes=0.55)), \
+         patch.object(bot, "_spread_bps_for_market", return_value=None), \
+         patch.object(bot, "_log_event"):
+        mock_time.time.return_value = 200.0
+        closed = bot._process_exits(cfg)
+    assert closed == 1
+    # 실측 스프레드 전무 -> polymarket_effective_cost_bps() 기본값(200bps 절반=100)
+    from research.validation.cost_model import polymarket_effective_cost_bps
+    expected_cost = (0.50 + 0.55) * 20.0 * polymarket_effective_cost_bps() / 10_000.0
+    expected_pnl = round(1.0 * (0.55 - 0.50) * 20.0 - expected_cost, 2)
+    assert cfg["realized_pnl"] == expected_pnl

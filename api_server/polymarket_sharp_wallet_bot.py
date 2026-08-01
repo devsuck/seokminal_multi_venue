@@ -162,3 +162,41 @@ def _scan_and_enter(cfg: dict) -> int:
 
     cfg["last_anchor_ts"] = max_ts_seen
     return entered
+
+
+def _process_exits(cfg: dict) -> int:
+    """entry_ts + horizon_s 지난 포지션을 그 순간 시장가로 강제청산."""
+    now = _time.time()
+    keep: list[dict] = []
+    closed = 0
+    for pos in cfg.get("positions", []):
+        if now < pos["exit_at"]:
+            keep.append(pos)
+            continue
+        try:
+            m = get_market(pos["condition_id"])
+            if m is None:
+                keep.append(pos)  # 조회 실패 — 다음 tick 재시도
+                continue
+            exit_price = m["yes_price"]
+            exit_spread_bps = _spread_bps_for_market(m)
+            spreads = [s for s in (pos.get("entry_spread_bps"), exit_spread_bps) if s is not None]
+            cost_bps = (polymarket_effective_cost_bps(spread_bps=sum(spreads) / len(spreads))
+                        if spreads else polymarket_effective_cost_bps())
+            cost_usd = (pos["entry_price"] + exit_price) * pos["shares"] * cost_bps / 10_000.0
+            pnl = round(pos["direction"] * (exit_price - pos["entry_price"]) * pos["shares"] - cost_usd, 2)
+            cfg["spent"] = round(max(cfg.get("spent", 0.0) - pos["usd"], 0.0), 2)
+            cfg["realized_pnl"] = round(cfg.get("realized_pnl", 0.0) + pnl, 2)
+            _log_event({"kind": "exit", "condition_id": pos["condition_id"],
+                         "convergence_bucket": pos["convergence_bucket"], "horizon_s": pos["horizon_s"],
+                         "entry_price": pos["entry_price"], "exit_price": exit_price,
+                         "cost_bps": round(cost_bps, 2), "pnl": pnl})
+            closed += 1
+        except Exception as e:  # noqa: BLE001
+            # get_market() raise 실패 또는 다른 처리 중 예외 발생 → 포지션 유지하고 다음 tick 재시도.
+            # 앞선 포지션들의 _log_event/cfg 갱신은 이미 처리됐고, 후속 포지션은 이 except
+            # 이후 루프에서 정상 처리. 루프 완료 후 cfg["positions"] = keep 실행.
+            _log_event({"kind": "exit_fail", "condition_id": pos["condition_id"], "msg": str(e)[:100]})
+            keep.append(pos)  # 다음 tick 재시도
+    cfg["positions"] = keep
+    return closed

@@ -109,3 +109,30 @@ def test_scan_and_enter_no_slots_returns_zero_without_loading_trades():
         entered = bot._scan_and_enter(cfg)
     assert entered == 0
     mock_load.assert_not_called()
+
+
+def test_scan_and_enter_market_fetch_failure_skips_anchor_but_continues():
+    # get_market()은 재시도 실패시 None이 아니라 예외를 raise한다(polymarket/client.py).
+    # 앞선 anchor(c1) 조회가 raise해도 스캔 전체가 abort되면 안 되고,
+    # 뒤의 anchor(c2)는 정상 진입되며 last_anchor_ts도 c2까지 갱신돼야 한다.
+    cfg = _cfg(trade_size_usd=10.0, budget=100.0, max_concurrent_positions=20)
+    anchors = _anchors([
+        _anchor_row(ts=100.0, cid="c1", bucket=1),
+        _anchor_row(ts=200.0, cid="c2", bucket=1),
+    ])
+
+    def _get_market_side_effect(condition_id):
+        if condition_id == "c1":
+            raise RuntimeError("network fail after 3 retries")
+        return _market(condition_id="c2", yes=0.6)
+
+    with patch.object(bot, "load_sharp_wallet_trades", return_value=pd.DataFrame()), \
+         patch.object(bot, "build_convergence_count", return_value=anchors), \
+         patch.object(bot, "get_market", side_effect=_get_market_side_effect), \
+         patch.object(bot, "_spread_bps_for_market", return_value=None), \
+         patch.object(bot, "_wallet_snapshot_safe", return_value=[]), \
+         patch.object(bot, "_log_event"):
+        entered = bot._scan_and_enter(cfg)
+    assert entered == 3  # c1 실패로 스킵, c2(bucket1)는 30/120/300s 3개 정상 진입
+    assert all(p["condition_id"] == "c2" for p in cfg["positions"])
+    assert cfg["last_anchor_ts"] == 200.0  # 실패한 c1도 "처리됨"으로 카운트, 재스캔 안 함

@@ -203,3 +203,36 @@ def test_process_exits_falls_back_to_default_cost_when_no_spread_data():
     expected_cost = (0.50 + 0.55) * 20.0 * polymarket_effective_cost_bps() / 10_000.0
     expected_pnl = round(1.0 * (0.55 - 0.50) * 20.0 - expected_cost, 2)
     assert cfg["realized_pnl"] == expected_pnl
+
+
+def test_process_exits_market_fetch_exception_retries_but_continues():
+    # get_market()이 raise 예외를 던지는 경우(Task 3 test와 동일 패턴).
+    # 포지션 2개: c1은 get_market raise, c2는 정상 청산.
+    # c1 실패가 c2 청산을 막지 않는지, c1은 다음 tick 재시도되는지 검증.
+    cfg = _cfg()
+    cfg["positions"] = [
+        _pos(condition_id="c1", exit_at=130.0),  # get_market raise
+        _pos(condition_id="c2", exit_at=130.0),  # 정상 청산
+    ]
+    cfg["spent"] = 20.0
+
+    def _get_market_side_effect(condition_id):
+        if condition_id == "c1":
+            raise RuntimeError("network error after retries")
+        return _market(condition_id="c2", yes=0.60)
+
+    with patch.object(bot, "_time") as mock_time, \
+         patch.object(bot, "get_market", side_effect=_get_market_side_effect), \
+         patch.object(bot, "_spread_bps_for_market", return_value=120.0), \
+         patch.object(bot, "_log_event"):
+        mock_time.time.return_value = 200.0
+        closed = bot._process_exits(cfg)
+
+    assert closed == 1  # c2만 청산
+    assert len(cfg["positions"]) == 1  # c1만 유지
+    assert cfg["positions"][0]["condition_id"] == "c1"  # 다음 tick 재시도
+    assert cfg["spent"] == 10.0  # c2의 10.0만 차감
+    # c2의 손익
+    expected_cost_c2 = (0.50 + 0.60) * 20.0 * 55.0 / 10_000.0
+    expected_pnl_c2 = round(1.0 * (0.60 - 0.50) * 20.0 - expected_cost_c2, 2)
+    assert cfg["realized_pnl"] == expected_pnl_c2

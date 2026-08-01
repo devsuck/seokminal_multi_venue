@@ -121,16 +121,23 @@ def _scan_and_enter(cfg: dict) -> int:
         horizons = _HORIZONS_BY_BUCKET.get(int(row["convergence_bucket"]))
         if not horizons:
             continue  # bucket2/미분류 — v1 진입 금지 그룹
-        m = get_market(row["condition_id"])
-        if m is None or not m["active"] or m["closed"]:
-            continue
-        entry_price = m["yes_price"]
-        if entry_price <= 0:
-            continue
 
-        # anchor당 1회만 조회(3개 horizon이 같은 순간·같은 마켓이라 공유) — 저장공간/RAM 제약.
-        entry_spread_bps = _spread_bps_for_market(m)
-        wallet_snapshot = _wallet_snapshot_safe(row["proxy_wallet"])
+        try:
+            # get_market()은 3회 재시도 후 실패시 raise(None 아님) — 한 anchor의
+            # fetch 실패가 전체 스캔을 abort시키지 않도록 anchor 단위로 격리.
+            m = get_market(row["condition_id"])
+            if m is None or not m["active"] or m["closed"]:
+                continue
+            entry_price = m["yes_price"]
+            if entry_price <= 0:
+                continue
+
+            # anchor당 1회만 조회(3개 horizon이 같은 순간·같은 마켓이라 공유) — 저장공간/RAM 제약.
+            entry_spread_bps = _spread_bps_for_market(m)
+            wallet_snapshot = _wallet_snapshot_safe(row["proxy_wallet"])
+        except Exception as e:  # noqa: BLE001
+            _log_event({"kind": "entry_fail", "condition_id": row["condition_id"], "msg": str(e)[:100]})
+            continue
 
         for h in horizons:
             if entered >= remaining_slots or remaining_budget < cfg["trade_size_usd"]:

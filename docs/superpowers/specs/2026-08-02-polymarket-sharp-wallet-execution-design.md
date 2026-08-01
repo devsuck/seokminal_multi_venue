@@ -6,17 +6,22 @@
 
 검증된(BH-FDR + walk-forward 이중 생존) Polymarket sharp_wallet 신호를 실집행 없는 paper 라이브 봇으로 돌린다. 기존 `polymarket_bot.py`(다각화 봇) 패턴 재사용하되, 청산 방식은 정산대기가 아니라 horizon 마크아웃으로 바뀐다.
 
-## 진입 신호 — 통계적으로 확정된 그룹만
+## 진입 신호 — 라이브 계산 가능한 그룹만 (v1은 bucket 한정)
 
 `research/run_polymarket_sharp_wallet_validate.py` 라이브 재실행 결과(가장 최신 참값):
 
-- **진입 허용**: `bucket1`(30/120/300s 전부), `bucket3`(300s만), `mid`(30/120s만), `high`(30/120/300s 전부) — 8개 그룹.
-- **진입 금지**: `bucket2`(전부 WF 탈락, 일부 wf_first 역부호), `bucket3`(30/120s), `low`(BH-FDR 자체 미생존), `mid`(300s).
-- 그룹 판정 로직은 `research/hypotheses/polymarket_sharp_wallet.py`의 `build_convergence_count`/`build_convergence_score`를 **그대로 재사용** — 새로 안 짬. 다만 배치용(전체 기간 일괄계산)이라 봇에서는 600초 트레일링 롤링 윈도우로 증분 재현해야 함(수집기가 이미 쌓는 raw anchor+context 트레이드 버퍼에서 계산).
+- **WF 통과**: `bucket1`(30/120/300s 전부), `bucket3`(300s만), `mid`(30/120s만), `high`(30/120/300s 전부) — 8개 그룹.
+- **WF 탈락**: `bucket2`(전부, 일부 wf_first 역부호), `bucket3`(30/120s), `low`(BH-FDR 자체 미생존), `mid`(300s).
+
+**그러나 v1 실집행은 이 중 bucket 그룹만.** 이유(설계 중 발견한 순서 모순): `build_convergence_score`의 liquidity 컴포넌트는 `[anchor_ts, anchor_ts+300s]` **미래** 구간 컨텍스트 체결 합산이라 score(따라서 tercile=mid/high 그룹 소속)가 anchor+300초 후에야 확정됨. mid/high 그룹의 30s/120s horizon은 그보다 먼저 청산해야 하는데, 애초에 진입해도 되는 그룹인지 청산 시점보다 늦게 정해지는 건 라이브로 실행 불가능한 정의 — 검증기는 오프라인 전체기간 데이터라 이 문제가 안 보였음.
+
+- **v1 진입 허용**: `bucket1`(30/120/300s), `bucket3`(300s) — 4개 그룹. `convergence_count`(트레일링 600초 윈도우, 미래 데이터 불필요)만 써서 anchor_ts 즉시 계산 가능.
+- **v1 제외**: score-tercile(`mid`,`high`) 전부. liquidity 컴포넌트를 트레일링 방식으로 재정의해 다시 BH-FDR+WF 재검증 통과해야 v2로 추가 — 지금 정의 그대로 진입 지연시켜 집행하면 통계적 근거 없는 별도 전략이 됨(금지).
+- 그룹 판정 로직은 `research/hypotheses/polymarket_sharp_wallet.py`의 `build_convergence_count`를 **그대로 재사용**. 배치용(전체 기간 일괄계산)이라 봇에서는 600초 트레일링 롤링 윈도우로 증분 재현.
 
 ## 포지션 모델 — 그룹별 병렬 (사용자 확정)
 
-한 anchor가 여러 그룹을 동시 충족하면(예: bucket1 AND high) **그룹마다 별도 paper 포지션**을 연다. 그룹당 사이징은 안 쪼갬 — 기존 봇과 동일 flat `trade_size_usd`. 이유: 검증 당시 사이징(`TRADE_SIZE=1.0` 고정, 그룹 무관)과 어긋나면 실집행 P&L이 통계검증 가정과 괴리됨.
+v1은 bucket 그룹만이라 "여러 그룹 동시충족"은 **같은 bucket 안의 서로 다른 horizon**으로 발생한다 — bucket=1 anchor는 30s/120s/300s 세 그룹 다 통과이므로 **3개 병렬 paper 포지션**(horizon별 각각 별도 exit_at)을 동시에 연다. bucket=3 anchor는 300s 하나뿐이라 포지션 1개. bucket=2는 전부 WF 탈락이라 진입 안 함. 그룹당 사이징은 안 쪼갬 — 기존 봇과 동일 flat `trade_size_usd`. 이유: 검증 당시 사이징(`TRADE_SIZE=1.0` 고정, 그룹 무관)과 어긋나면 실집행 P&L이 통계검증 가정과 괴리됨.
 
 노출 제한은 그룹별 서브버짓이 아니라 **전역 `max_concurrent_positions`** 하나로. YAGNI — 그룹별 예산 관리는 지금 필요성 없음.
 
@@ -62,3 +67,4 @@
 - 그룹별 서브버짓/차등 사이징.
 - positions API를 게이트/사이징에 반영(향후 별도 가설 검증 통과해야만 고려).
 - CLOB 데이터 상시 수집/저장(포지션 이벤트 시점 1회성 조회만).
+- score-tercile(mid/high) 그룹 v1 실집행 — liquidity 컴포넌트 트레일링 재정의 후 재검증 통과해야 v2로 편입.

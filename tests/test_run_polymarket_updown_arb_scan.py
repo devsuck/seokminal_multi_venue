@@ -57,3 +57,12 @@ def test_run_forever_stops_after_max_iterations_and_sleeps_between_not_after():
     assert mock_run.call_count == 3
     assert mock_append.call_count == 3
     assert mock_sleep.call_count == 2
+
+
+def test_run_forever_survives_run_once_exception_and_backs_off():
+    with patch.object(scan, "run_once", side_effect=[ConnectionError("net down"), [{"condition_id": "a"}]]), \
+         patch.object(scan, "append_snapshots") as mock_append, \
+         patch.object(scan.time, "sleep") as mock_sleep:
+        scan.run_forever(poll_interval_sec=1, max_iterations=2)
+    mock_append.assert_called_once_with([{"condition_id": "a"}])
+    assert mock_sleep.call_count == 1

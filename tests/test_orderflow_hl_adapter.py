@@ -36,7 +36,7 @@ class FakeConnection:
 class HangingConnect:
     """connect_fn 자체가 응답 없이 멈추는 상황(getaddrinfo OS 레벨 정지) 시뮬레이션."""
 
-    def __call__(self, uri: str):
+    def __call__(self, uri: str, **kwargs):
         return self
 
     async def __aenter__(self):
@@ -50,9 +50,11 @@ class FakeConnect:
     def __init__(self, incoming: list[str]):
         self._incoming = incoming
         self.called_with = None
+        self.called_kwargs = None
 
-    def __call__(self, uri: str):
+    def __call__(self, uri: str, **kwargs):
         self.called_with = uri
+        self.called_kwargs = kwargs
         return FakeConnection(self._incoming)
 
 
@@ -132,22 +134,36 @@ async def test_stream_subscribes_l2book_and_trades_then_yields_parsed_events():
         "data": {"coin": "BTC", "time": 1720000000000, "levels": [[], []]},
     })
     fake_connect = FakeConnect([raw_book])
-    client = HyperliquidOrderflowClient(connect_fn=fake_connect)
+    client = HyperliquidOrderflowClient(connect_fn=fake_connect, resolve_fn=lambda host: "127.0.0.1")
     events = [e async for e in client.stream("BTC")]
     assert len(events) == 1
     assert isinstance(events[0], OrderBookSnapshot)
     assert fake_connect.called_with == client._base_url
+    assert fake_connect.called_kwargs == {"host": "127.0.0.1", "server_hostname": "api.hyperliquid.xyz"}
 
 
 async def test_stream_raises_timeout_when_idle_too_long():
-    client = HyperliquidOrderflowClient(connect_fn=lambda uri: FakeConnection([], hang=True))
+    client = HyperliquidOrderflowClient(
+        connect_fn=lambda uri, **kwargs: FakeConnection([], hang=True),
+        resolve_fn=lambda host: "127.0.0.1",
+    )
     with pytest.raises(asyncio.TimeoutError):
         async for _ in client.stream("BTC", idle_timeout=0.02):
             pass
 
 
 async def test_stream_raises_timeout_when_connect_hangs():
-    client = HyperliquidOrderflowClient(connect_fn=HangingConnect())
+    client = HyperliquidOrderflowClient(connect_fn=HangingConnect(), resolve_fn=lambda host: "127.0.0.1")
     with pytest.raises(asyncio.TimeoutError):
         async for _ in client.stream("BTC", connect_timeout=0.02):
+            pass
+
+
+async def test_stream_propagates_resolve_failure_for_retry_loop_to_catch():
+    def _boom(host: str) -> str:
+        raise TimeoutError("10.0s 내 응답 없음")
+
+    client = HyperliquidOrderflowClient(connect_fn=FakeConnect([]), resolve_fn=_boom)
+    with pytest.raises(TimeoutError):
+        async for _ in client.stream("BTC"):
             pass

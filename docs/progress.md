@@ -3,6 +3,35 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-08-02 계속 2) — ICT/LTF 웹소켓 진짜 근본원인 확정 + 해결
+
+이전 세션 정정(바로 아래 섹션)에서 "로그도 완전 공백, sudo py-spy 필요, 근본원인 미확정"으로 남긴 부분을 이어서 조사. 유저 지시 없이 자율 진행("계속해줘").
+
+### 정정의 정정 — "로그 공백"은 오진이었음
+- 이전 세션이 `tmux capture-pane`으로 확인한 게 원인 — 실제 tmux 실행 커맨드는 `... > /tmp/ict_debug.log 2>&1`로 stdout을 파일로 리다이렉트하고 있어서 pane 자체는 항상 빈 게 정상. `/tmp/ict_debug.log`를 직접 열어보니 재기동 이후 계속 재시도 중이었고(628회 `LTF 스트림 오류` 로그, 5→10→20→40→60s 백오프 정상 순환), 매번 `TimeoutError: timed out during opening handshake` — `websockets` 내부 `open_timeout`이 `loop.getaddrinfo`(asyncio 자체 DNS resolver, 공유 default executor 경유)의 `CancelledError`를 감싸 발생.
+
+### 진짜 근본원인
+- `sudo py-spy` 없이 실측으로 좁힘: 프로세스 kill 없이 새 셸에서 fresh 프로세스로 `loop.getaddrinfo('api.hyperliquid.xyz', 443)` 단발/40회 반복 테스트 — 전부 5ms 이내 성공. 반면 라이브 `ict-orderflow-paper` 프로세스는 재기동해도(4번째) 100% 재현되는 타임아웃(총 828회 관측, gaierror 포함) — **asyncio 자체 resolver(`loop.getaddrinfo`, 공유 default executor 경유)가 이 프로세스/환경 조합에서만 막힘**. 반면 HTF 폴링(`fetch_htf_bars`)이 쓰는 `research/net_utils.py`의 순수 스레드 기반 resolver(공유 executor 안 씀, 매 호출 새 `threading.Thread`)는 같은 호스트로 그 사이 계속 성공 — HTF 소켓은 매번 정상 ESTABLISHED 확인됨.
+- 즉 문제는 DNS/네트워크 자체가 아니라 **asyncio 공유 executor를 거치는 resolver 경로 하나만** 이 환경에서 막히는 것. (스레드 풀 고갈 가설도 검증했으나 기각 — `ps -M`으로 스레드 수 확인 결과 4개뿐, 누수 아님. 정확한 OS 레벨 원인은 여전히 미확정이지만 우회로 실용적 해결.)
+
+### 수정 (커밋 전, 아래 "변경된 파일" 참고)
+- `orderflow/hl_adapter.py`: connect 직전에 `research/net_utils.call_with_hard_timeout` + `socket.getaddrinfo`(HTF와 동일한 순수 스레드 방식)로 IP를 직접 resolve, `websockets.connect(url, host=<resolved_ip>, server_hostname=<원래 호스트>)`로 넘겨 asyncio 자체 resolver 경로(`loop.create_connection`의 `_ensure_resolved`)를 완전히 우회 — `host`가 이미 IP 리터럴이면 asyncio가 `getaddrinfo` 자체를 안 부르는 걸 CPython 소스(`base_events.py::_ensure_resolved` → `_ipaddr_info`)로 확인 후 적용. `server_hostname`은 TLS SNI/인증서 검증용, HTTP Upgrade의 Host 헤더는 URI 자체가 안 바뀌어서 자동으로 올바르게 유지됨.
+- 연결 수명주기 가시성 부재도 이번 조사를 오래 끈 원인이라 판단 — `resolving`/`connected`/최초 3개+매 200개마다 메시지 로그를 `logging.info`로 추가(운영 관측용, 디버그용 임시 코드 아님).
+- `tests/test_orderflow_hl_adapter.py`: `resolve_fn` 주입 지원하도록 fake들 갱신 + resolve 실패가 기존 재연결 루프로 전파되는지 확인하는 회귀 테스트 1개 추가.
+
+### 실측 검증
+- `ict-orderflow-paper` 재기동 후 로그: `resolved api.hyperliquid.xyz -> 18.66.192.82, connecting` → `connected` → 실제 `l2Book`/`trades` 메시지 수신 확인(200개 메시지 90초 내 도달, `subscriptionResponse` 정상 ack 포함). 이전엔 100% 실패했던 게 즉시 성공으로 전환.
+- `pytest tests/` 전체 2083 passed(pre-existing 실패 없음).
+
+### 변경된 파일
+- `orderflow/hl_adapter.py`, `tests/test_orderflow_hl_adapter.py`
+
+### 다음 세션 확인
+- 저널이 실제로 채워지기 시작하는지 관찰 재개(N/30 보고, 사용자 명시 요청).
+- 이번 우회가 임시방편인지 근본해결인지는 좀 더 지켜봐야 함 — asyncio resolver가 왜 이 환경에서만 막히는지 OS 레벨 원인은 여전히 미상, 재발하면(다시 100% 타임아웃 패턴 보이면) 우회 자체도 뚫릴 수 있음, sudo py-spy로 확인은 여전히 유효한 차기 옵션.
+
+---
+
 ## 세션 로그 (2026-08-01) — 릴리스감사 Phase1 완료 확인 (STEP4 + D클러스터)
 
 이전 세션(들)에서 진행된 릴리스감사 Phase1 STEP4 작업 2건이 이 파일에 기록 안 된 채 커밋만 남아있던 걸 발견 → 상태 검증 후 기록.
@@ -58,7 +87,50 @@
 
 ### 다음 할 일
 - [ ] whale 원장 계속 쌓이는 대로 재검증(현재 no_edge, 표본 늘면 재확인)
-- [ ] ICT/orderflow 저널 진행 — 계속 관찰(사용자 명시 요청: 채워질 때마다 N/30 보고)
+
+---
+
+## 세션 로그 (2026-08-02 계속) — ICT/LTF 웹소켓 영구정지 수정 + 함대 전체 감사(취침 중 자율진행)
+
+유저 지시: "원인 더 파보고, 수정해줘 그리고 나머지 전략들도 다 표본쌓였는지, 그 과정에서 오류없는지 확인해줘. 나 잘테니까 일어나있을 때 확인할 수 있도록해줘" → "계속해줘 끝까지". 아래 전부 유저 개입 없이 끝까지 진행.
+
+### 완료된 작업
+
+**1. ICT/오더플로우 LTF 웹소켓 영구정지 버그 수정** (`2a6a907`) — 저널 10일간 0건의 근본 원인 (⚠️ 부분 해결, 아래 정정 참고)
+- `HyperliquidOrderflowClient.stream()`이 connect/idle 둘 다 타임아웃 가드가 없어서, macOS 슬립/웨이크 등으로 DNS/connect가 OS 레벨에서 멈추거나 연결이 정상 종료(`StopAsyncIteration`)되면 예외도 로그도 없이 LTF 스트림이 영구 정지하는 구조였음. `ict-orderflow-paper` 프로세스 실측: `lsof` 소켓 0개, 재연결 로직 자체가 없었음.
+- `orderflow/hl_adapter.py`에 `asyncio.wait_for`로 connect/idle 타임아웃 추가, `research/run_ict_paper_engine.py`의 `_stream_ltf` 호출부에 지수 백오프 재연결 루프 추가. 테스트 2개 파일 업데이트.
+
+**⚠️ 정정 (같은 세션, 커밋 이후 실측)** — 위 수정 자체는 코드상 맞고(재연결/백오프 로직은 실측으로 정상 동작 확인 — 5s→10s→20s→40s 백오프 시퀀스 트레이스백과 함께 관측됨), **하지만 재기동한 라이브 `ict-orderflow-paper` 프로세스가 지금도 LTF 웹소켓에 연결하지 못하고 있음**. 저널은 계속 0건으로 남을 가능성 높음. 실측 근거:
+  - `_poll_htf`의 HTF 15분봉 fetch(`fetch_htf_bars`)는 성공 확인됨 — HL API(CloudFront 프록시로 추정되는 호스트)로 향하는 established TCP 연결이 프로세스 시작 직후 바로 열려 3분 넘게 유지됨.
+  - 그런데 `_stream_ltf`의 웹소켓 연결(`wss://api.hyperliquid.xyz/ws`)은 그 이후 단 한 번도 소켓 활동(SYN_SENT조차)이 안 잡히고, 예외 로그도 전혀 안 찍힘(로그 파일 unbuffered `-u` 옵션으로 재확인, 완전 공백) — 3분+ 관찰.
+  - 프로세스를 세 번(PID 83682 → 84355 → 85282) 완전 재기동해도 동일 — whale_tick 사례(재기동 한 번으로 해결)와 달리 재기동으로 안 풀림.
+  - 반면 동일 셸에서 실행한 독립 ad-hoc 스크립트(`websockets.connect` 단독, HTF+WS 동시 `asyncio.gather` 조합)는 매번 1초 이내 정상 연결 성공 — 네트워크/DNS 자체 문제 아님, tmux로 띄운 이 특정 장기 프로세스 컨텍스트에서만 재현.
+  - `py-spy dump`로 정확한 블로킹 지점 확인 시도했으나 root 권한 필요, sudo 캐시 없어 실패 — 근본원인 미확정 상태로 세션 종료.
+  - 가설(미확증): `_poll_htf`가 `call_with_hard_timeout`을 `await` 없이 동기 호출해 이벤트 루프를 블로킹하는 패턴(`research/run_ict_paper_engine.py`의 `_poll_htf`) 자체는 독립 리프로 스크립트로는 재현 안 됐지만, asyncio 내부 리졸버(3.14 프레임워크 빌드)가 이 특정 스케줄링 순서에서 걸리는 경합 조건일 가능성.
+  - **결론: 저널이 채워질 것으로 기대하지 말 것.** 프로세스는 살아있고 자체 재시도(백오프)하니 크래시는 안 나지만, 실제로 스트림을 못 열고 있어 트레이드 진입 자체가 발생 못 함.
+
+**2. 함대 전체 감사 — 9개 tracked 수집기 + 관련 파일 전수 점검, 발견된 문제 전부 수정** (`6f275e7`)
+- `polymarket_mlb_specialist_tick` 거짓 "stuck" 알람: 저유동성 마켓이라 체결 간격 30~110분(2026-08-01 `research/data/mlb_specialist/*.jsonl` 150건 실측)인데 기본 임계 900s를 써서 상시 오탐. `api_server/fleet_health.py`의 `STALE_AFTER_S`에 `"polymarket_mlb_specialist_tick": 7200` 추가. 수집기 자체는 정상 작동 중이었음(코드 버그 아님).
+- `polymarket_arb` / `polymarket_updown_arb` 크래시루프(진짜 버그): 두 `run_forever()` 루프에 예외처리가 전혀 없어서 네트워크 순간장애만 나도 프로세스 통째로 죽고, 워치독(`ops/collector_watchdog.py`)의 tmux kill+재생성 재기동에만 의존하고 있었음 — 재기동마다 이전 scrollback/로그가 통째로 날아가 원인 사후분석도 불가능한 구조. 조사 도중 실제로 두 수집기가 라이브로 재크래시하는 걸 목격(`/lab/fleet` 폴링 중 dead 전환 확인). MLB 수집기 등 다른 수집기들이 이미 쓰던 try/except+지수백오프 패턴을 그대로 이식해 자체복구하도록 수정. 신규 회귀테스트 2개 추가(`test_run_forever_survives_run_once_exception_and_backs_off`), 전체 스위트 2082 passed 확인.
+- `polymarket_whale_tick` 지속 stale: 코드 자체(`net_utils.call_with_hard_timeout`)는 정상 — 매 시도 `TimeoutError: 20.0s 내 응답 없음` 100% 재현, 근데 신규 프로세스로 curl 날리면 즉시 성공 → 프로세스 로컬 OS 레벨 DNS/리졸버 wedge로 확인(net_utils 자체 버그 아니라 그 가드가 못 고치는 종류의 프로세스 상태 오염). `/lab/collectors/polymarket_whale_tick/restart`로 프로세스 재기동해서 해결.
+
+### 변경된 파일
+- `api_server/fleet_health.py` — MLB 임계 오버라이드 추가
+- `research/run_polymarket_arb_scan.py`, `research/run_polymarket_updown_arb_scan.py` — try/except+백오프 추가
+- `tests/test_run_polymarket_arb_scan.py`, `tests/test_run_polymarket_updown_arb_scan.py` — 회귀테스트 추가
+
+### 현재 함대 상태 (최종 확인, 2026-08-02 03:12 UTC)
+`/lab/fleet` 9개 전부 `verdict: fresh`. `ok: false`인데 이유는 `polymarket_arb`(restart_count_24h=6)·`polymarket_updown_arb`(3)의 `flapping` 플래그가 켜져 있어서 — 전부 **수정 배포 전** 크래시루프 때 쌓인 24시간 롤링 카운트라 지금 상태 이상은 아님, 시간 지나면 자연히 꺼짐(재발하면 진짜 문제).
+
+### 막힌 부분 / 사용자 결정 필요
+- **`run_gex_snapshot_collect.py`**: 자체 docstring상 "tmux로 상시 실행" 대상인데 tmux 세션 자체가 없음(~13일째 중단 추정, 데이터 최신성 기준). `/lab/fleet`의 `COLLECTORS`(`api_server/lab_api.py`) 설정에도 아예 없어서 죽어도 알람이 안 뜨는 구조. 의도적 중단인지 방치인지 불명 — 임의로 재기동 안 함, 확인 후 재개 여부/`COLLECTORS`에 편입할지 결정 필요.
+- `run_paper_ingest.py`의 16일 묵은 `cursor.json`은 자체 docstring상 1회성 트리거 스크립트(cron 아님)라 정상, 조치 불필요.
+
+### 다음 할 일
+- [x] **최우선**: `ict-orderflow-paper` LTF 웹소켓 미연결 문제 진단 — **해결됨, 아래 "세션 로그 (2026-08-02 계속 2)" 참고.**
+- [ ] `gex_snapshot` 수집기 재개 여부 결정 (위 참고)
+- [ ] whale 원장 계속 쌓이는 대로 재검증(현재 no_edge, 표본 늘면 재확인)
+- [ ] ICT/orderflow 저널 진행 — 웹소켓 연결 자체는 복구됨(아래 참고), 이제 실제 신호 발생까지 관찰 필요(사용자 명시 요청이던 N/30 보고 재개)
 - [ ] cross-venue-skew 데이터 수집됐지만 validation 스크립트 아직 미실행 — 다음 세션 후보
 
 ---

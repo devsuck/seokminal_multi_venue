@@ -38,8 +38,26 @@
 
 ### 다음 할 일
 - [ ] sharp_wallet 집행봇 `/lab` 대시보드에서 enabled=true로 켤지는 별도 결정 — 현재 paper verdict가 forward_test_required라 신중
-- [ ] whale의 `build_price_series`도 동일한 outcome 혼입 패턴 가능성 있음(코드 docstring이 "whale과 동일 로직"이라 명시) — 미확인, 다음 세션 후보
+- [x] whale의 `build_price_series`도 동일한 outcome 혼입 패턴 가능성 있음 → 2026-08-02 확인+수정 완료, 아래 추가 세션 로그 참고
 - [ ] whale 원장 계속 쌓이는 대로 리더보드/self-score 재검증(표본 늘어야 결론 남)
+- [ ] ICT/orderflow 저널 진행 — 계속 관찰(사용자 명시 요청: 채워질 때마다 N/30 보고)
+- [ ] cross-venue-skew 데이터 수집됐지만 validation 스크립트 아직 미실행 — 다음 세션 후보
+
+---
+
+## 세션 로그 (2026-08-02 계속) — polymarket_whale outcome 혼입 버그 수정
+
+### 완료된 작업
+- **`research/hypotheses/polymarket_whale.py` outcome 혼입 버그 확인+수정**: sharp_wallet과 동일 패턴 — `build_price_series`가 condition_id만으로 필터링해 같은 마켓 Yes/No 두 토큰 체결이 하나의 가격 시계열에 섞이고 있었음(903개 마켓 중 398개=44%가 양쪽 outcome 다 거래됨). `load_whale_trades`에 `outcome_index` 파싱 추가, `build_spike_signal` 출력에 pass-through, `build_price_series(df, condition_id, outcome_index)`로 시그니처 변경, `build_labels_multi_horizon` 조회키를 `(condition_id, outcome_index)`로 변경 + outcome_index가 {0,1} 밖인 스파이크는 라벨링 제외. `run_polymarket_whale_validate.py::run_family()`, `run_polymarket_whale_wallet_analysis.py::_build_all_labels()` 호출부도 함께 수정. 커밋 90b07b8, push 완료.
+  - A/B 비교(현재 데이터, 수정전/후 코드 동일 데이터셋): 수정 전 n_anchors=167, BH-FDR survivors 1/3(news:300s), verdict=`candidate`. 수정 후 n_anchors=79, survivors=0/3, verdict=`no_edge`.
+  - 결론: outcome 혼입 버그가 news:300s를 거짓 candidate로 만들고 있었음. 버그 수정 후 진짜 verdict는 no_edge — **sharp_wallet과 반대 방향**(sharp_wallet은 버그 고치니 생존폭이 넓어짐, whale은 유일 생존자가 사라짐). 전체 스위트 2078 passed.
+- **"다수 선택지(>2 outcome) 마켓 처리" 질문 답변**: Polymarket Data API의 raw `outcomeIndex`가 데이터상 `{0, 1, 999}`만 나옴 — 999가 API 자체의 비이진/negRisk 마켓 통합 센티널. 세부 카테고리 구분 데이터 자체가 없어 sharp_wallet/whale 둘 다 999(및 결측)는 라벨링에서 전부 제외하는 것 외엔 처리 방법이 없음(코드 한계가 아니라 데이터 한계).
+
+### 변경된 파일
+- `research/hypotheses/polymarket_whale.py`, `research/run_polymarket_whale_validate.py`, `research/run_polymarket_whale_wallet_analysis.py`, `tests/test_polymarket_whale.py`, `tests/test_run_polymarket_whale_validate.py`
+
+### 다음 할 일
+- [ ] whale 원장 계속 쌓이는 대로 재검증(현재 no_edge, 표본 늘면 재확인)
 - [ ] ICT/orderflow 저널 진행 — 계속 관찰(사용자 명시 요청: 채워질 때마다 N/30 보고)
 - [ ] cross-venue-skew 데이터 수집됐지만 validation 스크립트 아직 미실행 — 다음 세션 후보
 

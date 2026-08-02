@@ -1,12 +1,16 @@
+import asyncio
 import json
+
+import pytest
 
 from orderflow.hl_adapter import HyperliquidOrderflowClient, parse_hl_message
 from orderflow.models import OrderBookSnapshot, TradeEvent
 
 
 class FakeConnection:
-    def __init__(self, incoming: list[str]):
+    def __init__(self, incoming: list[str], hang: bool = False):
         self._incoming = incoming
+        self._hang = hang
         self.sent: list[str] = []
 
     async def send(self, message: str) -> None:
@@ -16,11 +20,27 @@ class FakeConnection:
         return self._gen()
 
     async def _gen(self):
+        if self._hang:
+            await asyncio.sleep(3600)  # idle_timeout 가드가 이걸 끊어줘야 함
+            return
         for msg in self._incoming:
             yield msg
 
     async def __aenter__(self):
         return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class HangingConnect:
+    """connect_fn 자체가 응답 없이 멈추는 상황(getaddrinfo OS 레벨 정지) 시뮬레이션."""
+
+    def __call__(self, uri: str):
+        return self
+
+    async def __aenter__(self):
+        await asyncio.sleep(3600)
 
     async def __aexit__(self, *exc):
         return False
@@ -117,3 +137,17 @@ async def test_stream_subscribes_l2book_and_trades_then_yields_parsed_events():
     assert len(events) == 1
     assert isinstance(events[0], OrderBookSnapshot)
     assert fake_connect.called_with == client._base_url
+
+
+async def test_stream_raises_timeout_when_idle_too_long():
+    client = HyperliquidOrderflowClient(connect_fn=lambda uri: FakeConnection([], hang=True))
+    with pytest.raises(asyncio.TimeoutError):
+        async for _ in client.stream("BTC", idle_timeout=0.02):
+            pass
+
+
+async def test_stream_raises_timeout_when_connect_hangs():
+    client = HyperliquidOrderflowClient(connect_fn=HangingConnect())
+    with pytest.raises(asyncio.TimeoutError):
+        async for _ in client.stream("BTC", connect_timeout=0.02):
+            pass

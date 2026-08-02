@@ -3702,7 +3702,7 @@ def get_triggered_alerts() -> TriggeredAlertsResponse:
 
 # ── /insider ───────────────────────────────────────────────────────────────────
 
-from insider.dart_client import search_company as _dart_search, get_executive_stock_changes as _dart_trades, get_recent_kr_insider_feed as _dart_recent, get_recent_kr_corporate_actions as _dart_corp_actions, action_weight as _dart_weight
+from insider.dart_client import search_company as _dart_search, get_executive_stock_changes as _dart_trades, get_recent_kr_insider_feed as _dart_recent, get_recent_kr_corporate_actions as _dart_corp_actions, action_weight as _dart_weight, get_report_lag_days as _dart_lag
 from insider.congress_client import get_congress_trades as _congress_trades
 from insider.gov_spending_client import get_recent_contracts as _gov_contracts
 from insider.options_uoa_client import get_unusual_options_activity as _options_uoa
@@ -3778,6 +3778,7 @@ class InsiderTrade(BaseModel):
     role: str | None = None          # KR: 직책 (대표이사, 사외이사 등)
     event_cause: str | None = None   # KR: 증감원인 (장내매수, 무상증자 등)
     dart_url: str | None = None      # KR: 공시 원문 링크
+    rcept_no: str | None = None      # KR: /insider/kr/report-lag 조회용
 
 
 @app.get("/insider/kr/search", response_model=list[DartCompany])
@@ -3817,9 +3818,32 @@ def insider_kr(
             role=r.get("role") or None,
             event_cause=r.get("event_cause") or None,
             dart_url=r.get("dart_url") or None,
+            rcept_no=r.get("rcept_no") or None,
         )
         for r in rows
     ]
+
+
+class ReportLag(BaseModel):
+    rcept_no: str
+    rcept_dt: str
+    lags_days: list[int]
+
+
+@app.get("/insider/kr/report-lag", response_model=ReportLag)
+def insider_kr_report_lag(
+    rcept_no: str = Query(..., min_length=1),
+    rcept_dt: str = Query(..., min_length=1, description="YYYYMMDD or YYYY-MM-DD"),
+) -> ReportLag:
+    """공시 원문(document.xml)의 세부변동내역에서 실제 변동일을 파싱해 접수일 대비
+    지연일수를 반환. 리포트 하나에 여러 건 변동이 있으면 전부 반환(1건과 1:1 아님)."""
+    try:
+        lags = _dart_lag(rcept_no, rcept_dt)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"OpenDART error: {exc}") from exc
+    return ReportLag(rcept_no=rcept_no, rcept_dt=rcept_dt, lags_days=lags)
 
 
 @app.get("/insider/us", response_model=list[InsiderTrade])

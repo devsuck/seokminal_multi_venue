@@ -60,6 +60,22 @@ def test_insider_kr_search_api_error():
     assert r.status_code == 503
 
 
+def test_insider_kr_report_lag_ok():
+    with patch("api_server.main._dart_lag", return_value=[1, 4]):
+        r = client.get("/insider/kr/report-lag", params={"rcept_no": "20240807000304", "rcept_dt": "20240807"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["lags_days"] == [1, 4]
+    assert data["rcept_no"] == "20240807000304"
+
+
+def test_insider_kr_report_lag_no_detail_table():
+    with patch("api_server.main._dart_lag", return_value=[]):
+        r = client.get("/insider/kr/report-lag", params={"rcept_no": "20240807000304", "rcept_dt": "20240807"})
+    assert r.status_code == 200
+    assert r.json()["lags_days"] == []
+
+
 # ── US 내부자 (Finnhub 우선 + SEC EDGAR 폴백) ─────────────────────────────────
 
 _US_MOCK_ROWS = [

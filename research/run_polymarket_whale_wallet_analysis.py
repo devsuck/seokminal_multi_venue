@@ -63,7 +63,11 @@ def _build_all_labels(dates: list[str]) -> pd.DataFrame:
     spikes = build_spike_signal(df_z)
     if spikes.empty:
         return pd.DataFrame()
-    price_by_condition = {cid: build_price_series(df, cid) for cid in spikes["condition_id"].unique()}
+    market_outcome_pairs = {
+        (cid, oi) for cid, oi in spikes[["condition_id", "outcome_index"]].itertuples(index=False)
+        if oi in (0, 1)
+    }
+    price_by_condition = {key: build_price_series(df, key[0], key[1]) for key in market_outcome_pairs}
     return build_labels_multi_horizon(price_by_condition, spikes)
 
 

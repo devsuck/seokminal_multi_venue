@@ -17,7 +17,28 @@
 - `jarvis/benchmark` 등 REMOVE된 디렉토리에 `__pycache__`/컴파일된 `.pyc` 잔해가 파일시스템에 남아있음 발견 — `.gitignore`로 무시되는 순수 바이트코드 캐시라 무해, git 상태엔 영향 없음(정리 안 함).
 
 ### 다음 할 일
-- [ ] 로컬 브랜치(`claude/polymarket-wallet-scoring-awzj6n`)가 origin보다 8커밋 앞섬 — push 여부 사용자 확인 필요
+- [x] 로컬 브랜치(`claude/polymarket-wallet-scoring-awzj6n`)가 origin보다 8커밋 앞섬 — push 여부 사용자 확인 필요 → 2026-08-02 병합+push 완료, 아래 세션 로그 참고
+- [ ] whale 원장 계속 쌓이는 대로 리더보드/self-score 재검증(표본 늘어야 결론 남)
+- [ ] ICT/orderflow 저널 진행 — 계속 관찰(사용자 명시 요청: 채워질 때마다 N/30 보고)
+- [ ] cross-venue-skew 데이터 수집됐지만 validation 스크립트 아직 미실행 — 다음 세션 후보
+
+---
+
+## 세션 로그 (2026-08-02) — sharp_wallet 집행봇 SDD 병합 + 검증기 재검증
+
+### 완료된 작업
+- **sharp_wallet 집행봇 SDD 실행계획(2026-08-02) 6개 태스크 전부 완료**: CLOB 클라이언트, positions API, 진입/청산 봇 로직, tick/loop/라우터, 리스크가드, `/lab/health` 회계 불변식. 최종 브랜치 리뷰에서 Critical 1건(outcomeIndex 미반영 — sharp wallet이 No 매수해도 direction=+1로 기록돼 봇이 반대방향 진입, 588건 중 323건 영향) + Important 3건 발견 → fix round 1건으로 전부 해결, 재리뷰 클린. 전체 스위트 2072 passed.
+- **`claude/polymarket-wallet-scoring-awzj6n` → main 병합+push**(fast-forward, d63b6c5). origin과 동기화 완료.
+- **검증기(`run_polymarket_sharp_wallet_validate.py`) 재검증**: 최종 브랜치 리뷰에서 별도 발견된 `build_price_series` outcome 혼입 버그(같은 마켓 Yes/No 두 토큰 체결이 하나의 가격 시계열에 섞임 — 2689개 마켓 중 1512개가 양쪽 다 거래돼 영향) 수정. `build_price_series`에 `outcome_index` 필터 추가, `build_labels_multi_horizon` 조회키를 `(condition_id, outcome_index)`로 변경, outcome_index가 {0,1} 밖인 anchor는 라벨링에서 제외. 커밋 9677cce, push 완료.
+  - A/B 비교(현재 데이터 n=5178, 수정전/후 코드로 동일 데이터셋 각각 재실행): 수정 전 BH-FDR survivors 14/18(bucket 8/9, tercile 6/9) wf_pass 10/14, 수정 후 18/18(bucket 9/9, tercile 9/9) wf_pass 7/18. verdict는 양쪽 다 `paper_candidate_forward_test_required`(추가 수집분 때문에 이미 다운그레이드 상태였고 이 수정 자체가 원인 아님, old코드+현재데이터로 별도 확인함).
+  - 결론: outcome 혼입 수정으로 신호가 더 넓은 그룹에서 BH-FDR 생존하지만 walk-forward 안정성은 오히려 하락. **라이브 전환 근거는 여전히 부족 — paper 유지, 계속 관찰.**
+
+### 변경된 파일
+- `api_server/polymarket_sharp_wallet_bot.py`(신규), `api_server/invariants.py`, `api_server/lab_api.py`, `api_server/main.py`, `polymarket/clob_client.py`(신규), `research/hypotheses/polymarket_sharp_wallet.py`, `research/run_polymarket_sharp_wallet_validate.py`, 관련 테스트
+
+### 다음 할 일
+- [ ] sharp_wallet 집행봇 `/lab` 대시보드에서 enabled=true로 켤지는 별도 결정 — 현재 paper verdict가 forward_test_required라 신중
+- [ ] whale의 `build_price_series`도 동일한 outcome 혼입 패턴 가능성 있음(코드 docstring이 "whale과 동일 로직"이라 명시) — 미확인, 다음 세션 후보
 - [ ] whale 원장 계속 쌓이는 대로 리더보드/self-score 재검증(표본 늘어야 결론 남)
 - [ ] ICT/orderflow 저널 진행 — 계속 관찰(사용자 명시 요청: 채워질 때마다 N/30 보고)
 - [ ] cross-venue-skew 데이터 수집됐지만 validation 스크립트 아직 미실행 — 다음 세션 후보

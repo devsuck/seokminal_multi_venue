@@ -5,6 +5,9 @@ import datetime as _dt
 import io
 import os
 import re
+import threading
+import time
+import xml.etree.ElementTree as ET
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -14,6 +17,11 @@ DART_BASE = "https://opendart.fss.or.kr/api"
 _TIMEOUT = 12
 _MDF_DM_RE = re.compile(rb'AUNIT="MDF_DM"\s+AUNITVALUE="(\d{8})"')
 
+_CORP_LIST_TTL_SECONDS = 86400  # 24h, kr_universe.client와 동일 컨벤션
+_corp_list_cache: list[dict] = []
+_corp_list_cache_ts: float = 0.0
+_corp_list_lock = threading.Lock()
+
 
 def _key() -> str:
     key = os.environ.get("OPENDART_API_KEY", "")
@@ -22,26 +30,48 @@ def _key() -> str:
     return key
 
 
+def _get_corp_list() -> list[dict]:
+    """전체 상장사 corp_code/corp_name/stock_code 목록, 24h 메모리 캐시.
+
+    DART company.json은 corp_code 단건조회 전용이라 이름검색을 지원하지 않음 —
+    공식 이름검색 방법은 corpCode.xml(전체 회사코드 zip) 받아서 로컬 필터링뿐.
+    """
+    global _corp_list_cache, _corp_list_cache_ts
+    if _corp_list_cache and time.time() - _corp_list_cache_ts < _CORP_LIST_TTL_SECONDS:
+        return _corp_list_cache
+    with _corp_list_lock:
+        if _corp_list_cache and time.time() - _corp_list_cache_ts < _CORP_LIST_TTL_SECONDS:
+            return _corp_list_cache
+        r = requests.get(
+            f"{DART_BASE}/corpCode.xml",
+            params={"crtfc_key": _key()},
+            timeout=60,
+        )
+        r.raise_for_status()
+        with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+            xml_bytes = zf.read(zf.namelist()[0])
+        root = ET.fromstring(xml_bytes)
+        _corp_list_cache = [
+            {
+                "corp_code": el.findtext("corp_code", ""),
+                "corp_name": el.findtext("corp_name", ""),
+                "stock_code": (el.findtext("stock_code") or "").strip(),
+            }
+            for el in root.iter("list")
+        ]
+        _corp_list_cache_ts = time.time()
+        return _corp_list_cache
+
+
 def search_company(name: str) -> list[dict]:
-    """Company name → list of {corp_code, corp_name, stock_code}."""
-    r = requests.get(
-        f"{DART_BASE}/company.json",
-        params={"crtfc_key": _key(), "corp_name": name, "page_no": 1, "page_count": 20},
-        timeout=_TIMEOUT,
-    )
-    r.raise_for_status()
-    data = r.json()
-    if data.get("status") != "000":
+    """Company name → list of {corp_code, corp_name, stock_code} (상장사만)."""
+    q = name.strip()
+    if not q:
         return []
     return [
-        {
-            "corp_code": c["corp_code"],
-            "corp_name": c["corp_name"],
-            "stock_code": c.get("stock_code", ""),
-        }
-        for c in data.get("list", [])
-        if c.get("stock_code")  # only listed companies
-    ]
+        c for c in _get_corp_list()
+        if q in c["corp_name"] and c["stock_code"]
+    ][:20]
 
 
 def get_executive_stock_changes(

@@ -3,7 +3,8 @@ import io
 import zipfile
 from unittest.mock import MagicMock, patch
 
-from insider.dart_client import get_executive_stock_changes, get_report_lag_days
+import insider.dart_client as dart_client
+from insider.dart_client import get_executive_stock_changes, get_report_lag_days, search_company
 
 _RAW_LIST = [
     {"rcept_no": "1", "rcept_dt": "2024-08-07", "corp_code": "00126380", "corp_name": "삼성전자",
@@ -59,3 +60,58 @@ def test_get_report_lag_days_no_detail_table_returns_empty():
         lags = get_report_lag_days("20260802000001", "2026-08-02")
 
     assert lags == []
+
+
+def _fake_corp_code_zip() -> bytes:
+    xml = (
+        '<?xml version="1.0"?><result>'
+        '<list><corp_code>00126380</corp_code><corp_name>삼성전자</corp_name>'
+        '<stock_code>005930</stock_code><modify_date>20260101</modify_date></list>'
+        '<list><corp_code>00164742</corp_code><corp_name>삼성전자우</corp_name>'
+        '<stock_code>005935</stock_code><modify_date>20260101</modify_date></list>'
+        '<list><corp_code>00999999</corp_code><corp_name>비상장회사</corp_name>'
+        '<stock_code></stock_code><modify_date>20260101</modify_date></list>'
+        '</result>'
+    ).encode("utf-8")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("CORPCODE.xml", xml)
+    return buf.getvalue()
+
+
+def test_search_company_filters_by_name_and_listed_only():
+    """company.json은 corp_code 단건조회 전용이라 이름검색 불가 —
+    corpCode.xml 전체목록을 받아 로컬에서 이름 부분일치 + 상장사(stock_code 有)만 필터."""
+    dart_client._corp_list_cache = []
+    dart_client._corp_list_cache_ts = 0.0
+    mock_resp = MagicMock()
+    mock_resp.content = _fake_corp_code_zip()
+    with patch("insider.dart_client.requests.get", return_value=mock_resp) as mock_get, \
+         patch("insider.dart_client._key", return_value="dummy"):
+        results = search_company("삼성전자")
+
+    assert mock_get.call_args.kwargs["params"] == {"crtfc_key": "dummy"}
+    assert [r["corp_name"] for r in results] == ["삼성전자", "삼성전자우"]
+    assert results[0]["corp_code"] == "00126380"
+    assert results[0]["stock_code"] == "005930"
+
+
+def test_search_company_uses_cache_on_second_call():
+    dart_client._corp_list_cache = []
+    dart_client._corp_list_cache_ts = 0.0
+    mock_resp = MagicMock()
+    mock_resp.content = _fake_corp_code_zip()
+    with patch("insider.dart_client.requests.get", return_value=mock_resp) as mock_get, \
+         patch("insider.dart_client._key", return_value="dummy"):
+        search_company("삼성전자")
+        search_company("삼성전자우")
+
+    mock_get.assert_called_once()  # 두번째 호출은 캐시 히트, 재요청 없음
+
+
+def test_search_company_empty_query_returns_empty_without_network():
+    dart_client._corp_list_cache = []
+    dart_client._corp_list_cache_ts = 0.0
+    with patch("insider.dart_client.requests.get") as mock_get:
+        assert search_company("   ") == []
+    mock_get.assert_not_called()

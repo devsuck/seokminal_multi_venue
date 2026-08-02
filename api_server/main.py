@@ -3538,6 +3538,41 @@ _MAX_TRIGGERED = 200
 _DEDUP_SECONDS = 300
 _alert_lock = threading.Lock()
 
+# 샤프월렛 봇 진입 로그 → 알림 파이프라인 편입(전용 규칙 UI 없이 자동 감시).
+_sw_last_seen_ts: float | None = None
+
+
+def _check_sharp_wallet_entries() -> None:
+    """polymarket_sharp_wallet_bot의 entry 로그를 훑어 신규분을 _triggered_alerts에 편입.
+
+    로그 한 줄이라도 ts 누락/타입 이상이면 전체 /alerts/triggered가 500나던 버그 재발
+    방지용 방어: entry_events를 ts 문자열 보유분으로만 제한(실제 봇은 항상 isoformat).
+    """
+    global _sw_last_seen_ts
+    entry_events = [e for e in _sw_bot_recent_log(20)
+                     if e.get("kind") == "entry" and isinstance(e.get("ts"), str)]
+    if not entry_events:
+        return
+    if _sw_last_seen_ts is None:
+        _sw_last_seen_ts = entry_events[0]["ts"]  # 부팅 직후 과거분 스팸 방지
+        return
+    new = [e for e in entry_events if e["ts"] > _sw_last_seen_ts]
+    if not new:
+        return
+    for ev in reversed(new):  # 오래된 것부터 순서대로 append
+        _triggered_alerts.append(TriggeredAlertOut(
+            rule_id="sharp_wallet_bot_entry",
+            rule_label="샤프월렛 봇 진입",
+            condition_type="position_entered",
+            bot_id="polymarket_sharp_wallet_bot",
+            detail=f"{ev.get('condition_id', '?')} dir={ev.get('direction')} "
+                   f"@{ev.get('entry_price')} ${ev.get('usd')} h={ev.get('horizon_s')}s",
+            triggered_at=ev["ts"],
+        ))
+        if len(_triggered_alerts) > _MAX_TRIGGERED:
+            _triggered_alerts.pop(0)
+    _sw_last_seen_ts = new[0]["ts"]
+
 
 def _evaluate_alert_condition(
     rule: AlertRuleOut,
@@ -3646,6 +3681,7 @@ def get_triggered_alerts() -> TriggeredAlertsResponse:
     statuses = live_engine.get_all_statuses()
     now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
     with _alert_lock:
+        _check_sharp_wallet_entries()
         for rule in list(_alert_rules.values()):
             triggered, detail = _evaluate_alert_condition(rule, statuses)
             if triggered and not _recently_triggered(rule.id):
@@ -3669,6 +3705,7 @@ def get_triggered_alerts() -> TriggeredAlertsResponse:
 from insider.dart_client import search_company as _dart_search, get_executive_stock_changes as _dart_trades, get_recent_kr_insider_feed as _dart_recent, get_recent_kr_corporate_actions as _dart_corp_actions, action_weight as _dart_weight
 from insider.congress_client import get_congress_trades as _congress_trades
 from insider.gov_spending_client import get_recent_contracts as _gov_contracts
+from insider.options_uoa_client import get_unusual_options_activity as _options_uoa
 
 
 class GovContract(BaseModel):
@@ -3887,6 +3924,63 @@ def insider_kr_recent(
         )
         for r in rows
     ]
+
+
+class OptionsUOA(BaseModel):
+    ticker: str
+    contract_symbol: str
+    type: str
+    strike: float
+    expiration_date: str
+    dte: int
+    spot: float
+    moneyness_pct: float
+    volume: int
+    open_interest: int
+    vol_oi_ratio: float
+
+
+@app.get("/insider/options-uoa", response_model=list[OptionsUOA])
+def insider_options_uoa(
+    tickers: str | None = Query(None, description="콤마구분 티커. 비우면 최근 Form4·의회매매 공시 티커 자동수집"),
+    days: int = Query(7, ge=1, le=30),
+    max_tickers: int = Query(15, ge=1, le=30),
+    max_dte: int = Query(14, ge=1, le=45),
+    min_otm_pct: float = Query(0.10, ge=0.0, le=1.0),
+    min_vol_oi_ratio: float = Query(3.0, ge=0.1),
+    min_volume: int = Query(50, ge=1),
+) -> list[OptionsUOA]:
+    """만기 짧고 OTM 깊은 옵션 콘트랙트의 거래량/미결제약정 급등 탐지(Alpaca).
+    티커 미지정시 최근 Form4·의회매매 공시 티커를 후보로 자동수집해 그것만 스캔
+    (시장 전체 스캔은 API 예산상 배제 — 다른 insider leg가 이미 플래그한 종목 전용)."""
+    if tickers:
+        candidate_tickers = [t.strip().upper() for t in tickers.split(",") if t.strip()]
+    else:
+        seen: list[str] = []
+        try:
+            from insider.finnhub_client import get_recent_feed as _fh_recent
+            for r in _fh_recent(days=days, max_filings=60):
+                if r.get("ticker") and r["ticker"] not in seen:
+                    seen.append(r["ticker"])
+        except Exception:
+            pass
+        try:
+            for r in _congress_trades(limit=80):
+                if r.get("ticker") and r["ticker"] not in seen:
+                    seen.append(r["ticker"])
+        except Exception:
+            pass
+        candidate_tickers = seen[:max_tickers]
+    if not candidate_tickers:
+        return []
+    try:
+        rows = _options_uoa(candidate_tickers, max_dte=max_dte, min_otm_pct=min_otm_pct,
+                             min_vol_oi_ratio=min_vol_oi_ratio, min_volume=min_volume)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Alpaca options error: {exc}") from exc
+    return [OptionsUOA(**r) for r in rows]
 
 
 # ── Copy-Trade Autopilot (페이퍼) ────────────────────────────────────────────────
@@ -5143,6 +5237,7 @@ app.include_router(polymarket_bot_router)
 from api_server.polymarket_sharp_wallet_bot import (
     router as polymarket_sharp_wallet_bot_router,
     start_loop as _polymarket_sharp_wallet_bot_start,
+    _recent_log as _sw_bot_recent_log,
 )
 app.include_router(polymarket_sharp_wallet_bot_router)
 

@@ -236,3 +236,47 @@ def test_process_exits_market_fetch_exception_retries_but_continues():
     expected_cost_c2 = (0.50 + 0.60) * 20.0 * 55.0 / 10_000.0
     expected_pnl_c2 = round(1.0 * (0.60 - 0.50) * 20.0 - expected_cost_c2, 2)
     assert cfg["realized_pnl"] == expected_pnl_c2
+
+
+def test_tick_disabled_skips():
+    with patch.object(bot, "_load", return_value=dict(bot._DEFAULT)):
+        result = bot.tick()
+    assert result == {"skipped": "disabled"}
+
+
+def test_tick_runs_exits_then_entries_and_saves():
+    cfg = _cfg()
+    with patch.object(bot, "_load", return_value=cfg), \
+         patch.object(bot, "_save") as mock_save, \
+         patch.object(bot, "_process_exits", return_value=1) as mock_exits, \
+         patch.object(bot, "_scan_and_enter", return_value=2) as mock_enter:
+        result = bot.tick()
+    mock_exits.assert_called_once_with(cfg)
+    mock_enter.assert_called_once_with(cfg)
+    assert mock_save.call_count == 2  # 청산 저장 -> 진입 저장(다각화 봇과 동일 2단계 flush)
+    assert result == {"entered": 2, "closed": 1, "positions": 0,
+                       "spent": cfg["spent"], "realized_pnl": cfg["realized_pnl"]}
+
+
+def test_status_endpoint_shape():
+    with patch.object(bot, "_load", return_value=dict(bot._DEFAULT)), \
+         patch.object(bot, "_recent_log", return_value=[]):
+        result = bot.status()
+    assert result["enabled"] is False
+    assert result["interval_sec"] == 15
+    assert result["positions"] == []
+    assert "note" in result
+
+
+def test_run_now_calls_tick():
+    with patch.object(bot, "tick", return_value={"ok": True}) as mock_tick:
+        result = bot.run_now()
+    mock_tick.assert_called_once()
+    assert result == {"ok": True}
+
+
+def test_set_config_clamps_interval_sec_min_5():
+    with patch.object(bot, "_load", return_value=dict(bot._DEFAULT)), \
+         patch.object(bot, "_save"), patch.object(bot, "_log_event"):
+        result = bot.set_config(bot.BotConfig(interval_sec=1))
+    assert result["interval_sec"] == 5

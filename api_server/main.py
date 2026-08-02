@@ -5139,6 +5139,13 @@ app.include_router(vrp_bot_router)
 from api_server.polymarket_bot import router as polymarket_bot_router, start_loop as _polymarket_bot_start
 app.include_router(polymarket_bot_router)
 
+# ── Polymarket sharp_wallet 컨버전스 신호 paper 집행 봇 (서버측) ────────────────────
+from api_server.polymarket_sharp_wallet_bot import (
+    router as polymarket_sharp_wallet_bot_router,
+    start_loop as _polymarket_sharp_wallet_bot_start,
+)
+app.include_router(polymarket_sharp_wallet_bot_router)
+
 # ── Strategy Validation Terminal (research 산출물) ────────────────────────────────
 from api_server.research_api import router as research_router
 app.include_router(research_router)
@@ -5171,6 +5178,7 @@ async def _start_dart_bot() -> None:
     _dart_bot_start()
     _vrp_bot_start()
     _polymarket_bot_start()
+    _polymarket_sharp_wallet_bot_start()
     # Jarvis 부트(시드 + paper_candidate 자동 forward 배선) + 서버사이드 리서치 서비스(D).
     try:
         import jarvis

@@ -3,6 +3,27 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-08-01) — 릴리스감사 Phase1 완료 확인 (STEP4 + D클러스터)
+
+이전 세션(들)에서 진행된 릴리스감사 Phase1 STEP4 작업 2건이 이 파일에 기록 안 된 채 커밋만 남아있던 걸 발견 → 상태 검증 후 기록.
+
+### 확인된 완료 작업 (커밋은 이미 있었음, 기록만 누락)
+- `990c1ea` — 죽은 거버넌스/유틸리티 스캐폴딩 32개 `git rm` (`docs/phase1/module_inventory_phase1.json` REMOVE_CANDIDATE 91개 중 독립 유틸리티 클러스터: benchmark/cache/compliance/concurrency/continuous_learning/data_governance/data_infrastructure/dependency/diagnostics/documentation/emergency/experiment_manager/experiment_orchestration/facades/integrity/knowledge_sharing/license/model_management/observability/operational_audit/operations/operations_console/performance/profiling/resilience/sbom/security/self_audit_intelligence/self_improvement_intelligence/simulation_environment/threat_model/workflow_automation)
+- `ae7d429` — D클러스터 5개(`release_candidate`/`security_audit`/`production_review`/`system_integration`/`architecture_docs`) archive 마킹. `docs/phase1/research_namespace_inventory.md`가 STEP5로 분리 계획했던 "죽은 감사도구 archive(security_audit 클러스터 포함)"가 이 커밋으로 흡수되어 실행 완료됨 — 별도 STEP5 불필요.
+
+### 이번 세션에서 한 것 — 완료 상태 검증만 (코드 변경 없음)
+- `docs/phase1/module_inventory_phase1.json` 109개 모듈 전체를 `git ls-files`로 대조: REMOVE_CANDIDATE 91개 전부 git 미추적(삭제 완료), ARCHIVE 13개 전부 `__init__.py`에 ARCHIVED 마커 확인. Phase1 전체 스코프 100% 처리 완료 확정.
+- `pytest tests/ -q` **2031 passed**, `jarvis.research_workflow.governance.validate_all()` 전 도메인 `passed: true`, `seokminal-dashboard`에서 `npx tsc --noEmit` clean — STEP3-B 체크리스트가 요구하는 검증 3종 전부 사후 통과 확인.
+- `jarvis/benchmark` 등 REMOVE된 디렉토리에 `__pycache__`/컴파일된 `.pyc` 잔해가 파일시스템에 남아있음 발견 — `.gitignore`로 무시되는 순수 바이트코드 캐시라 무해, git 상태엔 영향 없음(정리 안 함).
+
+### 다음 할 일
+- [ ] 로컬 브랜치(`claude/polymarket-wallet-scoring-awzj6n`)가 origin보다 8커밋 앞섬 — push 여부 사용자 확인 필요
+- [ ] whale 원장 계속 쌓이는 대로 리더보드/self-score 재검증(표본 늘어야 결론 남)
+- [ ] ICT/orderflow 저널 진행 — 계속 관찰(사용자 명시 요청: 채워질 때마다 N/30 보고)
+- [ ] cross-venue-skew 데이터 수집됐지만 validation 스크립트 아직 미실행 — 다음 세션 후보
+
+---
+
 ## 세션 로그 (2026-07-31) — Polymarket sharp_wallet/whale 검증 고도화
 
 ### 완료된 작업

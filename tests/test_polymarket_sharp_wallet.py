@@ -127,10 +127,10 @@ def test_build_convergence_count_empty_when_no_anchors():
 
 def test_build_price_series_ffill_grid():
     df = pd.DataFrame([
-        {"ts": 0.0, "condition_id": "c1", "price": 0.5},
-        {"ts": 12.0, "condition_id": "c1", "price": 0.6},
+        {"ts": 0.0, "condition_id": "c1", "outcome_index": 0, "price": 0.5},
+        {"ts": 12.0, "condition_id": "c1", "outcome_index": 0, "price": 0.6},
     ])
-    series = build_price_series(df, "c1")
+    series = build_price_series(df, "c1", 0)
     assert series.loc[0.0] == pytest.approx(0.5)
     assert series.loc[5.0] == pytest.approx(0.5)
     assert series.loc[10.0] == pytest.approx(0.5)
@@ -138,20 +138,31 @@ def test_build_price_series_ffill_grid():
 
 
 def test_build_price_series_empty_for_unknown_condition():
-    df = pd.DataFrame([{"ts": 0.0, "condition_id": "c1", "price": 0.5}])
-    series = build_price_series(df, "unknown")
+    df = pd.DataFrame([{"ts": 0.0, "condition_id": "c1", "outcome_index": 0, "price": 0.5}])
+    series = build_price_series(df, "unknown", 0)
     assert series.empty
+
+
+def test_build_price_series_filters_other_outcome_index():
+    # 같은 condition_id라도 outcome_index 다른 토큰(No)의 체결은 섞이면 안 된다.
+    df = pd.DataFrame([
+        {"ts": 0.0, "condition_id": "c1", "outcome_index": 0, "price": 0.5},
+        {"ts": 5.0, "condition_id": "c1", "outcome_index": 1, "price": 0.9},
+        {"ts": 10.0, "condition_id": "c1", "outcome_index": 0, "price": 0.5},
+    ])
+    series = build_price_series(df, "c1", 0)
+    assert series.loc[5.0] == pytest.approx(0.5)
 
 
 def test_build_labels_multi_horizon_computes_forward_return_and_carries_bucket():
     price = pd.Series([0.5, 0.5, 0.6, 0.6, 0.7, 0.7, 0.7],
                        index=[0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0])
     anchors = pd.DataFrame([
-        {"ts": 0.0, "condition_id": "c1", "side": "BUY", "direction": 1.0,
+        {"ts": 0.0, "condition_id": "c1", "outcome_index": 0, "side": "BUY", "direction": 1.0,
          "notional_usd": 100.0, "proxy_wallet": "w1", "convergence_count": 2,
          "convergence_bucket": 2},
     ])
-    labels = build_labels_multi_horizon(anchors, {"c1": price}, horizons=[10, 30])
+    labels = build_labels_multi_horizon(anchors, {("c1", 0): price}, horizons=[10, 30])
     row10 = labels[labels["horizon_s"] == 10].iloc[0]
     assert row10["forward_return"] == pytest.approx((0.6 - 0.5) / 0.5)
     assert row10["convergence_bucket"] == 2
@@ -162,12 +173,38 @@ def test_build_labels_multi_horizon_computes_forward_return_and_carries_bucket()
 def test_build_labels_multi_horizon_excludes_missing_condition():
     price = pd.Series([0.5], index=[0.0])
     anchors = pd.DataFrame([
-        {"ts": 0.0, "condition_id": "unknown", "side": "BUY", "direction": 1.0,
+        {"ts": 0.0, "condition_id": "unknown", "outcome_index": 0, "side": "BUY", "direction": 1.0,
          "notional_usd": 100.0, "proxy_wallet": "w1", "convergence_count": 1,
          "convergence_bucket": 1},
     ])
-    labels = build_labels_multi_horizon(anchors, {"c1": price}, horizons=[10])
+    labels = build_labels_multi_horizon(anchors, {("c1", 0): price}, horizons=[10])
     assert labels.empty
+
+
+def test_build_labels_multi_horizon_excludes_non_binary_outcome_index():
+    # outcome_index=999(비이진 센티널)는 어느 토큰 가격인지 알 수 없어 제외.
+    price = pd.Series([0.5, 0.6], index=[0.0, 10.0])
+    anchors = pd.DataFrame([
+        {"ts": 0.0, "condition_id": "c1", "outcome_index": 999, "side": "BUY", "direction": 1.0,
+         "notional_usd": 100.0, "proxy_wallet": "w1", "convergence_count": 1,
+         "convergence_bucket": 1},
+    ])
+    labels = build_labels_multi_horizon(anchors, {("c1", 0): price}, horizons=[10])
+    assert labels.empty
+
+
+def test_build_labels_multi_horizon_uses_matching_outcome_index_series():
+    # c1의 Yes(0)/No(1) 시계열이 따로 있을 때 anchor의 outcome_index로만 조회.
+    price_yes = pd.Series([0.5, 0.6], index=[0.0, 10.0])
+    price_no = pd.Series([0.9, 0.1], index=[0.0, 10.0])
+    anchors = pd.DataFrame([
+        {"ts": 0.0, "condition_id": "c1", "outcome_index": 1, "side": "BUY", "direction": 1.0,
+         "notional_usd": 100.0, "proxy_wallet": "w1", "convergence_count": 1,
+         "convergence_bucket": 1},
+    ])
+    labels = build_labels_multi_horizon(
+        anchors, {("c1", 0): price_yes, ("c1", 1): price_no}, horizons=[10])
+    assert labels.iloc[0]["forward_return"] == pytest.approx((0.1 - 0.9) / 0.9)
 
 
 def test_build_convergence_score_bounded_percentiles_and_liquidity_window():
@@ -239,20 +276,20 @@ def test_build_convergence_score_empty_anchors_returns_empty():
 def test_build_labels_multi_horizon_carries_score_when_present():
     price = pd.Series([0.5, 0.6], index=[0.0, 10.0])
     anchors = pd.DataFrame([
-        {"ts": 0.0, "condition_id": "c1", "side": "BUY", "direction": 1.0,
+        {"ts": 0.0, "condition_id": "c1", "outcome_index": 0, "side": "BUY", "direction": 1.0,
          "notional_usd": 100.0, "proxy_wallet": "w1", "convergence_count": 1,
          "convergence_bucket": 1, "score": 87.5},
     ])
-    labels = build_labels_multi_horizon(anchors, {"c1": price}, horizons=[10])
+    labels = build_labels_multi_horizon(anchors, {("c1", 0): price}, horizons=[10])
     assert labels.iloc[0]["score"] == pytest.approx(87.5)
 
 
 def test_build_labels_multi_horizon_score_nan_when_anchors_lack_score_column():
     price = pd.Series([0.5, 0.6], index=[0.0, 10.0])
     anchors = pd.DataFrame([
-        {"ts": 0.0, "condition_id": "c1", "side": "BUY", "direction": 1.0,
+        {"ts": 0.0, "condition_id": "c1", "outcome_index": 0, "side": "BUY", "direction": 1.0,
          "notional_usd": 100.0, "proxy_wallet": "w1", "convergence_count": 1,
          "convergence_bucket": 1},
     ])
-    labels = build_labels_multi_horizon(anchors, {"c1": price}, horizons=[10])
+    labels = build_labels_multi_horizon(anchors, {("c1", 0): price}, horizons=[10])
     assert pd.isna(labels.iloc[0]["score"])

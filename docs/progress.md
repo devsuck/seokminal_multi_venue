@@ -27,8 +27,35 @@
 - `orderflow/hl_adapter.py`, `tests/test_orderflow_hl_adapter.py`
 
 ### 다음 세션 확인
-- 저널이 실제로 채워지기 시작하는지 관찰 재개(N/30 보고, 사용자 명시 요청).
+- 저널이 실제로 채워지기 시작하는지 관찰 재개(N/30 보고, 사용자 명시 요청) — **연결 복구 후 2/30 확인**(2026-08-02T15:13 신규 short CISD+OB 엔트리, +0.21R).
 - 이번 우회가 임시방편인지 근본해결인지는 좀 더 지켜봐야 함 — asyncio resolver가 왜 이 환경에서만 막히는지 OS 레벨 원인은 여전히 미상, 재발하면(다시 100% 타임아웃 패턴 보이면) 우회 자체도 뚫릴 수 있음, sudo py-spy로 확인은 여전히 유효한 차기 옵션.
+
+### 다른 collector들 점검 (같은 세션, 계속)
+- 나머지 11개 tmux collector(polymarket 계열, cross-venue-skew, hl-orderflow-tick 등) pane 확인 — DNS 실패(`Errno 8`)/타임아웃 로그가 마지막 줄에 남아있었으나, 프로세스 CPU 시간이 계속 누적 중이고 방금 재확인한 `socket.getaddrinfo`가 즉시 성공 → **일시적 DNS 블립이 이미 복구된 과거 로그**로 판단(ict 엔진처럼 100% 재현되는 영구정지 패턴 아님). 별도 조치 안 함, 다음 세션에 재발 여부만 가볍게 재확인.
+
+## 세션 로그 (2026-08-02 계속 3) — 봇 라이브 포지션(GOOGL/NVDA) 미실현 PnL 0 버그 수정
+
+유저 리포트: "몇 개 봇이 구글/엔비디아 샀는데 현재가 반영이 안 돼서 PnL 0으로 뜬다."
+
+### 원인
+- `api_server/routers/agents.py`의 `_latest_price()`(구 172-187행)가 에이전트의 실제 체결 venue(IB live/HL/Alpaca paper)와 무관하게 **무조건 Alpaca REST**로만 현재가를 조회하고 있었음.
+- IB로 라이브 체결된 GOOGL/NVDA 포지션은 Alpaca 쪽에 데이터가 없어 `_latest_price`가 매번 조용히 실패(`except Exception: return None`) → `agent_performance()`의 `unrealized` 합계가 초기값 `0.0`에서 한 번도 안 늘어난 채 그대로 반환됨. "가격 못 가져옴"과 "진짜 PnL 0"이 구분 안 되고 똑같이 $0.00으로 뜸.
+
+### 수정
+- `api_server/routers/agents.py`: `agent_performance()`에서 에이전트 venue(`profile.venue` 또는 KR/US 기본값) + `enforce_paper()` 판정을 보고 가격 소스를 분기.
+  - HL 에이전트 → `_hl_latest_prices()`(hyperliquid `get_candles` 마지막 봉 종가, 신규 헬퍼)
+  - 라이브(비페이퍼) US 에이전트 → `_ib_latest_prices()`(IB `get_intraday_bars`+`score_intraday`, `_daytrade_tick_locked`의 IB 실행 루프와 동일 패턴 재사용, 신규 헬퍼)
+  - 그 외(페이퍼/KR 등) → 기존 `_latest_price()`(Alpaca) 그대로 유지
+- `tests/test_agent_performance_api.py`: 라이브 US 에이전트가 IB 경로를 타고(Alpaca 안 타는지까지 단언) `unrealized_pnl`이 정확히 계산되는지 확인하는 회귀 테스트 1개 추가.
+- 검증: `pytest tests/` 2084 passed(pre-existing 실패 없음).
+- **주의**: 지금 이 환경엔 TWS/IB Gateway가 안 떠 있음(`lsof -i :7496/:7497` 빈 결과) — 이 우회 자체는 라이브 검증 못 했고 코드 경로/유닛테스트로만 확인. 유저 실제 환경(TWS 켜진 상태)에서 진짜로 현재가가 뜨는지 확인 필요.
+
+### 변경된 파일
+- `api_server/routers/agents.py`, `tests/test_agent_performance_api.py`
+
+### 다음 세션 확인
+- TWS 켜진 상태에서 실제로 GOOGL/NVDA 미실현 PnL이 뜨는지 라이브 확인.
+- KR 에이전트는 여전히 Alpaca 경로라 KR 종목(`005930.KS` 등) 현재가도 못 가져올 가능성 있음 — 이번엔 스코프 밖(유저가 US/IB만 언급), 재발하면 KR 전용 가격 소스(KIS?) 연결 필요.
 
 ---
 

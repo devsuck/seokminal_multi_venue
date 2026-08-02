@@ -41,3 +41,20 @@ def test_performance_realized_pnl_and_trade_reason(client):
     # newest-first trade log carries the reason
     assert body["trades"][0]["reason"] == "목표가 익절"
     assert body["trades"][0]["side"] == "sell"
+
+
+def test_performance_open_position_uses_ib_price_for_live_us_agent(client, monkeypatch):
+    """Live (non-paper) US-venue agents fill via IB, not Alpaca — /performance must
+    price open positions off IB, or unrealized_pnl silently stays 0 (2026-08-02 bug)."""
+    import api_server.routers.agents as agents_router_module
+
+    monkeypatch.setattr("jarvis.execution.agent_gate.enforce_paper", lambda agent: (False, None))
+    monkeypatch.setattr(agents_router_module, "_ib_latest_prices", lambda symbols: dict.fromkeys(symbols, 120.0))
+    monkeypatch.setattr(agents_router_module, "_latest_price", lambda symbol: (_ for _ in ()).throw(
+        AssertionError("Alpaca path must not be used for a live IB agent")))
+
+    aid = client.post("/agents", json={"name": "A", "type": "swing", "account_alloc": 100000}).json()["id"]
+    _post_fill(client, aid, 1, "NVDA", "buy", 10, 100.0)
+    body = client.get(f"/agents/{aid}/performance").json()
+    assert body["open_positions"][0]["current_price"] == 120.0
+    assert body["unrealized_pnl"] == 200.0

@@ -38,3 +38,14 @@ def test_run_forever_stops_after_max_iterations_and_sleeps_between_not_after():
     assert mock_run.call_count == 3
     assert mock_append.call_count == 3
     assert mock_sleep.call_count == 2
+
+
+def test_run_forever_survives_run_once_exception_and_backs_off():
+    """예외무가드였던 원래 루프는 여기서 프로세스가 죽었다(2026-08-02 polymarket_arb
+    22분간 5회 재기동 실측) — try/except가 잡아 다음 이터레이션으로 넘어가야 한다."""
+    with patch.object(scan, "run_once", side_effect=[ConnectionError("net down"), [{"condition_id": "a"}]]), \
+         patch.object(scan, "append_snapshots") as mock_append, \
+         patch.object(scan.time, "sleep") as mock_sleep:
+        scan.run_forever(poll_interval_sec=1, max_iterations=2)
+    mock_append.assert_called_once_with([{"condition_id": "a"}])
+    assert mock_sleep.call_count == 1

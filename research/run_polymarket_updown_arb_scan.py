@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import time
 from pathlib import Path
 
@@ -44,12 +45,22 @@ def run_once(fee_buffer: float = FEE_BUFFER) -> list[dict]:
 
 
 def run_forever(poll_interval_sec: float = POLL_INTERVAL_SEC, max_iterations: int | None = None) -> None:
+    """run_polymarket_arb_scan.py와 동일한 이유로 try/except+지수백오프 추가
+    (2026-08-02, polymarket_updown_arb도 예외무가드로 재기동실패 500까지 관측)."""
     i = 0
+    backoff = poll_interval_sec
     while max_iterations is None or i < max_iterations:
-        append_snapshots(run_once())
+        try:
+            append_snapshots(run_once())
+            wait = poll_interval_sec
+            backoff = poll_interval_sec
+        except Exception:
+            logging.exception("updown arb scan 폴링 실패 — 백오프 후 재시도")
+            wait = min(backoff, 60.0)
+            backoff = min(backoff * 2, 60.0)
         i += 1
         if max_iterations is None or i < max_iterations:
-            time.sleep(poll_interval_sec)
+            time.sleep(wait)
 
 
 if __name__ == "__main__":

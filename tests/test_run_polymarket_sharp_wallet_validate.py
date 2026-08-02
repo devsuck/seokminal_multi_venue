@@ -94,17 +94,17 @@ def _sharp_trades_min():
     return pd.DataFrame([
         {"ts": 0.0, "condition_id": "c1", "side": "BUY", "price": 0.5, "size": 100.0,
          "proxy_wallet": "w1", "notional_usd": 50.0, "is_sharp_wallet": True,
-         "wallet_rank": 1, "wallet_pnl": 100.0},
+         "wallet_rank": 1, "wallet_pnl": 100.0, "outcome_index": 0},
         {"ts": 10.0, "condition_id": "c2", "side": "BUY", "price": 0.5, "size": 100.0,
          "proxy_wallet": "w2", "notional_usd": 80.0, "is_sharp_wallet": True,
-         "wallet_rank": 2, "wallet_pnl": 200.0},
+         "wallet_rank": 2, "wallet_pnl": 200.0, "outcome_index": 1},
     ])
 
 
 def test_compute_report_no_data_returns_no_data_verdict():
     trades = pd.DataFrame(columns=[
         "ts", "condition_id", "side", "price", "size", "proxy_wallet",
-        "notional_usd", "is_sharp_wallet", "wallet_rank", "wallet_pnl"])
+        "notional_usd", "is_sharp_wallet", "wallet_rank", "wallet_pnl", "outcome_index"])
     rep = val.compute_report(trades, [])
     assert rep["hypothesis"] == "polymarket_sharp_wallet"
     assert rep["verdict"] == "no_data"

@@ -96,7 +96,7 @@ def check_polymarket_bot(cfg: dict, *, today: _dt.date | None = None) -> list[di
 
 _SHARP_WALLET_POSITION_REQUIRED_KEYS = (
     "condition_id", "convergence_bucket", "horizon_s", "direction",
-    "entry_price", "entry_ts", "exit_at", "usd", "shares",
+    "entry_price", "entry_ts", "exit_at", "usd", "shares", "outcome_index",
 )
 
 

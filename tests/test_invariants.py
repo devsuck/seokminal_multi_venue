@@ -106,3 +106,50 @@ def test_agent_invested_negative_flagged():
 def test_agent_over_allocated_warns():
     out = check_agent("a1", alloc=100.0, realized_pnl=0.0, invested=140.0, n_cycles=10)
     assert "OVER_ALLOCATED" in {v["code"] for v in out}
+
+
+# --- polymarket_sharp_wallet_bot ---------------------------------------------
+
+from api_server.invariants import check_polymarket_sharp_wallet_bot
+
+
+def _sw_pos(**over):
+    base = {
+        "condition_id": "c1", "convergence_bucket": 1, "horizon_s": 30,
+        "direction": 1.0, "entry_price": 0.5, "entry_ts": 1000.0, "exit_at": 1030.0,
+        "usd": 15.0, "shares": 30.0,
+    }
+    base.update(over)
+    return base
+
+
+def _sw_cfg(**over):
+    base = {"budget": 300.0, "max_concurrent_positions": 30, "spent": 15.0, "positions": [_sw_pos()]}
+    base.update(over)
+    return base
+
+
+def test_sharp_wallet_clean_state_no_violations():
+    assert check_polymarket_sharp_wallet_bot(_sw_cfg(), now=1030.0) == []
+
+
+def test_sharp_wallet_spent_mismatch_flagged():
+    out = check_polymarket_sharp_wallet_bot(_sw_cfg(spent=100.0), now=1030.0)
+    codes = {v["code"] for v in out}
+    assert "SPENT_MISMATCH" in codes
+    assert any(v["severity"] == "error" for v in out)
+
+
+def test_sharp_wallet_stuck_exit_flagged():
+    # exit_at=1030, now=1030+3601 -> STUCK_EXIT_SECONDS(3600) 초과
+    out = check_polymarket_sharp_wallet_bot(_sw_cfg(), now=1030.0 + 3601.0)
+    codes = {v["code"] for v in out}
+    assert "STUCK_EXIT" in codes
+
+
+def test_sharp_wallet_missing_field_flagged():
+    bad_pos = _sw_pos()
+    del bad_pos["exit_at"]
+    out = check_polymarket_sharp_wallet_bot(_sw_cfg(positions=[bad_pos], spent=15.0), now=1030.0)
+    codes = {v["code"] for v in out}
+    assert "POSITION_SCHEMA" in codes

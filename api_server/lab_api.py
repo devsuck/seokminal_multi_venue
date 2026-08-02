@@ -407,6 +407,14 @@ def lab_health() -> dict:
         violations.append({"severity": "warn", "entity": "polymarket_bot",
                            "code": "CHECK_FAILED", "detail": f"검사 실패: {exc}"[:200]})
 
+    # Polymarket sharp_wallet 집행봇
+    try:
+        from api_server.polymarket_sharp_wallet_bot import _load as _psw_load
+        violations += invariants.check_polymarket_sharp_wallet_bot(_psw_load())
+    except Exception as exc:  # noqa: BLE001
+        violations.append({"severity": "warn", "entity": "polymarket_sharp_wallet_bot",
+                           "code": "CHECK_FAILED", "detail": f"검사 실패: {exc}"[:200]})
+
     # AI 에이전트들 (성과 회계 정합성)
     try:
         from api_server import agent_perf, agent_store

@@ -204,3 +204,95 @@ def _process_exits(cfg: dict) -> int:
         closed += 1
     cfg["positions"] = keep
     return closed
+
+
+def tick() -> dict:
+    cfg = _load()
+    if not cfg["enabled"]:
+        return {"skipped": "disabled"}
+    try:
+        from api_server.risk_state import is_killed
+        if is_killed():
+            _log_event({"kind": "kill", "msg": "리스크 킬스위치 — 매매 중단"})
+            return {"skipped": "kill_switch"}
+    except Exception:
+        pass
+
+    closed = _process_exits(cfg)
+    _save(cfg)
+    entered = _scan_and_enter(cfg)
+    cfg["last_run"] = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    _save(cfg)
+    return {"entered": entered, "closed": closed, "positions": len(cfg.get("positions", [])),
+            "spent": cfg["spent"], "realized_pnl": cfg["realized_pnl"]}
+
+
+async def _loop() -> None:
+    while True:
+        try:
+            cfg = _load()
+            interval = int(cfg.get("interval_sec", 15))
+            if cfg.get("enabled"):
+                await asyncio.to_thread(tick)
+        except Exception:  # noqa: BLE001
+            interval = 15
+        await asyncio.sleep(max(interval, 5))
+
+
+def start_loop() -> None:
+    try:
+        asyncio.get_event_loop().create_task(_loop())
+    except RuntimeError:
+        pass
+
+
+# ── API ──────────────────────────────────────────────────────────────────────
+class BotConfig(BaseModel):
+    enabled: bool | None = None
+    interval_sec: int | None = None
+    budget: float | None = None
+    trade_size_usd: float | None = None
+    max_concurrent_positions: int | None = None
+    reset_spent: bool | None = None
+
+
+@router.get("/status")
+def status() -> dict:
+    cfg = _load()
+    return {
+        "enabled": cfg["enabled"], "interval_sec": cfg["interval_sec"],
+        "budget": cfg["budget"], "trade_size_usd": cfg["trade_size_usd"],
+        "max_concurrent_positions": cfg["max_concurrent_positions"],
+        "spent": cfg.get("spent", 0.0), "realized_pnl": cfg.get("realized_pnl", 0.0),
+        "remaining": max(cfg["budget"] - cfg.get("spent", 0.0), 0.0),
+        "positions": cfg.get("positions", []), "last_run": cfg.get("last_run"),
+        "log": _recent_log(40),
+        "note": "sharp_wallet 컨버전스 신호 paper 집행 — v1은 bucket1/bucket3만"
+                "(score-tercile mid/high 제외, 순서모순으로 라이브 진입불가). paper 전용.",
+    }
+
+
+@router.post("/config")
+def set_config(body: BotConfig) -> dict:
+    cfg = _load()
+    if body.enabled is not None:
+        cfg["enabled"] = body.enabled
+    if body.interval_sec is not None:
+        cfg["interval_sec"] = max(int(body.interval_sec), 5)
+    if body.budget is not None:
+        cfg["budget"] = max(float(body.budget), 0.0)
+    if body.trade_size_usd is not None:
+        cfg["trade_size_usd"] = max(float(body.trade_size_usd), 1.0)
+    if body.max_concurrent_positions is not None:
+        cfg["max_concurrent_positions"] = max(int(body.max_concurrent_positions), 1)
+    if body.reset_spent:
+        cfg["spent"] = 0.0
+    _save(cfg)
+    _log_event({"kind": "config", "enabled": cfg["enabled"], "budget": cfg["budget"]})
+    return {"ok": True, **{k: cfg[k] for k in (
+        "enabled", "interval_sec", "budget", "trade_size_usd", "max_concurrent_positions")}}
+
+
+@router.post("/run-now")
+def run_now() -> dict:
+    return tick()

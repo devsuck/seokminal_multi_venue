@@ -39,17 +39,31 @@ async def _poll_htf(
         await asyncio.sleep(poll_sec)
 
 
-async def _stream_ltf(engine: PaperEngine, client: HyperliquidOrderflowClient) -> None:
+async def _stream_ltf(
+    engine: PaperEngine,
+    client: HyperliquidOrderflowClient,
+    initial_backoff_s: float = 5.0,
+    max_backoff_s: float = 60.0,
+) -> None:
     bar_builder = LTFBarBuilder()
-    async for event in client.stream(COIN):
-        if isinstance(event, TradeEvent):
-            result = bar_builder.on_trade(event)
-            if result is not None:
-                engine.on_ltf_bar(result)
-            engine.on_price_tick(event.price)
-        elif isinstance(event, OrderBookSnapshot) and event.bids and event.asks:
-            mid = (event.bids[0].price + event.asks[0].price) / 2.0
-            engine.on_price_tick(mid)
+    backoff = initial_backoff_s
+    while True:
+        try:
+            async for event in client.stream(COIN):
+                backoff = initial_backoff_s
+                if isinstance(event, TradeEvent):
+                    result = bar_builder.on_trade(event)
+                    if result is not None:
+                        engine.on_ltf_bar(result)
+                    engine.on_price_tick(event.price)
+                elif isinstance(event, OrderBookSnapshot) and event.bids and event.asks:
+                    mid = (event.bids[0].price + event.asks[0].price) / 2.0
+                    engine.on_price_tick(mid)
+            logging.warning("LTF 스트림 정상 종료(연결 끊김) — %.0fs 후 재연결", backoff)
+        except Exception:
+            logging.exception("LTF 스트림 오류 — %.0fs 후 재연결", backoff)
+        await asyncio.sleep(backoff)
+        backoff = min(backoff * 2, max_backoff_s)
 
 
 async def main() -> None:

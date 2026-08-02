@@ -169,10 +169,14 @@ def compute_report(trades: pd.DataFrame, dates: list[str]) -> dict:
         return {"hypothesis": "polymarket_sharp_wallet", "cost_bps": COST_BPS, "dates": dates,
                 "n_anchors": 0, "groups": [], "pools": [], "verdict": "no_data"}
     anchors = build_convergence_score(trades, anchors)
-    price_by_condition = {
-        cid: build_price_series(trades, cid) for cid in anchors["condition_id"].unique()
+    market_outcome_pairs = {
+        (cid, oi) for cid, oi in zip(anchors["condition_id"], anchors["outcome_index"])
+        if oi in (0, 1)
     }
-    labels = add_score_tercile(build_labels_multi_horizon(anchors, price_by_condition))
+    price_by_market = {
+        key: build_price_series(trades, key[0], key[1]) for key in market_outcome_pairs
+    }
+    labels = add_score_tercile(build_labels_multi_horizon(anchors, price_by_market))
 
     groups: list[dict] = []
     b_pvals: list[float] = []

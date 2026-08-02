@@ -26,8 +26,10 @@ HORIZONS_S = [30, 120, 300]
 def load_sharp_wallet_trades(dates: list[str]) -> pd.DataFrame:
     """research/data/polymarket_sharp_wallet/{date}.jsonl 로드. ts 오름차순 정렬.
     notional_usd/is_sharp_wallet/wallet_rank/wallet_pnl은 수집기가 이미 계산해
-    저장 — 재계산 안 함. 반환 컬럼: ts, condition_id, side, price, size,
-    proxy_wallet, notional_usd, is_sharp_wallet, wallet_rank, wallet_pnl."""
+    저장 — 재계산 안 함. outcome_index는 Data API의 outcomeIndex 원본값을 정규화
+    없이 그대로 통과(0/1/999-비이진 센티널/None 가능). 반환 컬럼: ts, condition_id,
+    side, price, size, proxy_wallet, notional_usd, is_sharp_wallet, wallet_rank,
+    wallet_pnl, outcome_index."""
     rows = []
     for date in dates:
         path = _DATA_DIR / f"{date}.jsonl"
@@ -46,10 +48,11 @@ def load_sharp_wallet_trades(dates: list[str]) -> pd.DataFrame:
                     "notional_usd": float(row["notional_usd"]),
                     "is_sharp_wallet": bool(row["is_sharp_wallet"]),
                     "wallet_rank": row.get("wallet_rank"), "wallet_pnl": row.get("wallet_pnl"),
+                    "outcome_index": row.get("outcomeIndex"),
                 })
     df = pd.DataFrame(rows, columns=[
         "ts", "condition_id", "side", "price", "size", "proxy_wallet",
-        "notional_usd", "is_sharp_wallet", "wallet_rank", "wallet_pnl",
+        "notional_usd", "is_sharp_wallet", "wallet_rank", "wallet_pnl", "outcome_index",
     ])
     return df.sort_values("ts").reset_index(drop=True)
 
@@ -58,12 +61,13 @@ def build_convergence_count(trades: pd.DataFrame) -> pd.DataFrame:
     """is_sharp_wallet=True인 행(anchor)만 대상. 각 anchor 시각 t에 대해 마켓
     무관하게 t-CONVERGENCE_WINDOW_S ~ t 구간에 체결이 있는 다른 anchor들의
     distinct proxy_wallet 수(자기 자신 포함)를 convergence_count로 기록.
-    convergence_bucket = min(convergence_count, MAX_CONVERGENCE_BUCKET). 반환
-    컬럼: ts, condition_id, side, direction, notional_usd, proxy_wallet,
-    convergence_count, convergence_bucket. ts 오름차순."""
+    convergence_bucket = min(convergence_count, MAX_CONVERGENCE_BUCKET). outcome_index는
+    trades의 값을 그대로 pass-through(집행봇이 Yes/No 사이드 판정에 사용, 이 함수는
+    해석 안 함). 반환 컬럼: ts, condition_id, side, direction, notional_usd,
+    proxy_wallet, convergence_count, convergence_bucket, outcome_index. ts 오름차순."""
     empty = pd.DataFrame(columns=[
         "ts", "condition_id", "side", "direction", "notional_usd", "proxy_wallet",
-        "convergence_count", "convergence_bucket",
+        "convergence_count", "convergence_bucket", "outcome_index",
     ])
     if trades.empty:
         return empty
@@ -85,6 +89,7 @@ def build_convergence_count(trades: pd.DataFrame) -> pd.DataFrame:
             "direction": direction, "notional_usd": row["notional_usd"],
             "proxy_wallet": row["proxy_wallet"], "convergence_count": count,
             "convergence_bucket": min(count, MAX_CONVERGENCE_BUCKET),
+            "outcome_index": row["outcome_index"],
         })
     return pd.DataFrame(records)
 

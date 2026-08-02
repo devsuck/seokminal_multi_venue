@@ -40,10 +40,10 @@ _HORIZONS_BY_BUCKET = {1: (30, 120, 300), 3: (300,)}
 
 _DEFAULT = {
     "enabled": False, "interval_sec": 15,
-    "budget": 300.0, "trade_size_usd": 15.0, "max_concurrent_positions": 30,
+    "budget": 300.0, "trade_size_shares": 30.0, "max_concurrent_positions": 30,
     "spent": 0.0, "realized_pnl": 0.0,
     "positions": [],  # [{condition_id, convergence_bucket, horizon_s, direction, entry_price,
-                       #   entry_ts, exit_at, usd, shares, entry_spread_bps, wallet_positions_snapshot}]
+                       #   entry_ts, exit_at, usd, shares, entry_spread_bps, outcome_index}]
     "last_anchor_ts": 0.0,
     "last_run": None,
 }
@@ -76,11 +76,11 @@ def _recent_log(n: int = 40) -> list[dict]:
         return []
 
 
-def _spread_bps_for_market(m: dict) -> float | None:
+def _spread_bps_for_market(m: dict, outcome_side: int) -> float | None:
     token_ids = m.get("clob_token_ids")
-    if not token_ids or not token_ids[0]:
+    if not token_ids or not token_ids[outcome_side]:
         return None
-    book = get_order_book(token_ids[0])
+    book = get_order_book(token_ids[outcome_side])
     return spread_bps_from_book(book) if book else None
 
 
@@ -93,7 +93,7 @@ def _wallet_snapshot_safe(wallet: str | None) -> list[dict]:
 def _scan_and_enter(cfg: dict) -> int:
     remaining_slots = cfg["max_concurrent_positions"] - len(cfg.get("positions", []))
     remaining_budget = cfg["budget"] - cfg.get("spent", 0.0)
-    if remaining_slots <= 0 or remaining_budget < cfg["trade_size_usd"]:
+    if remaining_slots <= 0:
         return 0
 
     today = _dt.datetime.now(_dt.timezone.utc).date()
@@ -107,6 +107,15 @@ def _scan_and_enter(cfg: dict) -> int:
     if anchors.empty:
         return 0
 
+    # 콜드스타트 프라이밍: last_anchor_ts가 손댄 적 없는 기본값(0.0)이면 지금 창에
+    # 잡힌 anchor들은 대부분 이미 exit_at이 지난 과거 데이터 — 그대로 진입시키면
+    # _process_exits가 즉시 현재가로 강제청산해 PnL/저널이 오염된다. 이번 tick은
+    # 진입 없이 last_anchor_ts만 최신으로 당겨 다음 tick부터 진짜 신규 anchor만
+    # 잡히게 한다.
+    if cfg.get("last_anchor_ts", 0.0) == 0.0:
+        cfg["last_anchor_ts"] = float(anchors["ts"].max())
+        return 0
+
     last_ts = cfg.get("last_anchor_ts", 0.0)
     new_anchors = anchors[anchors["ts"] > last_ts].sort_values("ts")
     if new_anchors.empty:
@@ -116,8 +125,8 @@ def _scan_and_enter(cfg: dict) -> int:
     max_ts_seen = last_ts
     for _, row in new_anchors.iterrows():
         max_ts_seen = max(max_ts_seen, float(row["ts"]))
-        if entered >= remaining_slots or remaining_budget < cfg["trade_size_usd"]:
-            continue  # 슬롯/예산 소진 — 그래도 last_anchor_ts는 갱신해 재처리 방지
+        if entered >= remaining_slots:
+            continue  # 슬롯 소진 — 그래도 last_anchor_ts는 갱신해 재처리 방지
         horizons = _HORIZONS_BY_BUCKET.get(int(row["convergence_bucket"]))
         if not horizons:
             continue  # bucket2/미분류 — v1 진입 금지 그룹
@@ -128,22 +137,41 @@ def _scan_and_enter(cfg: dict) -> int:
             m = get_market(row["condition_id"])
             if m is None or not m["active"] or m["closed"]:
                 continue
-            entry_price = m["yes_price"]
-            if entry_price <= 0:
+
+            # 샤프월렛이 실제로 산 쪽(outcomeIndex 0=Yes/1=No)을 해석 — 미상/비이진
+            # 센티널(999 등)이면 어느 쪽인지 알 수 없으니 이 anchor는 통째로 skip.
+            outcome_idx = row["outcome_index"]
+            if outcome_idx == 0:
+                outcome_side = 0
+            elif outcome_idx == 1:
+                outcome_side = 1
+            else:
+                _log_event({"kind": "entry_fail", "condition_id": row["condition_id"],
+                             "msg": f"unresolvable outcome_index={outcome_idx!r}"})
                 continue
 
+            entry_price = m["yes_price"] if outcome_side == 0 else m["no_price"]
+            if entry_price <= 0:
+                continue
+            usd = round(cfg["trade_size_shares"] * entry_price, 4)
+
             # anchor당 1회만 조회(3개 horizon이 같은 순간·같은 마켓이라 공유) — 저장공간/RAM 제약.
-            entry_spread_bps = _spread_bps_for_market(m)
+            entry_spread_bps = _spread_bps_for_market(m, outcome_side)
             wallet_snapshot = _wallet_snapshot_safe(row["proxy_wallet"])
         except Exception as e:  # noqa: BLE001
             _log_event({"kind": "entry_fail", "condition_id": row["condition_id"], "msg": str(e)[:100]})
             continue
 
+        # 지갑 포지션 스냅샷(~100KB)은 anchor당 1회만 로그 — horizon(최대 3개)마다
+        # 중복 기록하면 저널이 불필요하게 부풀어 오른다.
+        _log_event({"kind": "wallet_snapshot", "condition_id": row["condition_id"],
+                     "proxy_wallet": row["proxy_wallet"], "anchor_ts": float(row["ts"]),
+                     "positions": wallet_snapshot})
+
         for h in horizons:
-            if entered >= remaining_slots or remaining_budget < cfg["trade_size_usd"]:
+            if entered >= remaining_slots or remaining_budget < usd:
                 break
-            usd = min(cfg["trade_size_usd"], remaining_budget)
-            shares = round(usd / entry_price, 4)
+            shares = cfg["trade_size_shares"]
             pos = {
                 "condition_id": row["condition_id"],
                 "convergence_bucket": int(row["convergence_bucket"]),
@@ -152,7 +180,7 @@ def _scan_and_enter(cfg: dict) -> int:
                 "exit_at": float(row["ts"]) + h,
                 "usd": usd, "shares": shares,
                 "entry_spread_bps": entry_spread_bps,
-                "wallet_positions_snapshot": wallet_snapshot,
+                "outcome_index": outcome_side,
             }
             cfg.setdefault("positions", []).append(pos)
             cfg["spent"] = round(cfg.get("spent", 0.0) + usd, 2)
@@ -177,7 +205,7 @@ def _process_exits(cfg: dict) -> int:
         # try/except: fetch 단계만 격리(Task 3 패턴). state mutation(cfg 갱신)은 밖에서.
         try:
             m = get_market(pos["condition_id"])
-            exit_spread_bps = _spread_bps_for_market(m) if m else None
+            exit_spread_bps = _spread_bps_for_market(m, pos["outcome_index"]) if m else None
         except Exception as e:  # noqa: BLE001
             _log_event({"kind": "exit_fail", "condition_id": pos["condition_id"], "msg": str(e)[:100]})
             keep.append(pos)  # 다음 tick 재시도
@@ -189,7 +217,7 @@ def _process_exits(cfg: dict) -> int:
             continue
 
         # 계산 및 state mutation (try/except 밖)
-        exit_price = m["yes_price"]
+        exit_price = m["yes_price"] if pos["outcome_index"] == 0 else m["no_price"]
         spreads = [s for s in (pos.get("entry_spread_bps"), exit_spread_bps) if s is not None]
         cost_bps = (polymarket_effective_cost_bps(spread_bps=sum(spreads) / len(spreads))
                     if spreads else polymarket_effective_cost_bps())
@@ -251,7 +279,7 @@ class BotConfig(BaseModel):
     enabled: bool | None = None
     interval_sec: int | None = None
     budget: float | None = None
-    trade_size_usd: float | None = None
+    trade_size_shares: float | None = None
     max_concurrent_positions: int | None = None
     reset_spent: bool | None = None
 
@@ -261,7 +289,7 @@ def status() -> dict:
     cfg = _load()
     return {
         "enabled": cfg["enabled"], "interval_sec": cfg["interval_sec"],
-        "budget": cfg["budget"], "trade_size_usd": cfg["trade_size_usd"],
+        "budget": cfg["budget"], "trade_size_shares": cfg["trade_size_shares"],
         "max_concurrent_positions": cfg["max_concurrent_positions"],
         "spent": cfg.get("spent", 0.0), "realized_pnl": cfg.get("realized_pnl", 0.0),
         "remaining": max(cfg["budget"] - cfg.get("spent", 0.0), 0.0),
@@ -281,8 +309,8 @@ def set_config(body: BotConfig) -> dict:
         cfg["interval_sec"] = max(int(body.interval_sec), 5)
     if body.budget is not None:
         cfg["budget"] = max(float(body.budget), 0.0)
-    if body.trade_size_usd is not None:
-        cfg["trade_size_usd"] = max(float(body.trade_size_usd), 1.0)
+    if body.trade_size_shares is not None:
+        cfg["trade_size_shares"] = max(float(body.trade_size_shares), 1.0)
     if body.max_concurrent_positions is not None:
         cfg["max_concurrent_positions"] = max(int(body.max_concurrent_positions), 1)
     if body.reset_spent:
@@ -290,7 +318,7 @@ def set_config(body: BotConfig) -> dict:
     _save(cfg)
     _log_event({"kind": "config", "enabled": cfg["enabled"], "budget": cfg["budget"]})
     return {"ok": True, **{k: cfg[k] for k in (
-        "enabled", "interval_sec", "budget", "trade_size_usd", "max_concurrent_positions")}}
+        "enabled", "interval_sec", "budget", "trade_size_shares", "max_concurrent_positions")}}
 
 
 @router.post("/run-now")

@@ -117,7 +117,7 @@ def _sw_pos(**over):
     base = {
         "condition_id": "c1", "convergence_bucket": 1, "horizon_s": 30,
         "direction": 1.0, "entry_price": 0.5, "entry_ts": 1000.0, "exit_at": 1030.0,
-        "usd": 15.0, "shares": 30.0,
+        "usd": 15.0, "shares": 30.0, "outcome_index": 0,
     }
     base.update(over)
     return base

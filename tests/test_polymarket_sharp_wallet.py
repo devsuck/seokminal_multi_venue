@@ -21,20 +21,22 @@ def _write_jsonl(path, rows):
 
 
 def _raw_row(cid="c1", ts=1.0, side="BUY", price=0.5, size=100.0, wallet="0xsharp",
-             is_sharp=True, rank=1, pnl=1000.0):
+             is_sharp=True, rank=1, pnl=1000.0, outcome_index=0):
     return {
         "conditionId": cid, "timestamp": ts, "side": side, "price": price, "size": size,
         "proxyWallet": wallet, "notional_usd": price * size, "is_sharp_wallet": is_sharp,
         "wallet_rank": rank if is_sharp else None, "wallet_pnl": pnl if is_sharp else None,
-        "transactionHash": f"tx{ts}",
+        "transactionHash": f"tx{ts}", "outcomeIndex": outcome_index,
     }
 
 
-def _trade_row(ts, cid="c1", wallet="w1", side="BUY", is_sharp=True, notional=100.0, price=0.5):
+def _trade_row(ts, cid="c1", wallet="w1", side="BUY", is_sharp=True, notional=100.0, price=0.5,
+               outcome_index=0):
     return {
         "ts": ts, "condition_id": cid, "side": side, "price": price, "size": notional / price,
         "proxy_wallet": wallet, "notional_usd": notional, "is_sharp_wallet": is_sharp,
         "wallet_rank": 1 if is_sharp else None, "wallet_pnl": 100.0 if is_sharp else None,
+        "outcome_index": outcome_index,
     }
 
 
@@ -50,6 +52,19 @@ def test_load_sharp_wallet_trades_reads_and_preserves_precomputed_fields(tmp_pat
     assert bool(df.iloc[1]["is_sharp_wallet"]) is True
     assert df.iloc[1]["wallet_rank"] == 3
     assert df.iloc[1]["wallet_pnl"] == 200.0
+    assert df.iloc[1]["outcome_index"] == 0
+
+
+def test_load_sharp_wallet_trades_passes_through_outcome_index_as_is(tmp_path, monkeypatch):
+    # outcomeIndex는 정규화 없이 원본 그대로(999 비이진 센티널/누락 포함) 통과시킨다.
+    monkeypatch.setattr(psw, "_DATA_DIR", tmp_path)
+    _write_jsonl(tmp_path / "2026-07-20.jsonl", [
+        _raw_row(ts=1.0, cid="c1", outcome_index=1),
+        _raw_row(ts=2.0, cid="c2", outcome_index=999),
+    ])
+    df = load_sharp_wallet_trades(["2026-07-20"])
+    assert df.iloc[0]["outcome_index"] == 1
+    assert df.iloc[1]["outcome_index"] == 999
 
 
 def test_load_sharp_wallet_trades_merges_multiple_dates(tmp_path, monkeypatch):
@@ -96,6 +111,12 @@ def test_build_convergence_count_caps_at_max_bucket():
     last = out.iloc[-1]
     assert last["convergence_count"] == 5
     assert last["convergence_bucket"] == psw.MAX_CONVERGENCE_BUCKET
+
+
+def test_build_convergence_count_carries_outcome_index():
+    df = pd.DataFrame([_trade_row(ts=0.0, cid="c1", wallet="w1", outcome_index=1)])
+    out = build_convergence_count(df)
+    assert out.iloc[0]["outcome_index"] == 1
 
 
 def test_build_convergence_count_empty_when_no_anchors():

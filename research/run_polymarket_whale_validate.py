@@ -74,8 +74,12 @@ def run_family(family: str, df: pd.DataFrame) -> dict:
     if spikes.empty:
         return {"family": family, "blocked": True, "reason": "스파이크 이벤트 없음"}
 
+    market_outcome_pairs = {
+        (cid, oi) for cid, oi in spikes[["condition_id", "outcome_index"]].itertuples(index=False)
+        if oi in (0, 1)
+    }
     price_by_condition = {
-        cid: build_price_series(fam_df, cid) for cid in spikes["condition_id"].unique()
+        key: build_price_series(fam_df, key[0], key[1]) for key in market_outcome_pairs
     }
     labels = build_labels_multi_horizon(price_by_condition, spikes)
 
@@ -162,7 +166,7 @@ def load_and_report() -> dict:
     """디스크에서 수집 데이터 로드 후 compute_report. 엔드포인트/main 공용 진입점."""
     dates = _available_dates()
     df = load_whale_trades(dates) if dates else pd.DataFrame(
-        columns=["ts", "condition_id", "side", "price", "size", "notional_usd", "family"])
+        columns=["ts", "condition_id", "side", "price", "size", "notional_usd", "family", "outcome_index"])
     return compute_report(df, dates)
 
 

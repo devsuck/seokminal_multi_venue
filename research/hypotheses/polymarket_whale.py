@@ -24,9 +24,10 @@ HORIZONS_S = [30, 120, 300]
 
 def load_whale_trades(dates: list[str]) -> pd.DataFrame:
     """research/data/polymarket_whale/{date}.jsonl 로드. notional_usd=price*size
-    컬럼 추가. 반환 컬럼: ts, condition_id, side, price, size, notional_usd, family,
-    proxy_wallet(lowercase, 원본 API 응답에 이미 있던 필드 — 지갑 역추적용).
-    ts 오름차순 정렬."""
+    컬럼 추가. outcome_index는 Data API의 outcomeIndex 원본값을 정규화 없이 그대로
+    통과(0/1/999-비이진 센티널/None 가능). 반환 컬럼: ts, condition_id, side, price,
+    size, notional_usd, family, proxy_wallet(lowercase, 원본 API 응답에 이미 있던
+    필드 — 지갑 역추적용), outcome_index. ts 오름차순 정렬."""
     rows = []
     for date in dates:
         path = _DATA_DIR / f"{date}.jsonl"
@@ -46,9 +47,11 @@ def load_whale_trades(dates: list[str]) -> pd.DataFrame:
                     "side": row["side"], "price": price, "size": size,
                     "notional_usd": price * size, "family": row.get("family"),
                     "proxy_wallet": wallet.lower() if wallet else None,
+                    "outcome_index": row.get("outcomeIndex"),
                 })
     df = pd.DataFrame(rows, columns=[
         "ts", "condition_id", "side", "price", "size", "notional_usd", "family", "proxy_wallet",
+        "outcome_index",
     ])
     return df.sort_values("ts").reset_index(drop=True)
 
@@ -74,22 +77,27 @@ def build_notional_zscore(df: pd.DataFrame) -> pd.DataFrame:
 
 def build_spike_signal(df_with_z: pd.DataFrame, threshold: float = WHALE_ZSCORE_THRESHOLD) -> pd.DataFrame:
     """|notional_z| >= threshold인 행만 남긴다(고래 체결). direction: side가 BUY면
-    +1.0(가격 상승 방향), 그 외(SELL)면 -1.0. 반환 컬럼: ts, condition_id, family,
-    side, direction, notional_usd, notional_z, proxy_wallet."""
+    +1.0(가격 상승 방향), 그 외(SELL)면 -1.0. outcome_index는 그대로 pass-through.
+    반환 컬럼: ts, condition_id, family, side, direction, notional_usd, notional_z,
+    proxy_wallet, outcome_index."""
     mask = df_with_z["notional_z"].abs() >= threshold
     spikes = df_with_z[mask.fillna(False)].copy()
     spikes["direction"] = spikes["side"].apply(lambda s: 1.0 if str(s).upper() == "BUY" else -1.0)
     if "proxy_wallet" not in spikes.columns:
         spikes["proxy_wallet"] = None
     return spikes[[
-        "ts", "condition_id", "family", "side", "direction", "notional_usd", "notional_z", "proxy_wallet",
+        "ts", "condition_id", "family", "side", "direction", "notional_usd", "notional_z",
+        "proxy_wallet", "outcome_index",
     ]].reset_index(drop=True)
 
 
-def build_price_series(df: pd.DataFrame, condition_id: str) -> pd.Series:
-    """해당 condition_id 체결가를 RESAMPLE_GRID_S 그리드로 ffill 리샘플.
+def build_price_series(df: pd.DataFrame, condition_id: str, outcome_index: int) -> pd.Series:
+    """해당 condition_id의 행 중 outcome_index가 일치하는 것만 RESAMPLE_GRID_S
+    그리드로 ffill 리샘플. 바이너리 마켓의 Yes/No는 별개 토큰이라 가격이 서로
+    무관 — outcome 필터 없이 섞으면 두 토큰의 가격이 하나의 시계열에 뒤섞인다.
     index=ts 그리드(등간격). 데이터 없으면 빈 Series."""
-    sub = df[df["condition_id"] == condition_id].sort_values("ts")
+    sub = df[(df["condition_id"] == condition_id)
+             & (df["outcome_index"] == outcome_index)].sort_values("ts")
     if sub.empty:
         return pd.Series(dtype=float)
     min_ts, max_ts = sub["ts"].iloc[0], sub["ts"].iloc[-1]
@@ -102,19 +110,25 @@ def build_price_series(df: pd.DataFrame, condition_id: str) -> pd.Series:
 
 
 def build_labels_multi_horizon(
-    price_by_condition: dict[str, pd.Series],
+    price_by_condition: dict[tuple[str, int], pd.Series],
     spikes: pd.DataFrame,
     horizons_s: list[int] = HORIZONS_S,
 ) -> pd.DataFrame:
     """스파이크마다 각 h in horizons_s에 대해 forward_return =
-    (price[t+h]-price[t])/price[t] * direction(모멘텀 컨벤션). 스파이크 ts는 해당
+    (price[t+h]-price[t])/price[t] * direction(모멘텀 컨벤션). price는 스파이크의
+    (condition_id, outcome_index) 쌍으로 조회 — Yes/No는 별개 토큰이라 같은
+    조회키 아니면 다른 토큰의 가격이 섞인다. outcome_index가 {0,1} 밖이면(비이진
+    센티널/결측) 어느 토큰인지 알 수 없어 그 스파이크는 제외. 스파이크 ts는 해당
     마켓 그리드의 가장 가까운 이전 포인트로 스냅한다. t+h가 그리드에 없거나(범위 밖)
     NaN이면 그 행 제외. horizons_s는 RESAMPLE_GRID_S의 배수라 정확히 그리드에
     떨어진다(align_venues 방식과 동일 보장)."""
     records = []
     for _, row in spikes.iterrows():
         cid = row["condition_id"]
-        price = price_by_condition.get(cid)
+        outcome_index = row["outcome_index"]
+        if outcome_index not in (0, 1):
+            continue
+        price = price_by_condition.get((cid, outcome_index))
         if price is None or price.empty:
             continue
         t = row["ts"]

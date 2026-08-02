@@ -1,13 +1,18 @@
 """OpenDART API client for Korean insider trading disclosures."""
 from __future__ import annotations
 
+import datetime as _dt
+import io
 import os
+import re
+import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 
 DART_BASE = "https://opendart.fss.or.kr/api"
 _TIMEOUT = 12
+_MDF_DM_RE = re.compile(rb'AUNIT="MDF_DM"\s+AUNITVALUE="(\d{8})"')
 
 
 def _key() -> str:
@@ -69,6 +74,12 @@ def get_executive_stock_changes(
 
     rows = []
     for item in data.get("list", []):
+        # DART가 bgn_de/end_de/page_no/page_count를 이 엔드포인트에서 무시하고
+        # 항상 전체 이력을 돌려줘서 여기서 직접 걸러야 함(post-filter).
+        rcept_dt = item.get("rcept_dt", "").replace("-", "")
+        if rcept_dt and not (bgn_de <= rcept_dt <= end_de):
+            continue
+
         irds_raw = item.get("stkqy_irds", "0").replace(",", "") or "0"
         try:
             irds = int(irds_raw)
@@ -111,6 +122,42 @@ def get_executive_stock_changes(
     return rows
 
 
+def get_report_lag_days(rcept_no: str, rcept_dt: str) -> list[int]:
+    """공시 원문(document.xml)의 '세부변동내역' 표에서 변동일(MDF_DM, 증권시장 결제일 기준)을
+    추출해 공시접수일(rcept_dt) 대비 지연일수 리스트로 반환.
+
+    elestock.json 요약 API엔 실제 거래일 필드가 없어(rcept_dt=접수일만 있음) 원문 XML을
+    직접 파싱해야 함. 리포트 하나에 여러 건의 세부변동(장내매수/매도 등)이 있으면 각각의
+    지연일수를 전부 반환 — 요약 API의 shares_change 한 줄과 1:1 대응 안 됨을 유의.
+    파싱 실패(권리변동보고 등 세부변동표 없는 양식 등) 시 빈 리스트.
+    """
+    try:
+        r = requests.get(
+            f"{DART_BASE}/document.xml",
+            params={"crtfc_key": _key(), "rcept_no": rcept_no},
+            timeout=_TIMEOUT,
+        )
+        r.raise_for_status()
+        with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+            xml_bytes = zf.read(zf.namelist()[0])
+    except Exception:
+        return []
+
+    try:
+        rcept_date = _dt.datetime.strptime(rcept_dt.replace("-", ""), "%Y%m%d").date()
+    except ValueError:
+        return []
+
+    lags = []
+    for m in _MDF_DM_RE.finditer(xml_bytes):
+        try:
+            change_dt = _dt.datetime.strptime(m.group(1).decode(), "%Y%m%d").date()
+        except ValueError:
+            continue
+        lags.append((rcept_date - change_dt).days)
+    return lags
+
+
 def _parse_int(s: str) -> int:
     try:
         return int(s.replace(",", ""))
@@ -143,8 +190,9 @@ def get_recent_kr_insider_feed(days: int = 30, max_corps: int = 20) -> list[dict
             "crtfc_key": _key(),
             "bgn_de": bgn_de,
             "end_de": end_de,
-            "pblntf_ty": "B",
-            "pblntf_detail_ty": "B001",
+            # D002 = 임원ㆍ주요주주특정증권등소유상황보고서 (B001은 주요사항보고서라 완전 다른 공시)
+            "pblntf_ty": "D",
+            "pblntf_detail_ty": "D002",
             "sort": "date",
             "sort_mth": "desc",
             "page_no": 1,

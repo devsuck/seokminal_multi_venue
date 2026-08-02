@@ -187,6 +187,46 @@ def _latest_price(symbol: str) -> float | None:
         return None
 
 
+def _ib_latest_prices(symbols: list[str]) -> dict[str, float | None]:
+    """Live IB prices for open positions — Alpaca has no fill data for IB-executed
+    symbols, so /performance always showed unrealized_pnl=0 for live IB agents.
+    Reuses the same connect+get_intraday_bars+score_intraday path as the IB
+    day-trade tick (agents.py _daytrade_tick_locked) — no order placed."""
+    from backends.ib.order_client import IBOrderClient
+
+    async def _fetch() -> dict[str, float | None]:
+        ib = IBOrderClient(host=os.environ.get("IB_HOST", "127.0.0.1"), port=7496,
+                            client_id=random.randint(600, 699))
+        out: dict[str, float | None] = {}
+        try:
+            for sym in symbols:
+                try:
+                    bars = await ib.get_intraday_bars(sym)
+                    out[sym] = _intraday.score_intraday(bars).get("price")
+                except Exception:
+                    out[sym] = None
+        finally:
+            await ib.close()
+        return out
+
+    try:
+        return asyncio.run(_fetch())
+    except Exception:
+        return dict.fromkeys(symbols)
+
+
+def _hl_latest_prices(symbols: list[str]) -> dict[str, float | None]:
+    _, _, _, _, get_candles = _hl_funcs()
+    out: dict[str, float | None] = {}
+    for sym in symbols:
+        try:
+            bars = get_candles(sym)
+            out[sym] = float(bars[-1]["c"]) if bars else None
+        except Exception:
+            out[sym] = None
+    return out
+
+
 @agents_router.get("/{agent_id}/performance")
 def agent_performance(agent_id: str) -> dict:
     """Portfolio + trade log + realized/unrealized PnL for one agent.
@@ -201,11 +241,26 @@ def agent_performance(agent_id: str) -> dict:
     cycles = agent_store.read_cycles(agent_id, limit=100000)
     perf = agent_perf.compute_performance(cycles)
 
+    # Current price must come from the venue the agent actually trades on —
+    # Alpaca never has data for IB/HL fills, so those always priced at None
+    # and unrealized_pnl silently stayed 0 (agents.py, fixed 2026-08-02).
+    symbols = [pos["symbol"] for pos in perf.open_positions]
+    profile = agent.get("profile", {})
+    venue = profile.get("venue") or ("KR" if agent.get("market") == "KR" else "US")
+    from jarvis.execution.agent_gate import enforce_paper
+    paper, _gate_note = enforce_paper(agent)
+    if venue == "HL":
+        prices = _hl_latest_prices(symbols)
+    elif venue == "US" and not paper:
+        prices = _ib_latest_prices(symbols)
+    else:
+        prices = {s: _latest_price(s) for s in symbols}
+
     # Enrich open positions with current price → unrealized PnL.
     unrealized = 0.0
     positions_out = []
     for pos in perf.open_positions:
-        cur = _latest_price(pos["symbol"])
+        cur = prices.get(pos["symbol"])
         upl = (cur - pos["avg_price"]) * pos["qty"] if cur is not None else None
         if upl is not None:
             unrealized += upl

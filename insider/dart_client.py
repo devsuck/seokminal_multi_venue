@@ -255,13 +255,22 @@ def get_recent_kr_insider_feed(days: int = 30, max_corps: int = 20) -> list[dict
         return rows
 
     results: list[dict] = []
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    pool = ThreadPoolExecutor(max_workers=5)
+    try:
         futures = {pool.submit(_fetch, corp): corp for corp in seen.values()}
         for fut in as_completed(futures, timeout=45):
             try:
                 results.extend(fut.result())
             except Exception:
                 pass
+    except TimeoutError:
+        pass
+    finally:
+        # bare `with` here would block __exit__ on shutdown(wait=True) until every
+        # straggler finishes, silently defeating the 45s timeout above (observed 162s
+        # wall time in production). cancel_futures drops unstarted work immediately;
+        # already-running fetches finish on their own without blocking this response.
+        pool.shutdown(wait=False, cancel_futures=True)
 
     return sorted(results, key=lambda x: x.get("rcept_dt", ""), reverse=True)
 

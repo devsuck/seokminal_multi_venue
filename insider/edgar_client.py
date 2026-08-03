@@ -220,12 +220,22 @@ def get_recent_form4_feed(days: int = 7, max_filings: int = 40) -> list[dict]:
         return txns
 
     results: list[dict] = []
-    with ThreadPoolExecutor(max_workers=6) as pool:
+    pool = ThreadPoolExecutor(max_workers=6)
+    try:
         futures = {pool.submit(_parse_hit, h): h for h in hits}
         for fut in as_completed(futures, timeout=30):
             try:
                 results.extend(fut.result())
             except Exception:
                 pass
+    except TimeoutError:
+        pass
+    finally:
+        # bare `with` here would block __exit__ on shutdown(wait=True) until every
+        # straggler finishes, silently defeating the 30s timeout above (same bug as
+        # dart_client.py's get_recent_kr_insider_feed). cancel_futures drops unstarted
+        # work immediately; already-running fetches finish on their own without
+        # blocking this response.
+        pool.shutdown(wait=False, cancel_futures=True)
 
     return sorted(results, key=lambda x: x.get("filing_date", ""), reverse=True)

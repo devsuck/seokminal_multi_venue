@@ -3758,7 +3758,11 @@ from insider.convergence import compute_convergence as _convergence_compute_raw
 # one computation instead of each re-triggering the fetch chain.
 # ponytail: process-local cache, lost on restart; fine for a single-instance API.
 _CONVERGENCE_TTL_S = 300
+# 실패도 짧게 캐시 — 없으면 DART/SEC 장애 중 30s 폴링마다 매번 락 잡고 풀타임아웃(45-300s+)까지
+# 재시도해 사실상 락을 계속 점유, /alerts/triggered 전체를 마비시킴.
+_CONVERGENCE_FAILURE_TTL_S = 30
 _convergence_cache: dict[tuple[str, int], tuple[float, list[dict]]] = {}
+_convergence_failures: dict[tuple[str, int], tuple[float, Exception]] = {}
 _convergence_locks: dict[tuple[str, int], threading.Lock] = {}
 _convergence_locks_guard = threading.Lock()
 
@@ -3774,8 +3778,16 @@ def _convergence_compute(market: str, days: int = 30) -> list[dict]:
         cached = _convergence_cache.get(key)
         if cached and _time.monotonic() - cached[0] < _CONVERGENCE_TTL_S:
             return cached[1]
-        result = _convergence_compute_raw(market, days=days)
+        failed = _convergence_failures.get(key)
+        if failed and _time.monotonic() - failed[0] < _CONVERGENCE_FAILURE_TTL_S:
+            raise failed[1]
+        try:
+            result = _convergence_compute_raw(market, days=days)
+        except Exception as exc:
+            _convergence_failures[key] = (_time.monotonic(), exc)
+            raise
         _convergence_cache[key] = (_time.monotonic(), result)
+        _convergence_failures.pop(key, None)
         return result
 
 

@@ -1,6 +1,8 @@
 """leg별 신호를 (ticker, direction)으로 교차집계해 컨버전스 스코어를 매기는 순수 집계 레이어.
 새 외부 API 호출 없음 — 기존 leg 함수를 그대로 재사용한다.
 """
+from collections import Counter
+
 from insider.dart_client import get_recent_kr_insider_feed, get_recent_kr_corporate_actions
 from insider.edgar_client import get_recent_form4_feed
 from insider.congress_client import get_congress_trades
@@ -98,7 +100,10 @@ def compute_convergence(market: str, days: int = 30) -> list[dict]:
         legs = _tag_kr_legs(days)
     elif market == "us":
         legs = _tag_us_legs_without_uoa(days)
-        uoa_tickers = sorted({leg["ticker"] for leg in legs})[:_UOA_TICKER_CAP]
+        # 알파벳순 슬라이스는 A~B 티커만 영구적으로 UOA 대상이 되는 편향 발생 —
+        # 이미 leg가 많이 걸린(=score>=2에 가까운) 티커부터 우선 소비.
+        ticker_counts = Counter(leg["ticker"] for leg in legs)
+        uoa_tickers = sorted(ticker_counts, key=lambda t: (-ticker_counts[t], t))[:_UOA_TICKER_CAP]
         legs += _tag_uoa_legs(uoa_tickers)
     else:
         raise ValueError(f"unknown market: {market!r}")

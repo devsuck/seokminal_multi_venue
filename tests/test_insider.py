@@ -185,3 +185,35 @@ def test_options_uoa_alpaca_error():
     with patch("api_server.main._options_uoa", side_effect=RuntimeError("alpaca down")):
         r = client.get("/insider/options-uoa", params={"tickers": "AAPL"})
     assert r.status_code == 502
+
+
+# ── 컨버전스 스코어링 ──────────────────────────────────────────────────────────
+
+def test_insider_convergence_kr_ok():
+    mock_signals = [{
+        "ticker": "005930", "market": "kr", "direction": "BULLISH", "score": 2,
+        "legs": [
+            {"source": "dart_exec", "trade_date": "2026-08-01", "detail": "삼성전자 대표이사 장내매수", "url": "https://dart.fss.or.kr/x"},
+            {"source": "dart_corp_action", "trade_date": "2026-08-01", "detail": "삼성전자 자사주", "url": "https://dart.fss.or.kr/y"},
+        ],
+    }]
+    with patch("api_server.main._convergence_compute", return_value=mock_signals):
+        r = client.get("/insider/convergence?market=kr&days=30")
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body) == 1
+    assert body[0]["ticker"] == "005930"
+    assert body[0]["score"] == 2
+    assert len(body[0]["legs"]) == 2
+
+
+def test_insider_convergence_empty():
+    with patch("api_server.main._convergence_compute", return_value=[]):
+        r = client.get("/insider/convergence?market=us&days=30")
+    assert r.status_code == 200
+    assert r.json() == []
+
+
+def test_insider_convergence_invalid_market_returns_422():
+    r = client.get("/insider/convergence?market=eu&days=30")
+    assert r.status_code == 422

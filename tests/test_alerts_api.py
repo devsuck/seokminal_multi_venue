@@ -12,6 +12,16 @@ def setup_function():
     _triggered_alerts.clear()
 
 
+@pytest.fixture(autouse=True)
+def _stub_convergence_compute():
+    """get_triggered_alerts()가 매 폴링마다 _check_insider_convergence()를 통해
+    실제 _convergence_compute()(DART/Congress/options-UOA 라이브 네트워크 호출)를
+    부른다. 개별 테스트가 자체 patch로 재정의하지 않는 한 기본값 []로 스텁해서
+    기존(컨버전스 무관) 테스트들이 실제 네트워크 I/O로 멎지 않게 한다."""
+    with patch("api_server.main._convergence_compute", return_value=[]):
+        yield
+
+
 # ── POST /alerts/rules ────────────────────────────────────────
 
 def test_create_rule_price_above_returns_201():
@@ -168,3 +178,39 @@ def test_triggered_condition_not_met_no_entry():
         mock_engine.get_all_statuses.return_value = {"bot1": mock_status}
         r = client.get("/alerts/triggered")
     assert r.json()["triggered"] == []
+
+
+# ── insider convergence merge ─────────────────────────────────
+
+def test_triggered_includes_insider_convergence_signal():
+    mock_signals_kr = [{
+        "ticker": "005930", "market": "kr", "direction": "BULLISH", "score": 2,
+        "legs": [
+            {"source": "dart_exec", "trade_date": "2026-08-01", "detail": "d1", "url": None},
+            {"source": "dart_corp_action", "trade_date": "2026-08-01", "detail": "d2", "url": None},
+        ],
+    }]
+    with patch("api_server.main.live_engine") as mock_engine, \
+         patch("api_server.main._convergence_compute", side_effect=lambda market, days=30: mock_signals_kr if market == "kr" else []):
+        mock_engine.get_all_statuses.return_value = {}
+        r = client.get("/alerts/triggered")
+    assert r.status_code == 200
+    triggered = r.json()["triggered"]
+    conv = [t for t in triggered if t["bot_id"] == "insider-convergence"]
+    assert len(conv) == 1
+    assert conv[0]["rule_id"] == "insider-convergence:kr:005930:BULLISH"
+    assert "005930" in conv[0]["detail"]
+
+
+def test_triggered_convergence_dedup_within_window():
+    mock_signals_kr = [{
+        "ticker": "005930", "market": "kr", "direction": "BULLISH", "score": 2,
+        "legs": [{"source": "dart_exec", "trade_date": "2026-08-01", "detail": "d1", "url": None}],
+    }]
+    with patch("api_server.main.live_engine") as mock_engine, \
+         patch("api_server.main._convergence_compute", side_effect=lambda market, days=30: mock_signals_kr if market == "kr" else []):
+        mock_engine.get_all_statuses.return_value = {}
+        client.get("/alerts/triggered")
+        r2 = client.get("/alerts/triggered")
+    conv = [t for t in r2.json()["triggered"] if t["bot_id"] == "insider-convergence"]
+    assert len(conv) == 1  # 두번째 폴링에서 중복 추가 안됨 (300s dedup window)

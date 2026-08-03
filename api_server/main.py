@@ -3594,7 +3594,11 @@ def _check_insider_convergence() -> None:
     """
     now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
     for market in ("kr", "us"):
-        for sig in _convergence_compute(market, days=30):
+        try:
+            signals = _convergence_compute(market, days=30)
+        except Exception:
+            continue
+        for sig in signals:
             rule_id = f"insider-convergence:{market}:{sig['ticker']}:{sig['direction']}"
             if _recently_triggered(rule_id):
                 continue
@@ -3753,7 +3757,7 @@ from insider.convergence import compute_convergence as _convergence_compute_raw
 # external APIs' rate limits. TTL + per-key lock so concurrent/rapid callers share
 # one computation instead of each re-triggering the fetch chain.
 # ponytail: process-local cache, lost on restart; fine for a single-instance API.
-_CONVERGENCE_TTL_S = 60
+_CONVERGENCE_TTL_S = 300
 _convergence_cache: dict[tuple[str, int], tuple[float, list[dict]]] = {}
 _convergence_locks: dict[tuple[str, int], threading.Lock] = {}
 _convergence_locks_guard = threading.Lock()

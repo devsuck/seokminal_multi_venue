@@ -3532,6 +3532,20 @@ class TriggeredAlertOut(BaseModel):
 class TriggeredAlertsResponse(BaseModel):
     triggered: list[TriggeredAlertOut]
 
+class ConvergenceLegOut(BaseModel):
+    source: str
+    trade_date: str
+    detail: str
+    url: str | None = None
+
+
+class ConvergenceSignalOut(BaseModel):
+    ticker: str
+    market: str
+    direction: str
+    score: int
+    legs: list[ConvergenceLegOut]
+
 _alert_rules: dict[str, AlertRuleOut] = {}
 _triggered_alerts: list[TriggeredAlertOut] = []
 _MAX_TRIGGERED = 200
@@ -3706,6 +3720,7 @@ from insider.dart_client import search_company as _dart_search, get_executive_st
 from insider.congress_client import get_congress_trades as _congress_trades
 from insider.gov_spending_client import get_recent_contracts as _gov_contracts
 from insider.options_uoa_client import get_unusual_options_activity as _options_uoa
+from insider.convergence import compute_convergence as _convergence_compute
 
 
 class GovContract(BaseModel):
@@ -4005,6 +4020,15 @@ def insider_options_uoa(
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Alpaca options error: {exc}") from exc
     return [OptionsUOA(**r) for r in rows]
+
+
+@app.get("/insider/convergence", response_model=list[ConvergenceSignalOut])
+def insider_convergence(
+    market: Literal["kr", "us"] = Query(...),
+    days: int = Query(30, ge=1, le=180),
+) -> list[ConvergenceSignalOut]:
+    signals = _convergence_compute(market, days=days)
+    return [ConvergenceSignalOut(**s) for s in signals]
 
 
 # ── Copy-Trade Autopilot (페이퍼) ────────────────────────────────────────────────

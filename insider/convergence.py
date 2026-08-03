@@ -6,6 +6,10 @@ from insider.edgar_client import get_recent_form4_feed
 from insider.congress_client import get_congress_trades
 from insider.options_uoa_client import get_unusual_options_activity
 
+# insider_options_uoa 엔드포인트와 동일한 예산 상한(main.py:4042) — UOA는 시장 전체가 아니라
+# 다른 leg가 이미 플래그한 소수 티커만 확인하는 용도로 설계됨(options_uoa_client.py 독스트링).
+_UOA_TICKER_CAP = 15
+
 _DART_EXEC_DIRECTION = {"BUY": "BULLISH", "SELL": "BEARISH", "CANCELLATION": "BULLISH"}
 _DART_CORP_ACTION_DIRECTION = {"BUYBACK": "BULLISH", "PAID_IN": "BEARISH", "DISPOSAL": "BEARISH"}
 _US_TRADE_DIRECTION = {"BUY": "BULLISH", "SELL": "BEARISH"}
@@ -94,7 +98,7 @@ def compute_convergence(market: str, days: int = 30) -> list[dict]:
         legs = _tag_kr_legs(days)
     elif market == "us":
         legs = _tag_us_legs_without_uoa(days)
-        uoa_tickers = sorted({leg["ticker"] for leg in legs})
+        uoa_tickers = sorted({leg["ticker"] for leg in legs})[:_UOA_TICKER_CAP]
         legs += _tag_uoa_legs(uoa_tickers)
     else:
         raise ValueError(f"unknown market: {market!r}")

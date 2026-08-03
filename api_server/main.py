@@ -3744,7 +3744,35 @@ from insider.dart_client import search_company as _dart_search, get_executive_st
 from insider.congress_client import get_congress_trades as _congress_trades
 from insider.gov_spending_client import get_recent_contracts as _gov_contracts
 from insider.options_uoa_client import get_unusual_options_activity as _options_uoa
-from insider.convergence import compute_convergence as _convergence_compute
+from insider.convergence import compute_convergence as _convergence_compute_raw
+
+# _check_insider_convergence's 30s alert poll and GET /insider/convergence both route
+# through here; each raw compute is network-bound (45-300s+ across DART/SEC/congress).
+# Without this, every poll tick fires its own full recompute and they stack up
+# unbounded (observed: 16 concurrent /alerts/triggered in flight) — hammering those
+# external APIs' rate limits. TTL + per-key lock so concurrent/rapid callers share
+# one computation instead of each re-triggering the fetch chain.
+# ponytail: process-local cache, lost on restart; fine for a single-instance API.
+_CONVERGENCE_TTL_S = 60
+_convergence_cache: dict[tuple[str, int], tuple[float, list[dict]]] = {}
+_convergence_locks: dict[tuple[str, int], threading.Lock] = {}
+_convergence_locks_guard = threading.Lock()
+
+
+def _convergence_compute(market: str, days: int = 30) -> list[dict]:
+    key = (market, days)
+    cached = _convergence_cache.get(key)
+    if cached and _time.monotonic() - cached[0] < _CONVERGENCE_TTL_S:
+        return cached[1]
+    with _convergence_locks_guard:
+        lock = _convergence_locks.setdefault(key, threading.Lock())
+    with lock:
+        cached = _convergence_cache.get(key)
+        if cached and _time.monotonic() - cached[0] < _CONVERGENCE_TTL_S:
+            return cached[1]
+        result = _convergence_compute_raw(market, days=days)
+        _convergence_cache[key] = (_time.monotonic(), result)
+        return result
 
 
 class GovContract(BaseModel):

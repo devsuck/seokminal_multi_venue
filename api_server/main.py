@@ -4027,7 +4027,12 @@ def insider_convergence(
     market: Literal["kr", "us"] = Query(...),
     days: int = Query(30, ge=1, le=180),
 ) -> list[ConvergenceSignalOut]:
-    signals = _convergence_compute(market, days=days)
+    try:
+        signals = _convergence_compute(market, days=days)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"convergence feed error: {exc}") from exc
     return [ConvergenceSignalOut(**s) for s in signals]
 
 

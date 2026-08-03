@@ -217,3 +217,9 @@ def test_insider_convergence_empty():
 def test_insider_convergence_invalid_market_returns_422():
     r = client.get("/insider/convergence?market=eu&days=30")
     assert r.status_code == 422
+
+
+def test_insider_convergence_api_error():
+    with patch("api_server.main._convergence_compute", side_effect=ValueError("no api key")):
+        r = client.get("/insider/convergence?market=kr&days=30")
+    assert r.status_code == 503

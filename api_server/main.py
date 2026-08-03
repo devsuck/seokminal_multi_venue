@@ -3588,6 +3588,29 @@ def _check_sharp_wallet_entries() -> None:
     _sw_last_seen_ts = new[0]["ts"]
 
 
+def _check_insider_convergence() -> None:
+    """compute_convergence(kr/us)를 매 폴링마다 재계산해 score>=2 신호를 합성 alert로 편입.
+    순수 재계산이라 신규-여부 커서 없이 _recently_triggered()의 300s dedup에 그대로 태운다.
+    """
+    now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
+    for market in ("kr", "us"):
+        for sig in _convergence_compute(market, days=30):
+            rule_id = f"insider-convergence:{market}:{sig['ticker']}:{sig['direction']}"
+            if _recently_triggered(rule_id):
+                continue
+            dir_label = "상승" if sig["direction"] == "BULLISH" else "하락"
+            _triggered_alerts.append(TriggeredAlertOut(
+                rule_id=rule_id,
+                rule_label=f"컨버전스 {dir_label}: {sig['ticker']}",
+                condition_type="insider_convergence",
+                bot_id="insider-convergence",
+                detail=f"{sig['ticker']} score={sig['score']} legs={','.join(l['source'] for l in sig['legs'])}",
+                triggered_at=now_iso,
+            ))
+            if len(_triggered_alerts) > _MAX_TRIGGERED:
+                _triggered_alerts.pop(0)
+
+
 def _evaluate_alert_condition(
     rule: AlertRuleOut,
     statuses: dict[str, "BotStatus"],
@@ -3696,6 +3719,7 @@ def get_triggered_alerts() -> TriggeredAlertsResponse:
     now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
     with _alert_lock:
         _check_sharp_wallet_entries()
+        _check_insider_convergence()
         for rule in list(_alert_rules.values()):
             triggered, detail = _evaluate_alert_condition(rule, statuses)
             if triggered and not _recently_triggered(rule.id):

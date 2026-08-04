@@ -33,6 +33,23 @@ def test_buy_then_sell_realizes_pnl():
     assert perf.trades[1]["realized_pnl"] == 100.0
 
 
+def test_budget_gate_shrinks_after_realized_loss_even_when_flat():
+    # api_server/routers/agents.py의 신규진입 budget 게이트는
+    # `alloc + realized_pnl - invested`여야 한다. invested만 빼면(구버전 버그)
+    # 포지션을 다 청산한 뒤엔 realized 손실이 누적됐어도 budget이 alloc으로
+    # 원복돼 다시 풀배팅 가능해진다 — lv5 가상화폐 에이전트가 -78% 찍고도
+    # 계속 도는 원인이었다.
+    perf = compute_performance([
+        _cycle(1, "BTC", "buy", 1, 100.0),
+        _cycle(2, "BTC", "sell", 1, 10.0, "손절"),  # -90 realized, 지금은 flat
+    ])
+    assert perf.invested == 0.0
+    assert perf.realized_pnl == -90.0
+    alloc = 100.0
+    budget = max(alloc + perf.realized_pnl - perf.invested, 0.0)
+    assert budget == 10.0  # 살아남은 자본만, alloc 전액 아님
+
+
 def test_partial_sell_keeps_remainder():
     perf = compute_performance([
         _cycle(1, "AAPL", "buy", 10, 100.0),

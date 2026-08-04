@@ -1,4 +1,6 @@
 """Per-agent performance endpoint (FIFO ledger from cycle fills)."""
+from unittest.mock import MagicMock
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -52,6 +54,28 @@ def test_performance_open_position_uses_ib_price_for_live_us_agent(client, monke
     monkeypatch.setattr(agents_router_module, "_ib_latest_prices", lambda symbols: dict.fromkeys(symbols, 120.0))
     monkeypatch.setattr(agents_router_module, "_latest_price", lambda symbol: (_ for _ in ()).throw(
         AssertionError("Alpaca path must not be used for a live IB agent")))
+
+    aid = client.post("/agents", json={"name": "A", "type": "swing", "account_alloc": 100000}).json()["id"]
+    _post_fill(client, aid, 1, "NVDA", "buy", 10, 100.0)
+    body = client.get(f"/agents/{aid}/performance").json()
+    assert body["open_positions"][0]["current_price"] == 120.0
+    assert body["unrealized_pnl"] == 200.0
+
+
+def test_performance_open_position_prices_via_barset_data_not_contains(client, monkeypatch):
+    """Alpaca's BarSet has no working `__contains__` (`sym in resp` is always False
+    even when `resp.data[sym]` has bars) — pricing must read `resp.data` directly,
+    or unrealized_pnl silently stays 0 for every paper-US agent (found 2026-08-04
+    while investigating a user report that swing/autonomous agents showed no
+    unrealized PnL)."""
+    import api_server.routers.agents as agents_router_module
+
+    fake_bar = MagicMock(close=120.0)
+    fake_resp = MagicMock(data={"NVDA": [fake_bar]})
+    fake_resp.__contains__ = MagicMock(return_value=False)  # BarSet's real (broken) behavior
+    fake_client = MagicMock()
+    fake_client.get_stock_bars.return_value = fake_resp
+    monkeypatch.setattr(agents_router_module.shared, "_data_client", lambda: fake_client)
 
     aid = client.post("/agents", json={"name": "A", "type": "swing", "account_alloc": 100000}).json()["id"]
     _post_fill(client, aid, 1, "NVDA", "buy", 10, 100.0)

@@ -15,6 +15,7 @@ import subprocess
 import threading as _threading
 import urllib.request
 
+from alpaca.common.enums import Sort
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from fastapi import APIRouter, HTTPException
@@ -178,10 +179,11 @@ def _latest_price(symbol: str) -> float | None:
             symbol_or_symbols=symbol.upper(),
             timeframe=TimeFrame(5, TimeFrameUnit.Minute),
             start=now - dt.timedelta(days=5),
+            sort=Sort.DESC,
             limit=1,
         )
         resp = data_client.get_stock_bars(req)
-        bars = list(resp[symbol.upper()]) if symbol.upper() in resp else []
+        bars = resp.data.get(symbol.upper()) or []
         return float(bars[-1].close) if bars else None
     except Exception:
         return None
@@ -426,7 +428,13 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
     # so multiple agents on one Alpaca/HL account each stay within their slice.
     alloc = float(agent["account_alloc"])
     _cycles = agent_store.read_cycles(agent_id, limit=100000)
-    budget = max(alloc - agent_perf.compute_performance(_cycles).invested, 0.0)
+    _perf = agent_perf.compute_performance(_cycles)
+    budget = max(alloc + _perf.realized_pnl - _perf.invested, 0.0)
+
+    # 드로다운 서킷브레이커: 배정 자본의 max_drawdown_pct(기본 50%) 이상 실현손실 시
+    # 신규진입만 정지(청산/마킹은 계속) — lv5 가상화폐가 -78%까지 계속 진입한 사고 재발 방지.
+    max_dd_pct = float(profile.get("max_drawdown_pct", 0.5))
+    dd_pause = alloc > 0 and _perf.realized_pnl <= -alloc * max_dd_pct
 
     # Lv3(구Lv5) 자가학습: 이력 분석 → threshold/position_pct 자동 조정
     lv5_state: dict = {}
@@ -454,6 +462,9 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
     actions: list[str] = []
     if _gate_note:
         actions.append(_gate_note)
+    if dd_pause:
+        actions.append(f"드로다운 서킷브레이커: 실현손실 {_perf.realized_pnl:.2f}"
+                        f"(배정 {alloc:.2f}의 {max_dd_pct*100:.0f}% 이상) — 신규진입 정지")
     if lv5_state.get("lv5_note"):
         actions.append(lv5_state["lv5_note"])
     if lv5_agent_note:
@@ -462,7 +473,7 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
     fill_symbol = None
 
     # Lv5 pause: 연속 손절 감지 시 entry skip (청산만 수행)
-    lv5_pause = lv5_state.get("pause", False)
+    lv5_pause = lv5_state.get("pause", False) or dd_pause
 
     if venue == "HL":
         get_positions, place_order, close_position, set_leverage, get_candles = _hl_funcs()
@@ -732,6 +743,17 @@ def condition_tick_endpoint(agent_id: str, cycle: int = 0) -> dict:
     fill = None
     note_bits = [result["note"]]
 
+    # 드로다운 서킷브레이커: 배정 자본의 max_drawdown_pct(기본 50%) 이상 실현손실 시 신규진입 정지.
+    alloc = float(agent["account_alloc"])
+    _cycles = agent_store.read_cycles(agent_id, limit=100000)
+    _perf = agent_perf.compute_performance(_cycles)
+    budget = max(alloc + _perf.realized_pnl - _perf.invested, 0.0)
+    max_dd_pct = float(profile.get("max_drawdown_pct", 0.5))
+    dd_pause = alloc > 0 and _perf.realized_pnl <= -alloc * max_dd_pct
+    if dd_pause and action == "BUY":
+        note_bits.append(f"드로다운 서킷브레이커: 실현손실 {_perf.realized_pnl:.2f}"
+                          f"(배정 {alloc:.2f}의 {max_dd_pct*100:.0f}% 이상) — 신규진입 정지")
+
     if action in ("BUY", "SELL"):
         is_kr = instrument_id.endswith(".XKRX")
         try:
@@ -743,11 +765,8 @@ def condition_tick_endpoint(agent_id: str, cycle: int = 0) -> dict:
                 kis = KISOrderClient(kk, ks, kc, os.environ.get("KIS_ACNT_PRDT_CD", "01"), mock=True)
                 code = instrument_id.split(".")[0]
                 if action == "BUY":
-                    alloc = float(agent["account_alloc"])
-                    _cycles = agent_store.read_cycles(agent_id, limit=100000)
-                    budget = max(alloc - agent_perf.compute_performance(_cycles).invested, 0.0)
                     qty = int(daytrade_logic.position_size(budget, position_pct, 1.0, result["price"]))
-                    if qty > 0:
+                    if qty > 0 and not dd_pause:
                         kis.place_order(code, "BUY", qty, "MARKET")
                         fill = {"side": "buy", "qty": qty, "price": result["price"]}
                         note_bits.append(f"매수 {code} {qty}주 @ {result['price']}")
@@ -763,11 +782,8 @@ def condition_tick_endpoint(agent_id: str, cycle: int = 0) -> dict:
                 symbol = instrument_id.split(".")[0]
                 client = shared._trading_client(paper=True)
                 if action == "BUY":
-                    alloc = float(agent["account_alloc"])
-                    _cycles = agent_store.read_cycles(agent_id, limit=100000)
-                    budget = max(alloc - agent_perf.compute_performance(_cycles).invested, 0.0)
                     qty = int(daytrade_logic.position_size(budget, position_pct, 1.0, result["price"]))
-                    if qty > 0:
+                    if qty > 0 and not dd_pause:
                         client.submit_order(MarketOrderRequest(symbol=symbol, qty=qty,
                             side=OrderSide.BUY, time_in_force=TimeInForce.DAY))
                         fill = {"side": "buy", "qty": qty, "price": result["price"]}

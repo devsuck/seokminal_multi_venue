@@ -15,7 +15,6 @@ import asyncio
 import datetime as _dt
 import json
 import os
-import random
 from pathlib import Path
 
 from fastapi import APIRouter
@@ -86,9 +85,34 @@ def _ib_port() -> int:
     return int(os.environ.get("IB_PORT", "7498"))
 
 
+class _Bar:
+    __slots__ = ("close",)
+
+    def __init__(self, close: float) -> None:
+        self.close = close
+
+
+class _AlpacaDataClient:
+    """IBClient(get_daily_bars/get_option_chain)와 동일한 duck-type 인터페이스.
+
+    IB Gateway가 상시 켜져있지 않아(2026-08) 데이터 조회가 항상 막혀있던 문제로
+    데이터 소스만 Alpaca로 교체 — 실제 옵션 주문 체결은 IBOrderClient(_order_client)가
+    그대로 담당한다.
+    """
+
+    async def get_daily_bars(self, symbol: str, end: str, duration_str: str) -> list[_Bar]:
+        from api_server.routers import alpaca_shared as shared
+        days = int(duration_str.split()[0]) if duration_str.split()[0].isdigit() else 120
+        closes = await asyncio.to_thread(shared._fetch_daily_closes, symbol, days)
+        return [_Bar(c) for c in closes]
+
+    async def get_option_chain(self, symbol: str, max_expiries: int = 6) -> dict[str, list[dict]]:
+        from api_server.routers import alpaca_shared as shared
+        return await asyncio.to_thread(shared._fetch_option_chain, symbol, max_expiries)
+
+
 def _data_client():
-    from backends.ib.client import IBClient
-    return IBClient(host=_ib_host(), port=_ib_port(), client_id=random.randint(700, 799))
+    return _AlpacaDataClient()
 
 
 def _order_client():

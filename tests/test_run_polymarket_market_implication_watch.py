@@ -31,6 +31,16 @@ def test_check_pair_detects_violation_past_cost():
     assert result["resolved"] is False
 
 
+def test_check_pair_zero_width_spread_not_replaced_by_fallback():
+    # tok_a: best_bid == best_ask -> spread_bps_from_book returns 0.0 (falsy but valid).
+    # Must NOT be replaced by POLYMARKET_SPREAD_BPS(200) fallback.
+    books = {"tok_a": {"best_bid": 0.70, "best_ask": 0.70}, "tok_b": {"best_bid": 0.49, "best_ask": 0.51}}
+    result = watch.check_pair(_pair(), lambda tid: books[tid])
+    assert result is not None
+    # cost_frac = (0bps/2 + 400bps/2) / 10000 = 0.02, NOT (200/2 + 400/2)/10000 = 0.03
+    assert result["cost_frac"] == 0.02
+
+
 def test_run_once_appends_detected_violations(tmp_path):
     with patch.object(watch, "_DATA_DIR", tmp_path):
         tmp_path.mkdir(parents=True, exist_ok=True)

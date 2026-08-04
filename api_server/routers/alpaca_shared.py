@@ -8,13 +8,18 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import re
 
+from alpaca.data.enums import DataFeed
 from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest
+from alpaca.data.historical.option import OptionHistoricalDataClient
+from alpaca.data.requests import OptionChainRequest, StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from alpaca.trading.client import TradingClient
 from fastapi import HTTPException
 from pydantic import BaseModel
+
+_OCC_RE = re.compile(r"^[A-Z]+(\d{6})([CP])(\d{8})$")
 
 ALPACA_KEY = os.getenv("ALPACA_API_KEY", "")
 ALPACA_SECRET = os.getenv("ALPACA_SECRET_KEY", "")
@@ -109,12 +114,118 @@ def _fetch_intraday_bars(symbol: str, days: int = 2) -> list[dict]:
         limit=200,
     )
     resp = data_client.get_stock_bars(req)
-    bars = list(resp[symbol.upper()]) if symbol.upper() in resp else []
+    # BarSet엔 제대로 된 __contains__/__getitem__이 없어(`sym in resp`가 항상 False) .data dict로 직접 조회.
+    bars = list(resp.data.get(symbol.upper(), []))
     return [
         {"t": b.timestamp, "o": float(b.open), "h": float(b.high),
          "l": float(b.low), "c": float(b.close), "v": float(b.volume)}
         for b in bars
     ]
+
+
+def _fetch_daily_closes(symbol: str, days: int = 120) -> list[float]:
+    """Fetch recent daily closes for ``symbol`` (IBClient.get_daily_bars 대체)."""
+    data_client = _data_client()
+    now = dt.datetime.now(dt.timezone.utc)
+    req = StockBarsRequest(
+        symbol_or_symbols=symbol.upper(),
+        timeframe=TimeFrame.Day,
+        start=now - dt.timedelta(days=days),
+        feed=DataFeed.IEX,  # 무료 플랜은 최근 SIP 데이터 조회 불가 — IEX 피드 사용
+    )
+    resp = data_client.get_stock_bars(req)
+    bars = list(resp.data.get(symbol.upper(), []))
+    return [float(b.close) for b in bars]
+
+
+def _option_data_client() -> OptionHistoricalDataClient:
+    _require_key()
+    return OptionHistoricalDataClient(api_key=ALPACA_KEY, secret_key=ALPACA_SECRET)
+
+
+def _fetch_option_chain(symbol: str, max_expiries: int = 6, max_dte: int = 90) -> dict[str, list[dict]]:
+    """옵션체인 스냅샷(IV/그릭스 포함) → {expiry(YYYYMMDD): [{strike,right,iv,delta,bid,ask}]}.
+
+    IBClient.get_option_chain 대체 (Alpaca get_option_chain 스냅샷 API — 그릭스/IV 포함).
+    """
+    today = dt.date.today()
+    client = _option_data_client()
+    snapshots = client.get_option_chain(OptionChainRequest(
+        underlying_symbol=symbol.upper(),
+        expiration_date_gte=today,
+        expiration_date_lte=today + dt.timedelta(days=max_dte),
+    ))
+    by_expiry: dict[str, list[dict]] = {}
+    for occ_symbol, snap in snapshots.items():
+        m = _OCC_RE.match(occ_symbol)
+        if not m:
+            continue
+        yymmdd, right, strike_raw = m.groups()
+        expiry = "20" + yymmdd
+        quote = getattr(snap, "latest_quote", None)
+        greeks = getattr(snap, "greeks", None)
+        by_expiry.setdefault(expiry, []).append({
+            "strike": int(strike_raw) / 1000.0,
+            "right": right,
+            "iv": getattr(snap, "implied_volatility", None),
+            "delta": getattr(greeks, "delta", None) if greeks else None,
+            "bid": float(quote.bid_price) if quote and quote.bid_price else None,
+            "ask": float(quote.ask_price) if quote and quote.ask_price else None,
+        })
+    if len(by_expiry) > max_expiries:
+        kept = sorted(by_expiry)[:max_expiries]
+        by_expiry = {k: by_expiry[k] for k in kept}
+    return by_expiry
+
+
+_IB_BAR_SIZE_TO_TIMEFRAME = {
+    "1 min": TimeFrame(1, TimeFrameUnit.Minute), "2 mins": TimeFrame(2, TimeFrameUnit.Minute),
+    "3 mins": TimeFrame(3, TimeFrameUnit.Minute), "5 mins": TimeFrame(5, TimeFrameUnit.Minute),
+    "10 mins": TimeFrame(10, TimeFrameUnit.Minute), "15 mins": TimeFrame(15, TimeFrameUnit.Minute),
+    "20 mins": TimeFrame(20, TimeFrameUnit.Minute), "30 mins": TimeFrame(30, TimeFrameUnit.Minute),
+    "1 hour": TimeFrame(1, TimeFrameUnit.Hour), "2 hours": TimeFrame(2, TimeFrameUnit.Hour),
+    "3 hours": TimeFrame(3, TimeFrameUnit.Hour), "4 hours": TimeFrame(4, TimeFrameUnit.Hour),
+    "8 hours": TimeFrame(8, TimeFrameUnit.Hour),
+    "1 day": TimeFrame.Day, "1 week": TimeFrame.Week, "1 month": TimeFrame.Month,
+}
+
+_IB_DURATION_UNIT_DAYS = {"S": 1 / 86400, "D": 1, "W": 7, "M": 30, "Y": 365}
+
+
+def _parse_ib_duration_days(duration_str: str) -> float:
+    """IB 'duration' 문법("1 Y", "90 D" 등) → 일수. 파싱 실패 시 365일 기본값."""
+    parts = duration_str.strip().split()
+    if len(parts) == 2 and parts[1][:1] in _IB_DURATION_UNIT_DAYS and parts[0].lstrip("-").isdigit():
+        return int(parts[0]) * _IB_DURATION_UNIT_DAYS[parts[1][:1]]
+    return 365.0
+
+
+class _StockBar:
+    __slots__ = ("date", "open", "high", "low", "close", "volume")
+
+    def __init__(self, b) -> None:
+        self.date = b.timestamp
+        self.open, self.high, self.low, self.close, self.volume = (
+            float(b.open), float(b.high), float(b.low), float(b.close), float(b.volume),
+        )
+
+
+def _fetch_stock_bars(symbol: str, end_date: str, duration: str, bar_size: str) -> list[_StockBar]:
+    """IBClient.get_daily_bars(symbol, end_date, duration, bar_size) 대체 (주식 전용)."""
+    timeframe = _IB_BAR_SIZE_TO_TIMEFRAME.get(bar_size, TimeFrame.Day)
+    end = dt.datetime.now(dt.timezone.utc)
+    if end_date:
+        try:
+            end = dt.datetime.strptime(end_date.strip()[:8], "%Y%m%d").replace(tzinfo=dt.timezone.utc)
+        except ValueError:
+            pass
+    start = end - dt.timedelta(days=_parse_ib_duration_days(duration))
+    data_client = _data_client()
+    req = StockBarsRequest(symbol_or_symbols=symbol.upper(), timeframe=timeframe, start=start, end=end,
+                            feed=DataFeed.IEX)  # 무료 플랜은 최근 SIP 데이터 조회 불가
+    resp = data_client.get_stock_bars(req)
+    raw = list(resp.data.get(symbol.upper(), []))
+    return [_StockBar(b) for b in raw]
 
 
 def _fetch_kr_intraday_bars(symbol: str) -> list[dict]:

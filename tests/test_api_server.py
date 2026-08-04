@@ -1,3 +1,5 @@
+import datetime as dt
+
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch
@@ -322,20 +324,20 @@ def _make_mock_ib_bar(date_str="20250102"):
     return bar
 
 
-@patch("api_server.main.IBClient")
-def test_ib_bars_stock_structure(mock_cls):
-    inst = MagicMock()
-    inst.get_daily_bars = AsyncMock(return_value=[_make_mock_ib_bar()])
-    inst._ib.isConnected.return_value = False
-    mock_cls.return_value = inst
-    r = client.get("/ib/bars?symbol=AAPL&asset_type=stock")
+def test_ib_bars_stock_structure():
+    # 주식 브랜치는 IB Gateway 상시가동 문제로 Alpaca(_fetch_stock_bars)로 교체됨(2026-08-04).
+    bar = MagicMock()
+    bar.date = dt.datetime(2025, 1, 2, tzinfo=dt.timezone.utc)
+    bar.open, bar.high, bar.low, bar.close, bar.volume = 150.0, 155.0, 148.0, 152.0, 1_000_000.0
+    with patch("api_server.routers.alpaca_shared._fetch_stock_bars", return_value=[bar]):
+        r = client.get("/ib/bars?symbol=AAPL&asset_type=stock")
     assert r.status_code == 200
     data = r.json()
     assert data["symbol"] == "AAPL.STOCK"
     assert data["asset_type"] == "stock"
     assert data["count"] == 1
-    bar = data["bars"][0]
-    assert "ts_ms" in bar and "open" in bar and "close" in bar
+    bar_out = data["bars"][0]
+    assert "ts_ms" in bar_out and "open" in bar_out and "close" in bar_out
 
 
 @patch("api_server.main.IBClient")
@@ -356,13 +358,10 @@ def test_ib_bars_invalid_asset_type_returns_422():
     assert r.status_code == 422
 
 
-@patch("api_server.main.IBClient")
-def test_ib_bars_ib_error_returns_400(mock_cls):
-    inst = MagicMock()
-    inst.get_daily_bars = AsyncMock(side_effect=ValueError("no bars returned for FAKE"))
-    inst._ib.isConnected.return_value = False
-    mock_cls.return_value = inst
-    r = client.get("/ib/bars?symbol=FAKE&asset_type=stock")
+def test_ib_bars_ib_error_returns_400():
+    with patch("api_server.routers.alpaca_shared._fetch_stock_bars",
+               side_effect=ValueError("no bars returned for FAKE")):
+        r = client.get("/ib/bars?symbol=FAKE&asset_type=stock")
     assert r.status_code == 400
 
 

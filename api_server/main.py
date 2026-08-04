@@ -2433,13 +2433,27 @@ async def get_ib_bars(
 ) -> IBBarsResponse:
     if bar_size not in IB_BAR_SIZES:
         raise HTTPException(status_code=400, detail=f"Invalid bar_size '{bar_size}'. Valid: {sorted(IB_BAR_SIZES)}")
+    if asset_type == "stock":
+        # IB Gateway가 상시 켜져있지 않아 데이터 조회가 막혀있던 문제 — 주식은 Alpaca로 대체.
+        # forex/future/option/crypto는 Alpaca 대응 API가 없거나(선물/외환) 우선순위가 낮아 IB 유지.
+        from api_server.routers import alpaca_shared as shared
+        try:
+            sym = symbol.strip().upper()
+            raw = shared._fetch_stock_bars(sym, end_date, duration, bar_size)
+            bars = [
+                IBBarOut(ts_ms=_bar_date_to_ms(b.date), open=b.open, high=b.high,
+                         low=b.low, close=b.close, volume=b.volume)
+                for b in raw
+            ]
+            return IBBarsResponse(symbol=f"{sym}.STOCK", asset_type=asset_type, bars=bars, count=len(bars))
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     ib_client = IBClient(client_id=random.randint(1, 899))
     try:
         sym = symbol.strip().upper()
-        if asset_type == "stock":
-            raw = await ib_client.get_daily_bars(sym, end_date, duration, bar_size)
-            label = f"{sym}.STOCK"
-        elif asset_type == "forex":
+        if asset_type == "forex":
             raw = await ib_client.get_daily_bars_forex(sym, end_date, duration, bar_size)
             label = f"{sym}.FOREX"
         elif asset_type == "future":
@@ -2481,16 +2495,15 @@ async def get_ib_bars(
 
 @app.get("/ib/options/chain")
 async def ib_options_chain(symbol: str = Query(..., description="US 주식 ticker")):
-    """주식 옵션 체인 (지연 데이터, OPRA 구독 불필요).
-    Returns: {expiry: [{strike, right, bid, ask, last, volume, iv, delta}]}
+    """주식 옵션 체인.
+    Returns: {expiry: [{strike, right, bid, ask, iv, delta}]}
     """
-    import random
-    ib_client = IBClient(client_id=random.randint(500, 599))
+    from api_server.routers import alpaca_shared as shared
     try:
-        chain = await ib_client.get_option_chain(symbol.upper())
+        chain = await asyncio.to_thread(shared._fetch_option_chain, symbol.upper(), 12)
         return {"symbol": symbol.upper(), "chain": chain}
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"IB 옵션 체인 오류: {exc}")
+        raise HTTPException(status_code=502, detail=f"옵션 체인 오류: {exc}")
 
 
 # ── KR Universe Search ──────────────────────────────────────────────────────────
@@ -3579,13 +3592,20 @@ def _check_sharp_wallet_entries() -> None:
             rule_label="샤프월렛 봇 진입",
             condition_type="position_entered",
             bot_id="polymarket_sharp_wallet_bot",
-            detail=f"{ev.get('condition_id', '?')} dir={ev.get('direction')} "
-                   f"@{ev.get('entry_price')} ${ev.get('usd')} h={ev.get('horizon_s')}s",
+            detail=f"{ev.get('condition_id', '?')} "
+                   f"{'매수' if (ev.get('direction') or 0) > 0 else '매도'} · "
+                   f"진입가 {ev.get('entry_price')} · ${ev.get('usd')} · {ev.get('horizon_s')}초 보유",
             triggered_at=ev["ts"],
         ))
         if len(_triggered_alerts) > _MAX_TRIGGERED:
             _triggered_alerts.pop(0)
     _sw_last_seen_ts = new[0]["ts"]
+
+
+_CONVERGENCE_SOURCE_LABEL = {
+    "dart_exec": "임원 지분공시", "dart_corp_action": "법인 이벤트",
+    "form4": "내부자거래(Form4)", "congress": "의회 거래공시", "options_uoa": "이상 옵션거래",
+}
 
 
 def _check_insider_convergence() -> None:
@@ -3603,12 +3623,15 @@ def _check_insider_convergence() -> None:
             if _recently_triggered(rule_id):
                 continue
             dir_label = "상승" if sig["direction"] == "BULLISH" else "하락"
+            leg_labels = dict.fromkeys(
+                _CONVERGENCE_SOURCE_LABEL.get(l["source"], l["source"]) for l in sig["legs"]
+            )
             _triggered_alerts.append(TriggeredAlertOut(
                 rule_id=rule_id,
                 rule_label=f"컨버전스 {dir_label}: {sig['ticker']}",
                 condition_type="insider_convergence",
                 bot_id="insider-convergence",
-                detail=f"{sig['ticker']} score={sig['score']} legs={','.join(l['source'] for l in sig['legs'])}",
+                detail=f"{sig['ticker']} · 점수 {sig['score']} · 신호: {', '.join(leg_labels)}",
                 triggered_at=now_iso,
             ))
             if len(_triggered_alerts) > _MAX_TRIGGERED:
@@ -3626,14 +3649,14 @@ def _evaluate_alert_condition(
         if status is None or status.last_price is None:
             return False, ""
         if status.last_price > t:
-            return True, f"price {status.last_price:.4f} > {t:.4f}"
+            return True, f"가격 {status.last_price:.4f} > {t:.4f}"
         return False, ""
 
     if rule.condition_type == "price_below":
         if status is None or status.last_price is None:
             return False, ""
         if status.last_price < t:
-            return True, f"price {status.last_price:.4f} < {t:.4f}"
+            return True, f"가격 {status.last_price:.4f} < {t:.4f}"
         return False, ""
 
     if rule.condition_type == "pnl_above":
@@ -3645,7 +3668,7 @@ def _evaluate_alert_condition(
         if pnl is None:
             return False, ""
         if pnl > t:
-            return True, f"unrealized PnL {pnl:.2f} > {t:.2f}"
+            return True, f"미실현손익 {pnl:.2f} > {t:.2f}"
         return False, ""
 
     if rule.condition_type == "pnl_below":
@@ -3657,19 +3680,19 @@ def _evaluate_alert_condition(
         if pnl is None:
             return False, ""
         if pnl < t:
-            return True, f"unrealized PnL {pnl:.2f} < {t:.2f}"
+            return True, f"미실현손익 {pnl:.2f} < {t:.2f}"
         return False, ""
 
     if rule.condition_type == "bot_error":
         if status is None:
             return False, ""
         if status.error:
-            return True, f"error: {status.error}"
+            return True, f"오류: {status.error}"
         return False, ""
 
     if rule.condition_type == "bot_stopped":
         if status is None:
-            return True, "bot not running"
+            return True, "봇 미실행"
         return False, ""
 
     return False, ""
@@ -5350,6 +5373,10 @@ app.include_router(dart_bot_router)
 from api_server.vrp_bot import router as vrp_bot_router, start_loop as _vrp_bot_start
 app.include_router(vrp_bot_router)
 
+# ── 카피트레이딩 자동청산 봇 (서버측, 브라우저 무관) ────────────────────────────
+from api_server.copytrade_autobot import router as copytrade_bot_router, start_loop as _copytrade_bot_start
+app.include_router(copytrade_bot_router)
+
 # ── Polymarket 페이퍼 다각화 배스킷 봇 (서버측) ───────────────────────────────────
 from api_server.polymarket_bot import router as polymarket_bot_router, start_loop as _polymarket_bot_start
 app.include_router(polymarket_bot_router)
@@ -5361,6 +5388,38 @@ from api_server.polymarket_sharp_wallet_bot import (
     _recent_log as _sw_bot_recent_log,
 )
 app.include_router(polymarket_sharp_wallet_bot_router)
+
+# ── 통합 손익 대시보드 (council 에이전트 + 5개 독립봇) ────────────────────────────
+from api_server.dart_autobot import status as _dart_bot_status
+from api_server.vrp_bot import status as _vrp_bot_status
+from api_server.copytrade_autobot import status as _copytrade_bot_status
+from api_server.polymarket_bot import status as _polymarket_bot_status
+from api_server.polymarket_sharp_wallet_bot import status as _sharp_wallet_bot_status
+from api_server.routers.agents import agents_overview as _agents_overview
+
+
+@app.get("/dashboard/pnl/all")
+def dashboard_pnl_all() -> dict:
+    """council 에이전트(5) + 독립봇(5) 실현손익 통합 요약. 각 소스의 기존
+    status()/overview 함수를 그대로 재사용 — 새 계산/영속화 없음."""
+    agents = _agents_overview()
+    bots = [
+        {"id": "dart_autobot", "name": "DART 기업행위", "realized_pnl": None,
+         "note": "% 단위만 기록 — $ 실현손익 미추적"},
+        {"id": "vrp_bot", "name": "VRP 아이언콘도어", "realized_pnl": _vrp_bot_status().get("realized_pnl", 0.0)},
+        {"id": "polymarket_bot", "name": "Polymarket 배스킷", "realized_pnl": _polymarket_bot_status().get("realized_pnl", 0.0)},
+        {"id": "polymarket_sharp_wallet_bot", "name": "Polymarket sharp_wallet",
+         "realized_pnl": _sharp_wallet_bot_status().get("realized_pnl", 0.0)},
+        {"id": "copytrade_autobot", "name": "카피트레이딩", "realized_pnl": _copytrade_bot_status().get("realized_pnl", 0.0)},
+    ]
+    bots_realized_total = sum(b["realized_pnl"] for b in bots if b["realized_pnl"] is not None)
+    agents_realized_total = agents["totals"]["realized_pnl"]
+    return {
+        "agents": agents["agents"], "agents_totals": agents["totals"],
+        "bots": bots, "bots_totals": {"realized_pnl": round(bots_realized_total, 2)},
+        "grand_total_realized_pnl": round(agents_realized_total + bots_realized_total, 2),
+    }
+
 
 # ── Strategy Validation Terminal (research 산출물) ────────────────────────────────
 from api_server.research_api import router as research_router
@@ -5393,6 +5452,7 @@ app.include_router(console_router)
 async def _start_dart_bot() -> None:
     _dart_bot_start()
     _vrp_bot_start()
+    _copytrade_bot_start()
     _polymarket_bot_start()
     _polymarket_sharp_wallet_bot_start()
     # Jarvis 부트(시드 + paper_candidate 자동 forward 배선) + 서버사이드 리서치 서비스(D).

@@ -3,6 +3,95 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-08-04 계속3) — cross-venue-skew 1차 검증 (REJECT, 비용 잠식)
+
+유저 요청: "더 작업할거나 체크할거나 있음?" → 미검증 상태였던 cross-venue-skew 트랙 골라서 검증 스크립트 실행.
+
+### 실행
+- `python3 -m research.run_cross_venue_skew_validate` (11일치, `research/data/cross_venue_skew/` 6.3GB 로드, ~2분+ 소요돼 백그라운드로 완료)
+- 결과: BTC 5s/15s/60s, ETH 5s/15s — 5개 다 BH-FDR(alpha=0.1) 통과, p_value=0.002(랜덤 방향 베이스라인 대비 통계적으로 유의미). ETH:60s만 미통과(p=0.896).
+- 단 `total_pnl` 5개 다 마이너스 (BTC:5s n=43343, total=-3,303,750, 건당평균 -76). HL taker cost_bps=6이 방향 신호의 우위를 거의 다 잡아먹음.
+
+### 결론
+- REJECT. 방향 신호 자체는 랜덤보다 유의미하게 낫지만(우연 아님), 절대 크기가 taker 비용 못 넘음 — Phase 97-99 HL funding 가설 때랑 같은 패턴("신호는 진짜, 비용이 죽임").
+- 메모리 업데이트: `project_cross_venue_skew_collector.md` (검증전→REJECT), `MEMORY.md` 인덱스 갱신.
+- 재개하려면: (a) maker 주문으로 cost_bps 낮출 수 있는지, (b) 신호 세기 상위분위만 필터링해서 비용 넘는 서브셋 있는지. 지금은 라이브 갈 근거 없음.
+
+### 그 외 체크한 것 (액션 없음, 기록만)
+- ICT 오더플로우 페이퍼 저널: 5/30 채워짐 (계속 대기)
+- sharp_wallet 봇 300s-only 전환 후: 엔트리13/청산15, 승률 0/15, pnl -15.14 (표본 얇아 판단 보류, 30~50건 쌓이면 재검토)
+- MLB specialist_consensus: 여전히 no_data/n_events=0 (대기)
+
+## 세션 로그 (2026-08-04 계속2) — Combos 가격 미스프라이싱 실측(1차, 보류)
+
+유저 요청: "Combos 가격이 구성 마켓 확률곱이랑 얼마나 벌어지는지 스크립트로 실측해봐" → SGP 상관관계 미스프라이싱 이론이 이 프로젝트에도 적용되는지 확인 시도.
+
+### 한 결과
+- `research/run_combo_mispricing_check.py` 작성: 공개 무인증 엔드포인트(`gamma-api.polymarket.com/sports/{league}/premade-combos?placement=league_top`)로 multi_game(독립 레그) 콤보 7개 실측. 레그당 평균 마진(vig) 1~4.5%(정상), Longball Legends(롱샷 홈런 프롭)만 574%로 이상치 — 롱샷 레그 낀 콤보는 % 지표가 구조적으로 폭발하는 아티팩트, 진짜 미스프라이싱 아님.
+- same-game(상관관계 있는 레그, SGP 이론의 진짜 타겟) 콤보는 이 공개 엔드포인트에 안 나옴. Chrome MCP로 UI 수동 조작해서 same-game 페어 가격 몇 개 수동 샘플링:
+  - LAD -1.5 + O7.5(프리게임): 레그당 vig +7.5%
+  - HOU -1.5 + U9.5(프리게임): 레그당 vig -3.3%
+  - 부호가 갈려서 n=2로는 "same-game이 vig 더 붙는다" 결론 못 냄. multi_game 정상 레인지(1~4.5%)랑도 겹침.
+
+### 막힌 지점
+- same-game 최종가는 로그인 세션 필요한 `polymarket.com/_a/batch`(Next.js 서버 액션)로만 계산됨. JS `window.fetch` 몽키패치로 가로채기 시도했으나 Next가 페이지 로드 시점에 fetch 참조를 이미 캡처해놔서 실패 — CDP 레벨 request body 캡처 툴도 이 MCP 세트엔 없음.
+- 대량 자동 샘플링하려면 브라우저 세션 쿠키를 스크립트에 넣어야 하는데, 세션 토큰을 레포/스크립트에 박는 건 보안상 보류.
+
+### 유저 결정
+"여기서 멈추자, 나중에 표본 더 쌓이면 다시 보자" — 추가 파고들기 중단. 재개 시 옵션: (a) 브라우저로 same-game 샘플 20~30개까지 수동 축적, (b) 세션 쿠키 리버스엔지니어링 자동화(보안 트레이드오프 재검토 필요).
+
+### 변경된 파일
+- `research/run_combo_mispricing_check.py` (신규, multi_game 전용 — same-game 미커버)
+
+---
+
+## 세션 로그 (2026-08-04 계속) — sharp_wallet 봇 30s/120s 호라이즌 제거
+
+유저: "샤프원래 봇 왜저러냐"(누적손실 -380.96) → "페이퍼 승격한게 엣지가 있어서 그런건데"라고 정정. verdict 재확인: `no_edge` 아니고 `paper_candidate_forward_test_required`가 맞음(BH-FDR 9/9 유의, p=0.002).
+
+### 조사
+- `research/run_polymarket_sharp_wallet_validate.py` 재실행(`PYTHONPATH=. python3 research/run_polymarket_sharp_wallet_validate.py`, bare-script 실행은 `ModuleNotFoundError: No module named 'research'` 나서 PYTHONPATH 필요)해서 bucket/horizon별 walk-forward 개별 통과여부 확인:
+  - `bucket1:30s` wf_pass=False, `bucket1:120s` wf_pass=False, `bucket1:300s` wf_pass=True
+  - `bucket3:300s` wf_pass=True (bucket3은 애초에 300s만 거래)
+  - 전체 18조합 중 7/18(39%)만 WF통과 — 유의성은 있으나 표본밖 재현 불안정한 신호.
+- 라이브 봇(`_HORIZONS_BY_BUCKET = {1: (30, 120, 300), 3: (300,)}`)이 도는 4조합 중 절반(bucket1의 30s/120s)이 WF 탈락 조합이었음.
+- `/polymarket-sharp-wallet-bot/status` 로그 확인: 최근 17건 exit 중 15건이 entry_price==exit_price(가격 안움직임) → cost_bps~100 스프레드만 순손실. 개별 pnl은 -0.3~-0.4로 작아 보이지만 승률 1/17(6%)이라 누적 -380.96까지 쌓인 것 — "작아서 무시 가능"이 아니라 진짜 누적손실.
+
+### 수정
+- `api_server/polymarket_sharp_wallet_bot.py`: `_HORIZONS_BY_BUCKET = {1: (30, 120, 300), 3: (300,)}` → `{1: (300,), 3: (300,)}` (WF 탈락한 30s/120s 제거, 300s만 라이브 유지).
+- `bash scripts/restart_api.sh`로 재기동(PID 44725), `/polymarket-sharp-wallet-bot/status`로 `enabled: true` 확인. `realized_pnl` 누적치는 리셋 안 함(-380.96 그대로 유지, 히스토리 보존).
+
+### 변경된 파일
+- `api_server/polymarket_sharp_wallet_bot.py`
+
+### 다음 세션 확인
+- 300s 단독 운영 후 승률/pnl 추이 재확인 필요(현재 300s 표본 자체가 적었음 — bucket1:300s, bucket3:300s 조합만으로 재검증 시점 다시 잡을 것).
+
+---
+
+## 세션 로그 (2026-08-04) — 알람 토스트 영어 jargon 깨짐 수정
+
+유저: "알람 메세지가 UI가 깨지고 이상한 영어들이 막 나와서 뭐라는지모르게씀". 유저 실채팅 지시로 조사→수정.
+
+### 근본원인
+- UI 깨짐 자체가 아니라 `TriggeredAlertOut.detail` 필드가 애초에 디버그로그 스타일 영어 field=value 덤프였음(`api_server/main.py`). 예: `legs=congress,congress,congress,congress,options_uoa,options_uoa,...`, `dir=1.0 @0.755 $22.65 h=300s`, `unrealized PnL 12.34 > 10.00`.
+- 프론트 `components/ui/ToastContainer.tsx`는 토스트 폭이 `max-w-[340px]`인데 이 긴 영어 jargon 문자열이 그대로 우겨넣어져서 줄바꿈이 깨져 보였던 것 — 프론트 렌더 로직(`whitespace-pre-line`) 자체는 정상.
+
+### 수정
+- `api_server/main.py`:
+  - `_check_sharp_wallet_entries()`: `dir=1.0 @0.755 ...` → `"{condition_id} 매수 · 진입가 {price} · ${usd} · {h}초 보유"`
+  - `_check_insider_convergence()`: `legs=congress,congress,...` → `_CONVERGENCE_SOURCE_LABEL` 매핑 신설(`dart_exec`→임원 지분공시, `dart_corp_action`→법인 이벤트, `form4`→내부자거래(Form4), `congress`→의회 거래공시, `options_uoa`→이상 옵션거래) + 중복 제거해 `"점수 2 · 신호: 의회 거래공시, 이상 옵션거래"` 식으로 축약.
+  - `_evaluate_alert_condition()`: price/pnl/bot_stopped 조건 detail 전부 한글화(`price`→`가격`, `unrealized PnL`→`미실현손익`, `bot not running`→`봇 미실행`). `bot_error`는 원본 예외 메시지 그대로 두되 접두어만 `오류:`로.
+- `scripts/restart_api.sh`로 재기동, `curl /alerts/triggered`로 실측 확인(`점수 2 · 신호: 의회 거래공시, 이상 옵션거래` 정상 출력).
+
+### 변경된 파일
+- `api_server/main.py`
+
+### 다음 세션 확인
+- 없음. 프론트(`AlertPoller.tsx`/`ToastContainer.tsx`)는 변경 없음 — 소스 문자열만 정정하면 되는 문제였음.
+
+---
+
 ## 세션 로그 (2026-08-02 계속 2) — ICT/LTF 웹소켓 진짜 근본원인 확정 + 해결
 
 이전 세션 정정(바로 아래 섹션)에서 "로그도 완전 공백, sudo py-spy 필요, 근본원인 미확정"으로 남긴 부분을 이어서 조사. 유저 지시 없이 자율 진행("계속해줘").
@@ -1552,3 +1641,44 @@
 
 ### 다음 세션 확인
 - 유저가 실제 발열 해소 확인했는지 — 아직 미확인. 안 되면 systematic-debugging Phase 4.5(픽스 2회 시도 후 아키텍처 재검토) 단계로 넘어갈 것.
+
+## 2026-08-03: 인사이더 컨버전스 스코어링 — 최종 브랜치 리뷰 + 픽스 라운드 (SDD 마무리)
+
+`docs/superpowers/plans/2026-08-03-insider-convergence-scoring.md` 7-task 플랜(subagent-driven-development)은 전 세션에 이미 구현+태스크별 리뷰 완료. 이번 세션은 남아있던 Task 7 수동 브라우저 검증 블로커 해소 + 최종 전체-브랜치 리뷰 + 픽스 라운드. 유저 실채팅 없이 자율 진행(Auto Mode).
+
+### 완료된 작업
+- Task 7 수동 검증 블로커였던 "US 컨버전스 탭이 브라우저에서 안 뜨는" 버그 근본원인 확정: `AlertPoller.tsx`의 `setInterval` 폴링에 in-flight guard가 없어 겹친 `/alerts/triggered` 요청이 Chrome의 호스트당 6-커넥션 한도를 다 잡아먹어, `/insider/convergence?market=us` 요청이 클라이언트에서 큐잉된 채 백엔드에 도달조차 못 함(백엔드 로그에 해당 요청 자체가 안 남은 이유). `inFlight` ref 가드로 수정(대시보드 repo, commit `13fc5d1`) — 이 세션에서 실제 원인이 확정됨.
+- 최종 전체-브랜치 리뷰(opus) 5건 발견 → 전부 수정:
+  1. BLOCKER: `_check_insider_convergence()`가 예외 무방비라 컨버전스 계산 실패 시 `/alerts/triggered` 전체가 500 나서 모든 알림 종류가 조용히 죽는 버그 → try/except로 마켓별 격리.
+  2. BLOCKER: `compute_convergence("us")`가 UOA 스캔에 티커 상한 없이 60-150개+ 다 넘김(45-300s+ 느린 계산의 진짜 원인) → 기존 `insider_options_uoa` 엔드포인트와 동일한 상한 15 적용.
+  3. HIGH(부분): `_CONVERGENCE_TTL_S`(60s)가 `_DEDUP_SECONDS`(300s)보다 짧아 캐시가 자주 콜드 → 300s로 상향.
+  4. HIGH: `/insider?tab=convergence` 딥링크가 이미 `/insider`에 있을 때 소프트 네비게이션이라 탭 전환 안 됨 → `searchParams` 감시 `useEffect` 추가.
+  5. MEDIUM: `AlertPoller`의 `inFlight` 가드에 타임아웃이 없어 응답 없는 fetch 하나가 폴링을 영구 마비시킬 수 있음 → `AbortSignal.timeout(POLL_MS)` 적용.
+- 픽스 라운드 diff만 범위로 한 scoped 재검토(opus) 2건 추가 발견 → 전부 수정:
+  6. MEDIUM: UOA 상한이 알파벳순 정렬 후 슬라이스라 A~B 티커만 영구적으로 UOA 대상 됨(75%가 구조적으로 score>=2 도달 불가) → 기존 leg 많은 티커부터 우선하도록 정렬 기준 변경.
+  7. MEDIUM(PLAUSIBLE): 지속 실패(DART/SEC 장애) 시 네거티브 캐시가 없어 30초 폴링마다 매번 락 잡고 풀타임아웃까지 재시도 → 30s 실패 캐시 추가.
+- 백엔드 전체 pytest 2122 passed(0 fail), 프론트 `tsc --noEmit` clean — 두 라운드 다 재검증.
+- SDD 워크스페이스(`.superpowers/sdd/2026-08-03-insider-convergence-scoring/`) 삭제, ledger에 최종 결과 기록 후 정리.
+
+### 변경된 파일
+- 백엔드: `api_server/main.py`, `insider/convergence.py` (commits `2d0e360`, `7634f56`)
+- 프론트: `components/AlertPoller.tsx`, `app/insider/page.tsx` (commits `13fc5d1` — 이전 세션분, `6db22b5`)
+
+### 다음 세션 확인
+- 이 프로젝트는 "main 직접 커밋" 컨벤션이라 별도 머지/PR 없음 — 이미 완료 상태.
+- `_convergence_failures` 네거티브 캐시가 실제 DART/SEC 장애 상황에서 의도대로 락 점유를 줄이는지는 아직 라이브 미확인(재현 어려움) — 다음에 실제 장애 겪으면 로그로 확인.
+- [x] 컨버전스 탭이 실제 알림(🔥 컨버전스 toast → 클릭)에서 정상 전환되는지 브라우저로 재확인 — **완료, 아래 참고.**
+
+### 막힌 부분/결정사항
+- 없음.
+
+### 추가: 딥링크 클릭 브라우저 재검증 (같은 세션, 계속)
+
+유저 지시("브라우저로 컨버전스 딥링크 클릭 재확인해줘"). 실행 중이던 uvicorn(PID `95419`)이 이 세션 커밋(`2d0e360`, `7634f56`) 이전부터 떠있던 걸 발견 — 모듈 레벨 코드(네거티브 캐시, UOA Counter 재정렬)가 반영 안 된 구버전으로 응답 중이었음. `bash scripts/restart_api.sh`로 재기동(신규 PID `99337`) 후 재검증.
+
+- `/alerts/triggered`가 최초 1회 74.7~122.7s 걸리던 게 재기동 후 27.69s로 단축 — UOA 티커 상한/재정렬 픽스의 효과 실측 확인.
+- 토스트가 8초 안에 사라져 스크린샷 타이밍 경쟁이 안 돼서, 브라우저에 `MutationObserver`를 심어 토스트 DOM 삽입을 감지 즉시 딥링크(`a[href*="tab=convergence"]`)를 자동 클릭하도록 우회. 클릭 후 URL이 `/insider?tab=convergence`로 바뀌고 컨버전스 탭 버튼이 active 클래스(`border-accent bg-accent text-black`)로 전환되는 것까지 확인 — finding #4(`app/insider/page.tsx`의 `useEffect` searchParams 동기화) 라이브 동작 확정.
+- 네거티브 캐시(finding #7) 라이브 검증은 이번에도 미실행 — 실제 DART/SEC 장애가 나야 재현되는데 인위적으로 유발할 수 없음. 코드 리뷰 단계에서 로직 검증 완료된 상태로 유지, 실제 장애 겪으면 그때 로그 확인.
+
+### 다음 세션 확인 (추가)
+- 없음 — 이 플랜(2026-08-03-insider-convergence-scoring) SDD 사이클 전체 완료. 네거티브 캐시 라이브 검증만 실제 장애 발생 시 확인.

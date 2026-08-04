@@ -52,8 +52,10 @@ def check_pair(pair: dict, get_book_fn=get_order_book) -> dict | None:
         return None
     price_a = (book_a["best_bid"] + book_a["best_ask"]) / 2.0
     price_b = (book_b["best_bid"] + book_b["best_ask"]) / 2.0
-    spread_a = spread_bps_from_book(book_a) or POLYMARKET_SPREAD_BPS
-    spread_b = spread_bps_from_book(book_b) or POLYMARKET_SPREAD_BPS
+    spread_a_raw = spread_bps_from_book(book_a)
+    spread_a = spread_a_raw if spread_a_raw is not None else POLYMARKET_SPREAD_BPS
+    spread_b_raw = spread_bps_from_book(book_b)
+    spread_b = spread_b_raw if spread_b_raw is not None else POLYMARKET_SPREAD_BPS
     violation = compute_violation(
         pair["pattern_type"], pair.get("direction"), price_a, price_b, spread_a, spread_b,
     )

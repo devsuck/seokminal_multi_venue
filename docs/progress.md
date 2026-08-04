@@ -3,6 +3,33 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-08-04 계속4) — Polymarket 크로스이벤트 함의관계 위반 모듈 신규 구축 (SDD 6태스크 + 최종리뷰 완료)
+
+브레인스토밍→스펙→플랜(`docs/superpowers/plans/2026-08-04-polymarket-market-implication.md`, 스펙 `docs/superpowers/specs/2026-08-04-polymarket-market-implication-design.md`)을 거쳐 subagent-driven-development로 신규 연구 모듈 구축. cross-venue-skew(비용잠식 REJECT)와 다른 축 — 트레이더 행동 추정이 아니라 **논리적 함의관계 위반**(예: "예선승리"→"본선승리" 부등식 위반) 탐지.
+
+### 완료된 작업
+- 6개 태스크 전부 SDD(fresh subagent 구현→리뷰→fix loop) 완료: `entity_tags.py`(LLM엔티티태깅+캐시), `pairing.py`(만기매칭 후보쌍), `hypotheses/polymarket_market_implication.py`(함의판정+위반폭), `run_..._collect.py`(일1회 수집), `run_..._watch.py`(시간당 워치+위반로깅), `run_..._report.py`(pattern_type별 집계).
+- Task 5에서 fix 1라운드: `spread_bps_from_book(book) or DEFAULT` truthy체크가 정상적인 0.0 스프레드를 오버라이드하던 버그 → `is not None`으로 수정.
+- **최종 브랜치 리뷰(opus)에서 Critical 1건 + Important 4건 발견, fix 1라운드로 전부 해결**:
+  - Critical: `watch.run_once()`가 미해결 위반을 매시간 중복 기록해 `MIN_FORWARD_N=20` 표본부족 게이트가 쌍 1개로 뚫릴 수 있었음(이 모듈 존재 이유를 정면으로 깨는 버그) → open pair_key dedup 추가.
+  - Important: (a) 같은 이벤트 내 마켓쌍이 걸러지지 않아 기존 `polymarket_event_divergence`와 신호가 겹칠 뻔함 → `event_id` 동일쌍 제외. (b) LLM이 "무관"으로 판정한 쌍이 캐싱 안 돼 후보 큐 앞자리를 매일 재점거 → 영구 기아 상태 가능성 → `rejected_pairs.jsonl` 부정판정 캐시 추가. (c) 태스크 간 스키마 계약을 검증하는 테스트가 0개 → collect→watch→report 통합테스트 1개 추가. (d) 테스트가 `entity_tags._CACHE_PATH`를 패치 안 해 실제 레포 데이터 디렉토리에 오염(`entity_cache.json` 잔재 실측 확인) → 격리 수정+잔재 삭제.
+  - 커밋 `676c4a0`, 스코프 재리뷰 클린(7건 전부 ADDRESSED, 신규이슈 없음). 전체 스위트 2190 passed.
+- 커밋 `366b0d7`로 스펙/플랜 문서도 커밋(이전 세션에 미커밋 상태였음).
+
+### 아직 안 한 것 (Post-Plan, 사용자 확인 필요)
+- **tmux 상시 수집 시작 여부** — collector/watch 둘 다 코드는 완성됐지만 아직 라이브로 안 켬. 시작 전 Groq `llama-3.3-70b-versatile` 모델명이 실제로 유효한지 1회 실호출 확인 필요(구현 시점에 안 함 — deprecated/변경됐으면 `_MODEL` 상수만 갱신하면 됨).
+- 최종리뷰가 남긴 non-blocking 후속과제(안 고침, 기록만): `entity_cache.json`이 `.gitignore` 안 됨(무해하나 테스트오염 표면), 엔티티 대소문자 정규화(casefold), `save_violations` 원자적쓰기(tmp+rename) 아님(쓰다 죽으면 포워드로그 유실 가능), `resolve_pending`이 만기 안 지난 건까지 매시간 폴링(API 낭비).
+- §6 검증 방법론(정성 QA 오탐률 + 포워드 N≥20~30건 pnl)은 라이브 수집 시작 후에나 착수 가능 — 지금은 순수 코드 완성 상태.
+
+### 변경/신규 파일
+- `research/polymarket_market_implication/{__init__,entity_tags,pairing}.py`, `research/hypotheses/polymarket_market_implication.py`, `research/run_polymarket_market_implication_{collect,watch,report}.py`, 관련 테스트 8개 파일(단위+통합), `.gitignore`(신규 데이터디렉토리 추가), `docs/superpowers/{plans,specs}/2026-08-04-polymarket-market-implication-*`
+
+### 다음 세션 확인
+- [ ] 사용자에게 tmux 상시수집 시작 여부 확인(Groq 모델명 1회 검증 먼저)
+- [ ] 시작 후: §6 QA 오탐률(위반 30~50건 사람이 직접 훑기) + 포워드 N≥20~30 pnl 집계 — 표본 쌓이는 대로 재검토
+
+---
+
 ## 세션 로그 (2026-08-04 계속3) — cross-venue-skew 1차 검증 (REJECT, 비용 잠식)
 
 유저 요청: "더 작업할거나 체크할거나 있음?" → 미검증 상태였던 cross-venue-skew 트랙 골라서 검증 스크립트 실행.

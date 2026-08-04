@@ -3,6 +3,23 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-08-05) — options_uoa 이벤트 로깅 수집기 신규 추가
+
+사용자 질문: "옵션 만기짧은데 큰 물량 들어오면 내부자매매 의심해서 따라매매 — 엣지 있나? 노이즈면 임계값 올리면 되나?" 조사 결과 `insider/options_uoa_client.py`(탐지 로직)와 `insider/convergence.py`(다른 leg와 겹칠 때만 알람)만 있고 **저장이 전혀 안 됨** — 임계값 검증 자체가 불가능한 상태. registry(`experiment_registry.jsonl`)에도 options_uoa/insider_convergence 항목 0건.
+
+4단계 검증경로 제안(로깅→사후N일수익률 추적→임계값 스윕→BH-FDR 정식등록) 후 1단계 승인받아 구현.
+
+### 완료된 작업
+- `research/run_options_uoa_collect.py` 신규: `research/data/options_uoa/YYYY-MM-DD.jsonl`에 UOA 이벤트 로깅. 티커유니버스는 `/insider/options-uoa` 엔드포인트 미지정폴백과 동일(Form4+의회매매 최근 티커, cap 15). dedup은 `contract_symbol+scan_date` 키를 당일 파일에서 로드해 재판정 스킵(재시작에도 안전 — market_implication 컬렉터와 동일 패턴). `run_once`/`run_forever`+try/except 지수백오프(polymarket_arb/updown_arb 크래시루프 교훈 그대로 적용). 30분 폴링(옵션체인 스캔이라 느림).
+- fleet health 등록: `api_server/fleet_health.py` STALE_AFTER_S에 `options_uoa: 3600`(폴링주기 2배), `api_server/lab_api.py` COLLECTOR_SESSIONS + `/lab/fleet` processes dict에 등록(과거 gex_snapshot 미등록 방치 사고 재발 방지).
+- `scripts/deploy/ensure_collectors.sh` ENSURE 목록에 추가 — launchd가 죽으면 자동 재기동.
+- 테스트 7개 신규(`tests/test_run_options_uoa_collect.py`) — dedup/backoff/candidate_tickers 소스실패내성 등. 전체 스위트 2197 passed.
+- tmux `options-uoa` 세션으로 상시 기동, 첫 스캔 검증 완료(GOOGL 등 10건 로깅 확인, 크래시 없음). 커밋 `fa80759`.
+
+### 다음 할 일
+- 데이터 며칠 쌓이면: 사후 N일 수익률 추적 스크립트, 이후 vol/OI 임계값 스윕(노이즈 많으면 올려서 개선되는지 실측), 표본 쌓이면 BH-FDR+워크포워드로 정식 등록.
+- (아직 미착수, 별건) Polymarket market-implication 모듈 tmux 라이브 수집 시작 — Groq 모델명 1회 실호출 검증 먼저 필요.
+
 ## 세션 로그 (2026-08-04 계속4) — Polymarket 크로스이벤트 함의관계 위반 모듈 신규 구축 (SDD 6태스크 + 최종리뷰 완료)
 
 브레인스토밍→스펙→플랜(`docs/superpowers/plans/2026-08-04-polymarket-market-implication.md`, 스펙 `docs/superpowers/specs/2026-08-04-polymarket-market-implication-design.md`)을 거쳐 subagent-driven-development로 신규 연구 모듈 구축. cross-venue-skew(비용잠식 REJECT)와 다른 축 — 트레이더 행동 추정이 아니라 **논리적 함의관계 위반**(예: "예선승리"→"본선승리" 부등식 위반) 탐지.

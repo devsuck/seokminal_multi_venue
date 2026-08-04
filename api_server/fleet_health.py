@@ -31,6 +31,7 @@ STALE_AFTER_S: dict[str, int] = {
     "polymarket_updown_arb": 1800,
     "polymarket_event_divergence": 1800,
     "polymarket_mlb_specialist_tick": 7200,  # 저유동성 체결 간격 30~110분 실측(2026-08-01) — 900s는 상시 오탐
+    "options_uoa": 3600,              # 30분 폴링 — 폴링주기 2배로 오탐 방지
 }
 
 STUCK_MULTIPLIER = 4                 # 임계의 4배 넘게 stale이면 stuck(장시간 방치 의심)

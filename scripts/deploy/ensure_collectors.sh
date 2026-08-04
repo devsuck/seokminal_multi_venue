@@ -30,6 +30,7 @@ ENSURE=(
   "polymarket-sharp-wallet-tick|research.run_polymarket_sharp_wallet_collect"
   "polymarket-mlb-specialist-tick|research.run_mlb_specialist_collect"
   "polymarket-event-divergence|research.run_polymarket_event_divergence_scan"
+  "options-uoa|research.run_options_uoa_collect"
 )
 
 for entry in "${ENSURE[@]}"; do

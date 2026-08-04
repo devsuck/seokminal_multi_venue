@@ -33,18 +33,19 @@ from research.validation.multiple_testing import benjamini_hochberg
 DATA_DIR = "research/data/mlb_specialist"
 RANKING_METRICS = ["pnl", "winrate", "roi"]
 THRESHOLDS = ["majority", "unanimous"]
-N_VALUES = [4, 5]
+N_VALUES = [8, 10]  # 실측(2026-08-02) 게이트 통과 풀 14명 — 4/5는 min_present=3 대비 너무 얕아 신호 0건
 MIN_EVENTS = 10
 N_RUNS = 500
 SEED = 42
 TRADE_SIZE = 1.0
 COST_BPS = polymarket_effective_cost_bps()
 # 스페셜리스트 게이트(스펙 §3.2 MIN_BETS/MIN_SPEC — 값 미지정이라 leaderboard 테스트
-# 선례 그대로 사용). 컨센서스 파라미터(스펙 §3.4 기본값): N은 N_VALUES 변형 그리드,
-# MIN_PRESENT 기본 3.
+# 선례 그대로 사용). 컨센서스 파라미터(스펙 §3.4 기본값): N은 N_VALUES 변형 그리드.
 MIN_BETS = 10
 MIN_SPEC = 0.5
-MIN_PRESENT = 3
+# min_present=3은 스페셜리스트 풀 4~5명 대비 과도해 신호 0건 고정(2026-08-02 실측 —
+# 5명 풀로 하루 17개 마켓 중 3명 이상 겹친 날 전무). 풀 확대(N_VALUES↑)와 함께 완화.
+MIN_PRESENT = 2
 
 
 def variant_key(metric: str, threshold: str, n: int) -> str:

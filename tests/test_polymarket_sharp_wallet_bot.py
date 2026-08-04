@@ -39,7 +39,9 @@ def test_spread_bps_for_market_uses_outcome_side_token():
     assert result == 42.0
 
 
-def test_scan_and_enter_bucket1_opens_three_parallel_positions():
+def test_scan_and_enter_bucket1_opens_single_300s_position():
+    # bucket1의 30s/120s 호라이즌은 walk-forward 탈락으로 제거됨(2026-08-04) —
+    # 이제 bucket1/bucket3 모두 300s 단일 호라이즌.
     cfg = _cfg(trade_size_shares=10.0, budget=100.0, max_concurrent_positions=20)
     anchors = _anchors([_anchor_row(ts=100.0, bucket=1)])
     with patch.object(bot, "load_sharp_wallet_trades", return_value=pd.DataFrame()), \
@@ -49,19 +51,18 @@ def test_scan_and_enter_bucket1_opens_three_parallel_positions():
          patch.object(bot, "_wallet_snapshot_safe", return_value=[{"conditionId": "c1"}]), \
          patch.object(bot, "_log_event"):
         entered = bot._scan_and_enter(cfg)
-    assert entered == 3
-    horizons = sorted(p["horizon_s"] for p in cfg["positions"])
-    assert horizons == [30, 120, 300]
-    for p in cfg["positions"]:
-        assert p["condition_id"] == "c1"
-        assert p["convergence_bucket"] == 1
-        assert p["entry_price"] == 0.6
-        assert p["exit_at"] == 100.0 + p["horizon_s"]
-        assert p["shares"] == 10.0  # 고정 shares(가격무관)
-        assert p["usd"] == 6.0  # 10 shares * 0.6 entry price (derived, 고정 아님)
-        assert p["entry_spread_bps"] == 150.0
-        assert p["outcome_index"] == 0
-    assert cfg["spent"] == 18.0  # 3 * 6.0
+    assert entered == 1
+    p = cfg["positions"][0]
+    assert p["horizon_s"] == 300
+    assert p["condition_id"] == "c1"
+    assert p["convergence_bucket"] == 1
+    assert p["entry_price"] == 0.6
+    assert p["exit_at"] == 100.0 + 300
+    assert p["shares"] == 10.0  # 고정 shares(가격무관)
+    assert p["usd"] == 6.0  # 10 shares * 0.6 entry price (derived, 고정 아님)
+    assert p["entry_spread_bps"] == 150.0
+    assert p["outcome_index"] == 0
+    assert cfg["spent"] == 6.0
     assert cfg["last_anchor_ts"] == 100.0
 
 
@@ -104,8 +105,12 @@ def test_scan_and_enter_dedups_already_processed_anchors():
 
 
 def test_scan_and_enter_respects_max_concurrent_positions():
-    cfg = _cfg(trade_size_shares=10.0, budget=1000.0, max_concurrent_positions=2)
-    anchors = _anchors([_anchor_row(ts=100.0, bucket=1)])  # bucket1 = 3개 시도
+    # bucket1이 anchor당 300s 1개만 열므로, 캡을 두 anchor로 시험한다.
+    cfg = _cfg(trade_size_shares=10.0, budget=1000.0, max_concurrent_positions=1)
+    anchors = _anchors([
+        _anchor_row(ts=100.0, cid="c1", bucket=1),
+        _anchor_row(ts=200.0, cid="c2", bucket=1),
+    ])
     with patch.object(bot, "load_sharp_wallet_trades", return_value=pd.DataFrame()), \
          patch.object(bot, "build_convergence_count", return_value=anchors), \
          patch.object(bot, "get_market", return_value=_market()), \
@@ -113,7 +118,7 @@ def test_scan_and_enter_respects_max_concurrent_positions():
          patch.object(bot, "_wallet_snapshot_safe", return_value=[]), \
          patch.object(bot, "_log_event"):
         entered = bot._scan_and_enter(cfg)
-    assert entered == 2  # 캡에서 멈춤
+    assert entered == 1  # 캡(1)에서 멈춤 — c2는 시도되지 않음
 
 
 def test_scan_and_enter_no_slots_returns_zero_without_loading_trades():
@@ -146,7 +151,7 @@ def test_scan_and_enter_market_fetch_failure_skips_anchor_but_continues():
          patch.object(bot, "_wallet_snapshot_safe", return_value=[]), \
          patch.object(bot, "_log_event"):
         entered = bot._scan_and_enter(cfg)
-    assert entered == 3  # c1 실패로 스킵, c2(bucket1)는 30/120/300s 3개 정상 진입
+    assert entered == 1  # c1 실패로 스킵, c2(bucket1)는 300s 1개만 정상 진입
     assert all(p["condition_id"] == "c2" for p in cfg["positions"])
     assert cfg["last_anchor_ts"] == 200.0  # 실패한 c1도 "처리됨"으로 카운트, 재스캔 안 함
 
@@ -286,13 +291,16 @@ def test_scan_and_enter_second_call_after_priming_enters_normally():
 # --- Fix 4: wallet snapshot는 anchor당 1회만 로그 -------------------------------
 
 def test_scan_and_enter_logs_wallet_snapshot_once_per_anchor_not_per_horizon():
+    # 이 구조적 불변식(anchor당 스냅샷 1회)은 호라이즌 개수와 무관해야 하므로,
+    # 현재 라이브 설정(bucket1=300s 단일)과 별개로 다중 호라이즌을 강제해 검증한다.
     cfg = _cfg(trade_size_shares=10.0, budget=1000.0, max_concurrent_positions=20)
-    anchors = _anchors([_anchor_row(ts=100.0, bucket=1)])  # bucket1 = 3 horizons
+    anchors = _anchors([_anchor_row(ts=100.0, bucket=1)])  # bucket1 = 3 horizons(패치)
     with patch.object(bot, "load_sharp_wallet_trades", return_value=pd.DataFrame()), \
          patch.object(bot, "build_convergence_count", return_value=anchors), \
          patch.object(bot, "get_market", return_value=_market(yes=0.6)), \
          patch.object(bot, "_spread_bps_for_market", return_value=None), \
          patch.object(bot, "_wallet_snapshot_safe", return_value=[{"conditionId": "c1"}]), \
+         patch.dict(bot._HORIZONS_BY_BUCKET, {1: (30, 120, 300)}), \
          patch.object(bot, "_log_event") as mock_log:
         entered = bot._scan_and_enter(cfg)
     assert entered == 3

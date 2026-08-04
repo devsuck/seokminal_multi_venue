@@ -4,7 +4,8 @@ from research.hypothesis_registry import HYPOTHESES, registry_list, warmable_run
 
 def test_warmable_runners_include_mlb_now_promoted():
     wr = warmable_runners()
-    assert set(wr) == {"polymarket_sharp_wallet", "polymarket_whale", "mlb_specialist_consensus"}
+    assert set(wr) == {"polymarket_sharp_wallet", "polymarket_whale", "polymarket_whale_coincidence",
+                        "mlb_specialist_consensus"}
     assert all(v.startswith("research.run_") for v in wr.values())
 
 

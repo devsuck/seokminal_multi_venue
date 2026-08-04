@@ -25,8 +25,8 @@ def test_enumerate_variants_grid():
     # 3 지표 × 2 임계 × 2 N = 12
     variants = val.enumerate_variants()
     assert len(variants) == 12
-    assert "pnl:majority:N5" in variants
-    assert "roi:unanimous:N4" in variants
+    assert "pnl:majority:N10" in variants
+    assert "roi:unanimous:N8" in variants
 
 
 def test_compute_report_no_data():

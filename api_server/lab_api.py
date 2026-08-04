@@ -794,7 +794,9 @@ def autoresearch_status() -> dict:
 @router.post("/autoresearch/run")
 def autoresearch_run() -> dict:
     """1회 배치 실행(후보 생성 → 검증 → 배치 BH-FDR → 레드팀 → 리더보드).
-    동시 실행 방지. 캐시된 실데이터 대상이라 수초 내 완료."""
+    동시 실행 방지(락 점유 중이면 이전 결과에 busy=True 붙여 반환).
+    캐시된 실데이터 대상이라 네트워크 호출은 없지만, permutation test(n=300)가
+    후보마다 걸려 보통 1~2분 소요 — "수초"가 아님(실측 78초, 2026-08-04)."""
     from research.autoresearch.engine import run_batch, load_status
     if not _AR_LOCK.acquire(blocking=False):
         return {**load_status(), "busy": True}

@@ -26,6 +26,13 @@ HYPOTHESES: dict[str, dict] = {
         "validator": "research.run_polymarket_whale_validate",
         "warmable": True,
     },
+    "polymarket_whale_coincidence": {
+        "title": "Whale 동시다발 동조",
+        "category": "polymarket",
+        "data_source": "Data-API /trades (같은 마켓·같은 방향 60초내 지갑 2개+ 동조)",
+        "validator": "research.run_polymarket_whale_coincidence_validate",
+        "warmable": True,
+    },
     "mlb_specialist_consensus": {
         "title": "MLB 스페셜리스트 컨센서스",
         "category": "sports",

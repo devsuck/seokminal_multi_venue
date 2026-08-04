@@ -36,7 +36,8 @@ _LOG = _DATA / "polymarket_sharp_wallet_bot_log.jsonl"
 
 # v1 라이브 실행 허용 그룹 — bucket2/score-tercile(low/mid/high) 전부 제외
 # (스펙 §진입신호 — score의 liquidity 컴포넌트가 미래 300s 윈도우라 순서모순).
-_HORIZONS_BY_BUCKET = {1: (30, 120, 300), 3: (300,)}
+# 30s/120s 호라이즌은 walk-forward 탈락(2026-08-04 재검증) — 300s만 라이브 유지.
+_HORIZONS_BY_BUCKET = {1: (300,), 3: (300,)}
 
 _DEFAULT = {
     "enabled": False, "interval_sec": 15,

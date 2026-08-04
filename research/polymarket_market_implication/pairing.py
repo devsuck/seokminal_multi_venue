@@ -33,6 +33,9 @@ def candidate_pairs(
                 a, b = group_markets[i], group_markets[j]
                 if a["condition_id"] == b["condition_id"]:
                     continue
+                event_a, event_b = a.get("event_id"), b.get("event_id")
+                if event_a and event_b and event_a == event_b:
+                    continue  # 같은 이벤트 내부는 event_divergence 모듈 영역 — 여기선 제외(spec §1)
                 key = tuple(sorted((a["condition_id"], b["condition_id"])))
                 if key in seen_keys:
                     continue

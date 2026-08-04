@@ -232,6 +232,8 @@ COLLECTOR_SESSIONS: dict[str, dict[str, str]] = {
     "polymarket_event_divergence": {"session": "polymarket-event-divergence",
                                     "data_dir": "research/data/polymarket_event_divergence",
                                     "module": "research.run_polymarket_event_divergence_scan"},
+    "options_uoa": {"session": "options-uoa", "data_dir": "research/data/options_uoa",
+                    "module": "research.run_options_uoa_collect"},
 }
 
 
@@ -385,6 +387,7 @@ def lab_status() -> dict:
             "polymarket_sharp_wallet_tick": _tmux_process_status("polymarket-sharp-wallet-tick", "research/data/polymarket_sharp_wallet"),
             "polymarket_mlb_specialist_tick": _tmux_process_status("polymarket-mlb-specialist-tick", "research/data/mlb_specialist"),
             "polymarket_event_divergence": _tmux_process_status("polymarket-event-divergence", "research/data/polymarket_event_divergence"),
+            "options_uoa": _tmux_process_status("options-uoa", "research/data/options_uoa"),
         }
     except Exception as exc:  # noqa: BLE001
         out["processes"] = {"error": str(exc)[:60]}

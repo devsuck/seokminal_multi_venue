@@ -53,6 +53,18 @@ def test_run_once_appends_detected_violations(tmp_path):
     assert saved[0]["pattern_type"] == "A"
 
 
+def test_run_once_does_not_relog_still_open_violation(tmp_path):
+    with patch.object(watch, "_DATA_DIR", tmp_path):
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "pairs.jsonl").write_text(json.dumps(_pair()) + "\n")
+        books = {"tok_a": {"best_bid": 0.69, "best_ask": 0.71}, "tok_b": {"best_bid": 0.49, "best_ask": 0.51}}
+        watch.run_once(get_book_fn=lambda tid: books[tid])
+        watch.run_once(get_book_fn=lambda tid: books[tid])
+        saved = watch.load_violations()
+    unresolved = [v for v in saved if not v.get("resolved")]
+    assert len(unresolved) == 1
+
+
 def test_resolve_pnl_returns_none_when_not_both_closed():
     violation = {"pattern_type": "A", "direction": "a_implies_b", "price_a": 0.70, "price_b": 0.50, "cost_frac": 0.0}
     market_a = {"closed": True, "yes_price": 1.0}

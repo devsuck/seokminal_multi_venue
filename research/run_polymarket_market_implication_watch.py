@@ -95,13 +95,16 @@ def resolve_pnl(violation: dict, market_a: dict, market_b: dict) -> dict | None:
 
 
 def run_once(*, get_book_fn=get_order_book, append_new: bool = True) -> list[dict]:
+    existing = load_violations()
+    open_keys = {v["pair_key"] for v in existing if not v.get("resolved")}
     detected = []
     for pair in load_pairs():
+        if pair["pair_key"] in open_keys:
+            continue  # 이미 열려있는(미해결) 위반 — 재로깅하면 forward-N 표본이 부풀려짐
         v = check_pair(pair, get_book_fn)
         if v is not None:
             detected.append(v)
     if detected and append_new:
-        existing = load_violations()
         existing.extend(detected)
         save_violations(existing)
     return detected

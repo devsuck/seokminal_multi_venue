@@ -2,7 +2,19 @@ import datetime as dt
 import json
 from unittest.mock import patch
 
+import pytest
+
 import research.run_polymarket_market_implication_collect as runner
+from research.polymarket_market_implication import entity_tags
+
+
+@pytest.fixture(autouse=True)
+def _isolate_entity_cache(tmp_path):
+    """entity_tags._CACHE_PATH는 collect.run_once() 내부에서 고정 경로로 읽고쓰므로,
+    runner._DATA_DIR만 패치하면 실제 레포 경로(entity_cache.json)에 테스트 데이터가
+    새어나간다 — 같이 tmp_path로 격리."""
+    with patch.object(entity_tags, "_CACHE_PATH", tmp_path / "entity_cache.json"):
+        yield
 
 
 def _market(cid, question, volume, end_date, clob=("tok_yes", "tok_no")):
@@ -90,3 +102,34 @@ def test_run_once_skips_already_judged_pair(tmp_path):
         )
     assert classify_calls == []
     assert result["pairs_added"] == 0
+
+
+def test_run_once_caches_negative_classification_and_excludes_next_cycle(tmp_path):
+    markets = [
+        _market("c1", "Will X win primary?", 1000.0, "2026-09-01"),
+        _market("c2", "Will X win general?", 1000.0, "2026-09-10"),
+    ]
+    with patch.object(runner, "_DATA_DIR", tmp_path):
+        classify_calls = []
+
+        def classify_fn(a, b):
+            classify_calls.append((a, b))
+            return None  # 무관한 쌍 — 관계 없음
+
+        first = runner.run_once(
+            get_markets_fn=lambda limit: markets,
+            extract_fn=lambda q: ["X"],
+            classify_fn=classify_fn,
+        )
+        second = runner.run_once(
+            get_markets_fn=lambda limit: markets,
+            extract_fn=lambda q: ["X"],
+            classify_fn=classify_fn,
+        )
+        rejected_path = tmp_path / "rejected_pairs.jsonl"
+        pairs_path = tmp_path / "pairs.jsonl"
+    assert first["classify_calls_used"] == 1
+    assert second["classify_calls_used"] == 0  # 재분류 안 함 — 거부캐시 히트
+    assert len(classify_calls) == 1
+    assert len(rejected_path.read_text().strip().splitlines()) == 1  # 재기록 안 됨
+    assert not pairs_path.exists()  # 거부건은 pairs.jsonl에 안 씀(watch.py 오더북 호출 낭비 방지)

@@ -1,4 +1,4 @@
-from research.run_polymarket_market_implication_report import compute_report
+from research.run_polymarket_market_implication_report import MIN_FORWARD_N, compute_report
 
 
 def _violation(pattern_type, resolved=True, pnl=0.1):
@@ -35,6 +35,12 @@ def test_compute_report_verdict_insufficient_sample_below_min_n():
     violations = [_violation("A", pnl=0.1)]
     report = compute_report(violations)
     assert report["A"]["verdict"] == "insufficient_sample"
+
+
+def test_compute_report_verdict_ready_for_review_at_min_n():
+    violations = [_violation("A", pnl=0.1) for _ in range(MIN_FORWARD_N)]
+    report = compute_report(violations)
+    assert report["A"]["verdict"] == "ready_for_review"
 
 
 def test_compute_report_no_data_returns_none_stats():

@@ -61,6 +61,28 @@ def append_pairs(pairs: list[dict]) -> None:
             f.write(json.dumps(p, ensure_ascii=False) + "\n")
 
 
+def load_rejected_pair_keys() -> set[str]:
+    path = _DATA_DIR / "rejected_pairs.jsonl"
+    if not path.exists():
+        return set()
+    keys = set()
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if line:
+            keys.add(json.loads(line)["pair_key"])
+    return keys
+
+
+def append_rejected_pairs(rejected: list[dict]) -> None:
+    if not rejected:
+        return
+    _DATA_DIR.mkdir(parents=True, exist_ok=True)
+    path = _DATA_DIR / "rejected_pairs.jsonl"
+    with path.open("a") as f:
+        for r in rejected:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+
 def run_once(
     *,
     get_markets_fn=get_markets,
@@ -80,17 +102,20 @@ def run_once(
 
     remaining = max(call_cap - entity_calls, 0)
     existing_keys = load_existing_pair_keys()
+    rejected_keys = load_rejected_pair_keys()
     candidates = [
         (a, b) for a, b in pairing.candidate_pairs(tagged)
-        if pair_key(a, b) not in existing_keys
+        if pair_key(a, b) not in existing_keys and pair_key(a, b) not in rejected_keys
     ]
     attempt = candidates[:remaining]
 
     new_pairs = []
+    newly_rejected = []
     now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
     for a, b in attempt:
         classification = classify_fn(a, b)
         if classification is None:
+            newly_rejected.append({"pair_key": pair_key(a, b), "checked_ts": now_iso})
             continue
         new_pairs.append({
             "pair_key": pair_key(a, b),
@@ -107,6 +132,7 @@ def run_once(
             "created_ts": now_iso,
         })
     append_pairs(new_pairs)
+    append_rejected_pairs(newly_rejected)
 
     return {
         "markets_scanned": len(markets),

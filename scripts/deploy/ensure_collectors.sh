@@ -31,6 +31,8 @@ ENSURE=(
   "polymarket-mlb-specialist-tick|research.run_mlb_specialist_collect"
   "polymarket-event-divergence|research.run_polymarket_event_divergence_scan"
   "options-uoa|research.run_options_uoa_collect"
+  "polymarket-implication-collect|research.run_polymarket_market_implication_collect"
+  "polymarket-implication-watch|research.run_polymarket_market_implication_watch"
 )
 
 for entry in "${ENSURE[@]}"; do

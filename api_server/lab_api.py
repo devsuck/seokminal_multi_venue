@@ -234,6 +234,12 @@ COLLECTOR_SESSIONS: dict[str, dict[str, str]] = {
                                     "module": "research.run_polymarket_event_divergence_scan"},
     "options_uoa": {"session": "options-uoa", "data_dir": "research/data/options_uoa",
                     "module": "research.run_options_uoa_collect"},
+    "polymarket_implication_collect": {"session": "polymarket-implication-collect",
+                                       "data_dir": "research/data/polymarket_market_implication",
+                                       "module": "research.run_polymarket_market_implication_collect"},
+    "polymarket_implication_watch": {"session": "polymarket-implication-watch",
+                                     "data_dir": "research/data/polymarket_market_implication",
+                                     "module": "research.run_polymarket_market_implication_watch"},
 }
 
 

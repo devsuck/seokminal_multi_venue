@@ -33,6 +33,7 @@ research/data/polymarket_event_divergence/*.jsonl
 
 # 폴리마켓 크로스이벤트 함의관계 후보쌍/위반 로깅(재생성 불가) — 로컬 전용
 research/data/polymarket_market_implication/*.jsonl
+research/data/polymarket_market_implication/entity_cache.json
 
 # 틱/오더북 원자재 수집(용량 크고 재생성 불가, 로컬 전용) — 20GB+
 research/data/cross_venue_skew/

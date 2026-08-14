@@ -101,6 +101,29 @@ def _kis():
     return KISOrderClient(kk, ks, kc, os.environ.get("KIS_ACNT_PRDT_CD", "01"), mock=True)
 
 
+def _kst_today_str() -> str:
+    return (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(hours=9)).strftime("%Y%m%d")
+
+
+def _round_down_tick(price: float) -> int:
+    """KRX 호가단위로 내림. 지정가 주문은 유효 tick 아니면 거부됨."""
+    if price < 2000:
+        t = 1
+    elif price < 5000:
+        t = 5
+    elif price < 20000:
+        t = 10
+    elif price < 50000:
+        t = 50
+    elif price < 200000:
+        t = 100
+    elif price < 500000:
+        t = 500
+    else:
+        t = 1000
+    return int(price // t * t)
+
+
 def _buy(code: str, krw: float) -> dict:
     """KIS 모의 시장가 매수 (원화예산÷현재가). tick 전용 헬퍼."""
     px = _current_price(code)
@@ -113,8 +136,47 @@ def _buy(code: str, krw: float) -> dict:
     return {"code": code, "qty": qty, "price": round(px, 0), "order_id": r.get("order_id")}
 
 
+def _place_sl_order(code: str, qty: int, entry_price: float, sl_pct: float) -> dict | None:
+    """손절가에 지정가 매도 주문을 걸어둔다(당일유효 — KRX는 GTC 미지원, 매일 재상신 필요).
+    실패해도 None 반환 — 호출자는 시세 폴링 방식으로 폴백한다."""
+    limit_px = _round_down_tick(round(entry_price * (1 - abs(sl_pct)), 4))  # 부동소수 오차(929.999…) 방지
+    try:
+        r = _kis().place_order(code, "SELL", qty, "LIMIT", price=limit_px)
+        return {"order_id": r.get("order_id"), "limit_px": limit_px}
+    except Exception:
+        return None
+
+
+def _cancel_sl_order(pos: dict, qty: int) -> None:
+    """TP/최대보유일로 다른 사유 매도 전에 걸려있던 손절 지정가 주문부터 취소(중복매도 방지).
+    이미 체결/만료됐으면 취소 실패해도 무시 — 시장가 매도가 최종 판정."""
+    order_id = pos.get("sl_order_id")
+    if not order_id:
+        return
+    try:
+        _kis().cancel_order(order_id, pos.get("code", ""), qty)
+    except Exception:
+        pass
+
+
+def _query_fill_price(pos: dict) -> float | None:
+    """당일 손절 지정가 주문의 실제 체결 평균가 조회. inquire-daily-ccld는 모의계좌에서
+    빈 output1을 반환하는 경우가 확인돼 있음(order_client.py _row_to_status_dict 주석) —
+    조회 실패/미체결/빈 응답은 전부 None, 호출자는 지정가 근사치로 폴백한다."""
+    order_id, order_date = pos.get("sl_order_id"), pos.get("sl_order_date")
+    if not order_id or not order_date:
+        return None
+    try:
+        status = _kis().get_order_status(order_date, order_id)
+    except Exception:
+        return None
+    if status and status.get("status") == "FILLED" and status.get("avg_price"):
+        return float(status["avg_price"])
+    return None
+
+
 def _process_exits(cfg: dict) -> int:
-    """보유 포지션 매도 판정 — TP/SL/최대보유일. 매도 시 spent에서 원금 차감.
+    """보유 포지션 매도 판정 — 지정가 손절 주문(당일 재상신) + TP/최대보유일 폴링.
 
     Returns: 매도 건수. cfg를 제자리 수정(저장은 호출자 책임).
     """
@@ -122,12 +184,21 @@ def _process_exits(cfg: dict) -> int:
     sl = float(cfg.get("sl_pct", 0.07))
     max_days = int(cfg.get("max_hold_days", 20))
     now = _dt.datetime.now(_dt.timezone.utc)
+    today = _kst_today_str()
     keep: list[dict] = []
     sold = 0
     for pos in cfg.get("positions", []):
         code, qty, entry = pos.get("code", ""), int(pos.get("qty", 0)), float(pos.get("entry_price") or 0)
         if not code or qty < 1 or entry <= 0:
             continue  # 불량 레코드는 버림
+
+        # 지정가 손절 주문 — 당일 상신분 없으면(신규 포지션 or 전일 만료) 새로 건다.
+        if pos.get("sl_order_date") != today:
+            sl_order = _place_sl_order(code, qty, entry, sl)
+            pos["sl_order_date"] = today
+            pos["sl_order_id"] = sl_order.get("order_id") if sl_order else None
+            pos["sl_limit_px"] = sl_order.get("limit_px") if sl_order else None  # 둘 다 None이면 폴링 폴백만 동작
+
         px = _current_price(code)
         if px is None or px <= 0:
             keep.append(pos)  # 시세 조회 실패 — 다음 tick에 재시도
@@ -139,33 +210,60 @@ def _process_exits(cfg: dict) -> int:
             held_days = (now - entry_ts).days
         except Exception:
             pass
+
         reason = None
+        exit_px = px
         if pnl >= tp:
             reason = f"익절 +{pnl*100:.1f}%"
         elif pnl <= -abs(sl):
+            # 지정가 손절 주문이 이미 체결됐을 가능성이 높음(장중 갭 아니어도 시세폴링보다
+            # 먼저 발동) — 실제 체결가 조회 시도, 실패하면 지정가로 근사.
             reason = f"손절 {pnl*100:.1f}%"
+            fill_px = _query_fill_price(pos)
+            if fill_px:
+                exit_px = fill_px
+            elif pos.get("sl_limit_px"):
+                exit_px = pos["sl_limit_px"]
         elif held_days is not None and held_days >= max_days:
             reason = f"보유 {held_days}일 만기 ({pnl*100:+.1f}%)"
         if reason is None:
             keep.append(pos)
             continue
+
+        # 시장가로 매도하기 전에 걸려있던 손절 지정가 주문부터 취소 — 안 하면 같은 수량을
+        # 두 번 매도 시도하게 됨(지정가 체결 후 시장가 재시도, 혹은 그 반대).
+        _cancel_sl_order(pos, qty)
+
         try:
             _kis().place_order(code, "SELL", qty, "MARKET")
             cost = qty * entry
             cfg["spent"] = round(max(float(cfg.get("spent", 0.0)) - cost, 0.0), 2)
             _log_event({"kind": "sell", "corp": pos.get("corp", ""), "code": code,
-                        "qty": qty, "entry_price": entry, "exit_price": round(px, 0),
-                        "pnl_pct": round(pnl * 100, 2), "reason": reason,
+                        "qty": qty, "entry_price": entry, "exit_price": round(exit_px, 0),
+                        "pnl_pct": round(((exit_px - entry) / entry) * 100, 2), "reason": reason,
                         "spent": cfg["spent"]})
             sold += 1
         except Exception as e:  # noqa: BLE001
             msg = str(e)
             if "잔고내역이 없습니다" in msg:
-                # 브로커에 실보유가 없음 = 로컬 state가 stale(이미 매도됐거나 migration
-                # 복원 오류). 무한 재시도 대신 드롭 — spent는 과거 매도 시 이미 정산됐다고
-                # 간주하고 다시 차감하지 않는다.
-                _log_event({"kind": "desync", "corp": pos.get("corp", ""), "code": code,
-                            "msg": "브로커 잔고 없음 — 로컬 포지션 정리(재시도 중단)"})
+                # 브로커에 실보유가 없음 = 로컬 state가 stale — 지정가 손절 주문이 이 tick
+                # 전에 이미 체결돼 실물 보유가 사라진 경우(가장 흔함)가 있어 체결가 조회를
+                # 시도한다. 조회 성공하면 정확한 손익으로 sell 로그 남김, 실패하면
+                # migration 복원 오류 등 원인불명으로 보고 예전처럼 조용히 드롭(중복 재시도
+                # 방지 — spent는 과거 정산됐다고 간주, 다시 차감 안 함).
+                fill_px = _query_fill_price(pos)
+                if fill_px:
+                    cfg["spent"] = round(max(float(cfg.get("spent", 0.0)) - qty * entry, 0.0), 2)
+                    fill_pnl = (fill_px - entry) / entry
+                    _log_event({"kind": "sell", "corp": pos.get("corp", ""), "code": code,
+                                "qty": qty, "entry_price": entry, "exit_price": round(fill_px, 0),
+                                "pnl_pct": round(fill_pnl * 100, 2),
+                                "reason": f"손절 {fill_pnl*100:.1f}% (지정가 선체결, 체결가 조회)",
+                                "spent": cfg["spent"]})
+                    sold += 1
+                else:
+                    _log_event({"kind": "desync", "corp": pos.get("corp", ""), "code": code,
+                                "msg": "브로커 잔고 없음 — 손절 지정가 주문 선체결 추정(체결가 조회 실패), 로컬 포지션 정리(재시도 중단)"})
                 continue
             _log_event({"kind": "fail", "corp": pos.get("corp", ""), "code": code,
                         "msg": f"매도 실패: {msg[:80]}"})
@@ -187,6 +285,8 @@ def tick() -> dict:
             return {"skipped": "kill_switch"}
     except Exception:
         pass
+    _reconcile_positions(cfg)
+    _save(cfg)
     if not _kr_market_open():
         cfg["last_run"] = _dt.datetime.now(_dt.timezone.utc).isoformat()
         _save(cfg)

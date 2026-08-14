@@ -430,6 +430,11 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
     _cycles = agent_store.read_cycles(agent_id, limit=100000)
     _perf = agent_perf.compute_performance(_cycles)
     budget = max(alloc + _perf.realized_pnl - _perf.invested, 0.0)
+    # 브로커 계좌(Alpaca/HL/KIS)는 여러 봇이 공유(다른 US 데이트레이드 에이전트,
+    # DART 오토파일럿 등) — 계좌 전체 보유를 내 포지션으로 착각해 남의 종목까지
+    # 청산하는 사고 방지(2026-08-14, DART봇 보유 7종목이 KR 거시전략 에이전트에게
+    # 조용히 청산됨). 이 에이전트가 자기 사이클 원장에 기록한 종목만 own_codes로 스코프.
+    own_codes = {p["symbol"] for p in _perf.open_positions}
 
     # 드로다운 서킷브레이커: 배정 자본의 max_drawdown_pct(기본 50%) 이상 실현손실 시
     # 신규진입만 정지(청산/마킹은 계속) — lv5 가상화폐가 -78%까지 계속 진입한 사고 재발 방지.
@@ -491,8 +496,8 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
         held = []
         for p in pos_raw.get("asset_positions", []):
             szi = float(p["position"]["szi"])
-            if szi != 0:
-                coin = p["position"]["coin"]
+            coin = p["position"]["coin"]
+            if szi != 0 and coin in own_codes:
                 cur = scores.get(coin, {}).get("price")
                 held.append({"symbol": coin, "side": "long" if szi > 0 else "short",
                              "entry": float(p["position"].get("entryPx", 0) or 0), "current": cur})
@@ -552,7 +557,7 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
         try:
             equity = float(kis.get_balance().get("net_asset", 0) or 0)
             held = [{"symbol": h["code"], "side": "long", "entry": h["avg_price"], "current": h["current"]}
-                    for h in kis.get_holdings()]
+                    for h in kis.get_holdings() if h["code"] in own_codes]
         except Exception as e:
             equity = 0.0; held = []
             actions.append(f"KIS 조회 실패: {str(e)[:60]}")
@@ -606,7 +611,7 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
             held = []
             for p in client.get_all_positions():
                 q = float(p.qty)
-                if q != 0:
+                if q != 0 and p.symbol in own_codes:
                     held.append({"symbol": p.symbol, "side": "long" if q > 0 else "short",
                                  "entry": float(p.avg_entry_price), "current": float(p.current_price)})
             exits = daytrade_logic.stop_exits(held, tp_pct, sl_pct) + daytrade_logic.decide_exits(held, scores)
@@ -659,7 +664,7 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
                             sc[sym] = _intraday.score_intraday(bars)
                         except Exception as e:
                             sc[sym] = {"error": str(e), "signal": "AVOID", "score": 0}
-                    raw = await ib.get_positions()
+                    raw = [p for p in await ib.get_positions() if p["symbol"] in own_codes]
                     held = [{"symbol": p["symbol"], "side": "long" if p["qty"] > 0 else "short",
                              "entry": p["avg_price"], "current": sc.get(p["symbol"], {}).get("price")}
                             for p in raw]
@@ -771,9 +776,14 @@ def condition_tick_endpoint(agent_id: str, cycle: int = 0) -> dict:
                         fill = {"side": "buy", "qty": qty, "price": result["price"]}
                         note_bits.append(f"매수 {code} {qty}주 @ {result['price']}")
                 else:
-                    qtyh = next((h["qty"] for h in kis.get_holdings() if h["code"] == code), 0)
+                    # KIS 모의계좌는 다른 봇과 공유 — 브로커 전체 보유가 아니라
+                    # 이 에이전트 원장에 기록된 수량만큼만 매도(own_codes 필터와 동일 취지).
+                    own_qty = int(next((p["qty"] for p in _perf.open_positions
+                                        if p["symbol"] == instrument_id), 0))
+                    broker_qty = int(next((h["qty"] for h in kis.get_holdings() if h["code"] == code), 0))
+                    qtyh = min(own_qty, broker_qty)
                     if qtyh > 0:
-                        kis.place_order(code, "SELL", int(qtyh), "MARKET")
+                        kis.place_order(code, "SELL", qtyh, "MARKET")
                         fill = {"side": "sell", "qty": qtyh, "price": result["price"]}
                         note_bits.append(f"청산 {code} {qtyh}주 @ {result['price']}")
             else:
@@ -789,9 +799,15 @@ def condition_tick_endpoint(agent_id: str, cycle: int = 0) -> dict:
                         fill = {"side": "buy", "qty": qty, "price": result["price"]}
                         note_bits.append(f"buy {symbol} {qty} @ {result['price']}")
                 else:
-                    client.close_position(symbol)
-                    fill = {"side": "sell", "qty": None, "price": result["price"]}
-                    note_bits.append(f"close {symbol}")
+                    # Alpaca 페이퍼도 다른 봇과 공유 계좌 — close_position은 그 심볼
+                    # 보유 전체를 닫으므로 남의 몫까지 팔 수 있다. 내 원장 수량만 매도.
+                    own_qty = int(next((p["qty"] for p in _perf.open_positions
+                                        if p["symbol"] == instrument_id), 0))
+                    if own_qty > 0:
+                        client.submit_order(MarketOrderRequest(symbol=symbol, qty=own_qty,
+                            side=OrderSide.SELL, time_in_force=TimeInForce.DAY))
+                        fill = {"side": "sell", "qty": own_qty, "price": result["price"]}
+                        note_bits.append(f"close {symbol} {own_qty}")
         except Exception as e:
             note_bits.append(f"{action} 실패: {str(e)[:80]}")
             fill = None

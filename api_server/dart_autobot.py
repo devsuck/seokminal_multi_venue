@@ -272,6 +272,35 @@ def _process_exits(cfg: dict) -> int:
     return sold
 
 
+def _reconcile_positions(cfg: dict) -> None:
+    """로컬 포지션 장부 vs 실제 KIS 보유 대조 — 모의계좌가 외부 리셋되는 등으로
+    브로커 보유가 사라졌는데 로컬 spent/positions만 남아있으면 예산이 영구히
+    묶여 신규 매수가 막힌다. 브로커에 없는 코드는 원금을 spent에서 돌려주고 드롭.
+    """
+    positions = cfg.get("positions", [])
+    if not positions:
+        return
+    try:
+        held_codes = {h.get("code") for h in _kis().get_holdings()}
+    except Exception:
+        return  # 조회 실패 — 다음 tick에 재시도, 잘못 드롭하지 않음
+    keep, dropped = [], []
+    for pos in positions:
+        if pos.get("code") in held_codes:
+            keep.append(pos)
+        else:
+            dropped.append(pos)
+    if not dropped:
+        return
+    for pos in dropped:
+        cost = int(pos.get("qty", 0)) * float(pos.get("entry_price") or 0)
+        cfg["spent"] = round(max(float(cfg.get("spent", 0.0)) - cost, 0.0), 2)
+        _log_event({"kind": "desync", "corp": pos.get("corp", ""), "code": pos.get("code"),
+                    "msg": "브로커 보유 없음(계좌 리셋 등) — 로컬 포지션 드롭, 예산 회수",
+                    "spent": cfg["spent"]})
+    cfg["positions"] = keep
+
+
 def tick() -> dict:
     """1회 실행: 신규 자사주 취득/소각 공시를 모의 매수. 장 마감 시 스킵."""
     cfg = _load()

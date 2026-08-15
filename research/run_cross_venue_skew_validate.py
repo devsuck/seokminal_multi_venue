@@ -13,10 +13,10 @@ walk-forward 분할에 미달, BH-FDR 통과 시 전체 파이프라인으로 �
 """
 from __future__ import annotations
 
-import glob
 import random as _random
-import re
+from pathlib import Path
 
+from research import jsonl_dates
 from research.hypotheses.cross_venue_skew import (
     align_venues,
     build_imbalance,
@@ -44,10 +44,7 @@ MIN_EVENTS = 10
 def _available_dates(coin: str) -> list[str]:
     dates = set()
     for venue in VENUES:
-        for path in glob.glob(f"{DATA_DIR}/{venue}_{coin}_*.jsonl"):
-            m = re.search(r"(\d{4}-\d{2}-\d{2})\.jsonl$", path)
-            if m:
-                dates.add(m.group(1))
+        dates |= set(jsonl_dates.list_dates(Path(DATA_DIR), glob_prefix=f"{venue}_{coin}_"))
     return sorted(dates)
 
 

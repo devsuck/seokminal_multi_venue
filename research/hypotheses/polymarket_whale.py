@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from research import jsonl_dates
+
 _DATA_DIR = Path("research/data/polymarket_whale")
 
 NOTIONAL_ZSCORE_LOOKBACK = 100  # 트레이드 개수 기준(시간 기준 아님) — 마켓별 체결빈도 편차 커서.
@@ -30,10 +32,10 @@ def load_whale_trades(dates: list[str]) -> pd.DataFrame:
     필드 — 지갑 역추적용), outcome_index. ts 오름차순 정렬."""
     rows = []
     for date in dates:
-        path = _DATA_DIR / f"{date}.jsonl"
-        if not path.exists():
+        f = jsonl_dates.open_stem(_DATA_DIR, date)
+        if f is None:
             continue
-        with path.open() as f:
+        with f:
             for line in f:
                 line = line.strip()
                 if not line:

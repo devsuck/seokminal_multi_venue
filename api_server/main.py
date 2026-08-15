@@ -5413,11 +5413,11 @@ def dashboard_pnl_all() -> dict:
         {"id": "copytrade_autobot", "name": "카피트레이딩", "realized_pnl": _copytrade_bot_status().get("realized_pnl", 0.0)},
     ]
     bots_realized_total = sum(b["realized_pnl"] for b in bots if b["realized_pnl"] is not None)
-    agents_realized_total = agents["totals"]["realized_pnl"]
+    # 총합 필드는 안 준다 — 에이전트엔 KR(₩)이 섞여있고 봇은 전부 $라 더하면 의미없는 수가 나옴.
+    # 통화별 집계는 소비자(프론트 /overview)가 market으로 갈라서 함(2026-08-06 제거).
     return {
         "agents": agents["agents"], "agents_totals": agents["totals"],
         "bots": bots, "bots_totals": {"realized_pnl": round(bots_realized_total, 2)},
-        "grand_total_realized_pnl": round(agents_realized_total + bots_realized_total, 2),
     }
 
 

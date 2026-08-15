@@ -25,5 +25,6 @@ def test_dashboard_pnl_all_sums_agents_and_bots(client):
     assert body["bots_totals"]["realized_pnl"] == 85.0  # 100-50+25+10
     dart = next(b for b in body["bots"] if b["id"] == "dart_autobot")
     assert dart["realized_pnl"] is None  # 미추적 — 합산에서 제외됨
-    assert body["grand_total_realized_pnl"] == body["agents_totals"]["realized_pnl"] + 85.0
+    # ₩ 에이전트 + $ 봇을 더한 총합은 의미가 없어 응답에서 제외(2026-08-06)
+    assert "grand_total_realized_pnl" not in body
     assert "agents" in body and isinstance(body["agents"], list)

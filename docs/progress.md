@@ -1815,3 +1815,36 @@
 
 ### 막힌 부분/결정사항
 - 없음.
+
+## 2026-08-16 (이어서): 쌓여있던 미커밋 백로그(여러 세션분, 150+파일) 전수검토 후 분리커밋
+
+배경: 위 fills 버그 수정 마무리 시점에 `git status`로 확인하니 최소 08-05~08-15 여러 세션에서 이미 완료했지만 커밋 안 된 작업이 150+파일 쌓여있었음. 전부 한 커밋으로 묶을지 물어봤고("커밋 범위: 이번 세션만 vs 쌓여있는 것도 같이") 유저가 "전부 검토 후 분리커밋" 선택. 별도 fork 에이전트(읽기전용, git write 금지)로 전체 diff를 논리단위 그룹(G1~G17)으로 분류시킨 뒤, 그룹별로 diff 직접 검증 → 파일명 지정 스테이징 → 좁은 테스트 실행 → 커밋 순서로 하나씩 수동 처리.
+
+### 완료된 작업 (커밋 순서대로)
+- `c96fcef` fix: KIS 체결 평균단가 조회 + dart_autobot 손절가 정확도 검증 보강
+- `7fc9da0` feat: KR DART 컨버전스 과거 백필 + score>=2 엣지 전제검증
+- `90a644f` perf: 오더북 어댑터 max_levels 파라미터화 — GC 부하 24% 제거
+- `e75a8f4` fix: gz 압축된 과거 데이터 무음 누락 버그 — `research/jsonl_dates.py` 공용 헬퍼(6개 검증러너가 날짜나열에 `glob`만 써서 compress_old_data.py가 압축한 `.jsonl.gz` 과거분을 무음으로 놓치던 버그. sharp_wallet 검증러너가 최근 2~3일치만 보고 있던 게 2026-08-15에 발각됨)
+- `77da5cf` fix: 이벤트없는 수집기(options_uoa) stale 오탐 — `.heartbeat` 파일로 "폴링 생존"과 "데이터 발생"을 분리
+- `9a696a3` feat: 4소스 컨버전스(KR dart/US congress/UOA) 원시 leg 상시 수집기 — score>=2만 남기는 `compute_convergence()`와 달리 대조군(score==1)까지 전부 로깅해 나중에 컨버전스 vs 단일소스 forward return 비교 가능하게 함
+- `5373fec` feat: 옵션 UOA 사후수익률 라벨링 파이프라인(2단계) — 탐지 다음거래일 시가 진입, (티커,탐지일,방향) 단위 집계로 pseudo-replication 방지
+- `d822a79` feat: sharp_wallet maker vs taker 체결 시뮬레이션(지정가 체결여부를 틱데이터로 판정)
+- `bce06ba` feat: polymarket_bot 다각화 배스킷 무엣지 가정 사후검증 — 실측 승률이 시장가보다 높아 재검토 요청받은 건(2026-08-15), 효율시장 귀무가설 대비 empirical p-value 산출
+- `08b8340` feat: 지식그래프 노드 스코어 이력 API(`GET /history/{node_id}`) — 패치마다 스코어 append-only 기록
+- `e15bf90` fix: 대시보드 `grand_total_realized_pnl` — 에이전트(₩ 섞임)와 봇($) 무분별 합산 필드 제거
+- `3df1583` fix: 재부팅/tmux 리셋 후 `status="running"`인데 세션 죽은 에이전트 자동 복구(`_revive_agents`, startup 훅)
+- `17455c5` feat: 수집기 워치독 맥 데스크톱 알림 + `ensure_collectors.sh` convergence-legs 등록 누락분 + tmux `.env` 미소싱 버그 수정
+- `0fcb3ea`, `36763ad`, `4d93da2` chore: 운영 상태/데이터 스냅샷(jarvis/research 로그, 오더북/폴리마켓 데이터) — 코드 없음, 상시수집기가 계속 쌓아온 데이터 반영
+- `api_server/main.py`, `api_server/lab_api.py`는 무관한 기능 두 개가 한 파일에 섞여있어 `git apply --cached`로 hunk 단위 수동 분리 후 각각 다른 커밋에 배정(G12/G13, G5/G6)
+- 전체 스위트(`pytest tests/ -q`) 최종 2248 passed, 회귀 없음
+
+### 변경된 파일
+- 위 커밋 목록 참고(각 커밋 메시지에 상세 명시)
+
+### 다음 할 일
+- `git push` (다음 액션)
+- convergence_legs/options_uoa_forward 신규 수집기들 며칠 데이터 쌓이면 임계값 스윕/BH-FDR 정식검증 착수
+- polymarket_bot 다각화 배스킷 verdict=="candidate" 나와도 표본 37건·사후 밴드분할이라 실집행 근거 아님 — 표본 더 쌓일 때까지 관망
+
+### 막힌 부분/결정사항
+- `api_server/fleet_health.py`의 `polymarket_implication_watch`/`polymarket_implication_collect` stale 임계값 보정을 convergence_legs 커밋(`9a696a3`)에 같이 넣을지 별도 커밋으로 뺄지 애매했음 — 이미 한 diff hunk로 붙어있어 억지로 쪼개기보다 같이 묶는 쪽으로 판단(코멘트도 "아래 둘은" 식으로 같이 설명하고 있어서 원 작성자도 한 덩어리로 취급한 것으로 보임).

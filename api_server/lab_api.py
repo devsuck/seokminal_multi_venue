@@ -245,6 +245,8 @@ COLLECTOR_SESSIONS: dict[str, dict[str, str]] = {
     "polymarket_implication_watch": {"session": "polymarket-implication-watch",
                                      "data_dir": "research/data/polymarket_market_implication",
                                      "module": "research.run_polymarket_market_implication_watch"},
+    "convergence_legs": {"session": "convergence-legs", "data_dir": "research/data/convergence_legs",
+                         "module": "research.run_convergence_signal_collect"},
 }
 
 

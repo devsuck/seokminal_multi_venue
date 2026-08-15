@@ -182,7 +182,7 @@ def _build_critic_prompt(proposal: str, outcomes: list[dict], context_str: str) 
 {proposal[:2000]}
 
 === 실적 요약 ===
-최근 {n}건 · {exp_line} · 승률 {wins/n:.0%} (참고용)
+최근 {n}건 · {exp_line} · 승률 {(wins/n if n else 0):.0%} (참고용)
 {context_str[:500]}
 
 === 지시 ===

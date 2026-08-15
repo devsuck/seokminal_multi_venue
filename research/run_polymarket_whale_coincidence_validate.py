@@ -12,12 +12,12 @@ z-score, 3연속 no_edge)과 별개 독립 BH-FDR 풀 — 서로 다른 가설�
 """
 from __future__ import annotations
 
-import glob
 import random as _random
-import re
+from pathlib import Path
 
 import pandas as pd
 
+from research import jsonl_dates
 from research.hypotheses.polymarket_whale_coincidence import (
     build_coincidence_signal,
     build_labels_multi_horizon,
@@ -42,12 +42,7 @@ MIN_EVENTS = 10
 
 
 def _available_dates() -> list[str]:
-    dates = set()
-    for path in glob.glob(f"{DATA_DIR}/*.jsonl"):
-        m = re.search(r"(\d{4}-\d{2}-\d{2})\.jsonl$", path)
-        if m:
-            dates.add(m.group(1))
-    return sorted(dates)
+    return jsonl_dates.list_dates(Path(DATA_DIR))
 
 
 def run_family(family: str, df: pd.DataFrame) -> dict:

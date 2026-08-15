@@ -14,14 +14,11 @@ import json
 from collections import defaultdict
 from pathlib import Path
 
+from research import jsonl_dates
+
 
 def load_snapshots(data_dir: Path) -> list[dict]:
-    rows: list[dict] = []
-    for path in sorted(Path(data_dir).glob("*.jsonl")):
-        for line in path.read_text().strip().splitlines():
-            if line:
-                rows.append(json.loads(line))
-    return rows
+    return jsonl_dates.iter_all_rows(Path(data_dir))
 
 
 def _capturable_margin_usd(row: dict) -> float:

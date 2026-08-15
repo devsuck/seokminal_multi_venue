@@ -17,12 +17,12 @@ NOTE: raw 수집 데이터(트레이드/포지션 스냅샷/정산결과)를 wal
 from __future__ import annotations
 
 import datetime as dt
-import json
 import random as _random
 from pathlib import Path
 
 import pandas as pd
 
+from research import jsonl_dates
 from research.hypotheses.mlb_specialist_consensus import build_labels, consensus_signals
 from research.mlb_specialist.leaderboard import rank_specialists, wallet_mlb_stats
 from research.validation.baselines import empirical_p_value
@@ -104,16 +104,7 @@ def compute_report(variant_labels: dict[str, pd.DataFrame]) -> dict:
 
 
 def _load_jsonl_dir(dirpath: Path) -> list[dict]:
-    rows: list[dict] = []
-    if not dirpath.is_dir():
-        return rows
-    for f in sorted(dirpath.glob("*.jsonl")):
-        with f.open() as fh:
-            for line in fh:
-                line = line.strip()
-                if line:
-                    rows.append(json.loads(line))
-    return rows
+    return jsonl_dates.iter_all_rows(dirpath)
 
 
 def _outcome_side(outcome_index) -> str | None:

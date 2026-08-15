@@ -14,12 +14,12 @@ BH-FDR 자체는 전체 pvals로 correction, walk-forward는 그 위에 얹는 �
 """
 from __future__ import annotations
 
-import glob
 import random as _random
-import re
+from pathlib import Path
 
 import pandas as pd
 
+from research import jsonl_dates
 from research.hypotheses.polymarket_whale import (
     build_labels_multi_horizon,
     build_notional_zscore,
@@ -56,12 +56,7 @@ def _walk_forward(precomputed: list[tuple]) -> dict:
 
 
 def _available_dates() -> list[str]:
-    dates = set()
-    for path in glob.glob(f"{DATA_DIR}/*.jsonl"):
-        m = re.search(r"(\d{4}-\d{2}-\d{2})\.jsonl$", path)
-        if m:
-            dates.add(m.group(1))
-    return sorted(dates)
+    return jsonl_dates.list_dates(Path(DATA_DIR))
 
 
 def run_family(family: str, df: pd.DataFrame) -> dict:

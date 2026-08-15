@@ -1,4 +1,6 @@
 """수집기 함대 헬스 판정 유닛테스트."""
+import time
+
 from api_server.fleet_health import classify, classify_disk, count_restarts_by_key, fleet_summary, stale_after
 
 
@@ -29,6 +31,40 @@ def test_classify_dead_no_data():
 def test_default_threshold_for_unknown_key():
     assert stale_after("something_new") == 900
     assert stale_after("polymarket_arb") == 1800
+
+
+def test_long_cycle_collectors_not_stale_between_cycles():
+    """사이클이 긴 수집기는 대기 중에 stale로 찍히면 안 된다(2026-08-06 오탐).
+    임계는 각 스크립트의 실제 사이클 상수보다 커야 함."""
+    from research.run_polymarket_market_implication_collect import SCAN_INTERVAL_S
+    from research.run_polymarket_market_implication_watch import WATCH_INTERVAL_S
+
+    assert stale_after("polymarket_implication_collect") > SCAN_INTERVAL_S
+    assert stale_after("polymarket_implication_watch") > WATCH_INTERVAL_S
+    # 사이클 직후~다음 사이클 직전까지 전 구간 fresh
+    for key, cycle in [("polymarket_implication_collect", SCAN_INTERVAL_S),
+                       ("polymarket_implication_watch", WATCH_INTERVAL_S)]:
+        r = classify(key, {"running": True, "age_sec": int(cycle) - 1})
+        assert r["verdict"] == "fresh", f"{key}: 사이클 대기 중 {r['verdict']}"
+
+
+def test_convergence_legs_not_stale_between_cycles():
+    """convergence_legs(6h 폴링)도 같은 오탐 클래스 — DEFAULT 900s면 상시 stale(2026-08-15 발견)."""
+    from research.run_convergence_signal_collect import POLL_INTERVAL_SEC
+
+    assert stale_after("convergence_legs") > POLL_INTERVAL_SEC
+    r = classify("convergence_legs", {"running": True, "age_sec": int(POLL_INTERVAL_SEC) - 1})
+    assert r["verdict"] == "fresh"
+
+
+def test_heartbeat_keeps_event_driven_collector_fresh(tmp_path):
+    """이벤트 0건이어도 하트비트가 있으면 폴링 생존으로 판정돼야 한다."""
+    from research.collector_heartbeat import touch_heartbeat
+
+    hb = touch_heartbeat(tmp_path / "options_uoa")
+    assert hb.exists() and hb.suffix != ".jsonl"   # 이벤트 glob(*.jsonl)에 섞이면 안 됨
+    age = int(time.time() - hb.stat().st_mtime)
+    assert classify("options_uoa", {"running": True, "age_sec": age})["verdict"] == "fresh"
 
 
 def test_fleet_summary_worst_and_counts():

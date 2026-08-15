@@ -11,11 +11,29 @@ launchd vs tmux 결정과 무관하게 기존 restart 엔드포인트만 쓰므�
 from __future__ import annotations
 
 import logging
+import subprocess
 import time
 import urllib.request
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 POLL_INTERVAL_S = 120.0
+
+# ponytail: 워치독 프로세스 하나에서만 dedup, 여러 인스턴스 돌리면 안 먹힘. 지금 구조상 1개만 돎.
+_NOTIFIED: set[str] = set()
+
+
+def _notify(condition: str, message: str) -> None:
+    """맥 데스크톱 알림. condition별 1회만 — 같은 문제로 계속 울리지 않고, 상태 바뀌면 다시 울림."""
+    if condition in _NOTIFIED:
+        return
+    _NOTIFIED.add(condition)
+    try:
+        subprocess.run(
+            ["osascript", "-e", f'display notification "{message}" with title "Seokminal Fleet" sound name "Basso"'],
+            check=False, timeout=5,
+        )
+    except Exception:  # noqa: BLE001
+        logging.exception("watchdog: 데스크톱 알림 실패")
 
 
 def to_restart(fleet: dict, restart_stale: bool = False) -> list[str]:
@@ -47,22 +65,38 @@ def run_once(base_url: str = DEFAULT_BASE_URL, restart_stale: bool = False) -> l
     fleet = _get_json(f"{base_url}/lab/fleet")
 
     for c in fleet.get("collectors", []):
+        key = c["key"]
+        if c.get("verdict") != "dead":
+            _NOTIFIED.discard(f"{key}:dead")
+            _NOTIFIED.discard(f"{key}:restart_failed")
         if c.get("verdict") == "stuck":
-            logging.error("watchdog: %s 장시간 stale(stuck, %ss) — 수동 확인 필요", c["key"], c.get("age_sec"))
+            logging.error("watchdog: %s 장시간 stale(stuck, %ss) — 수동 확인 필요", key, c.get("age_sec"))
+            _notify(f"{key}:stuck", f"{key} stuck ({c.get('age_sec')}s) — 수동 확인 필요")
+        else:
+            _NOTIFIED.discard(f"{key}:stuck")
         if c.get("flapping"):
-            logging.warning("watchdog: %s 24h 내 %d회 재기동 — 반복 다운 의심", c["key"], c.get("restart_count_24h", 0))
+            logging.warning("watchdog: %s 24h 내 %d회 재기동 — 반복 다운 의심", key, c.get("restart_count_24h", 0))
+            _notify(f"{key}:flapping", f"{key} 반복 재기동중 ({c.get('restart_count_24h', 0)}회/24h)")
+        else:
+            _NOTIFIED.discard(f"{key}:flapping")
 
     disk = fleet.get("disk") or {}
     if disk.get("verdict") in ("warn", "critical"):
         logging.warning("watchdog: 디스크 여유공간 %s (%.1fGB)", disk["verdict"], disk.get("free_gb") or -1)
+        _notify(f"disk:{disk['verdict']}", f"디스크 여유공간 {disk['verdict']} ({disk.get('free_gb') or -1:.1f}GB)")
+    else:
+        _NOTIFIED.discard("disk:warn")
+        _NOTIFIED.discard("disk:critical")
 
     targets = to_restart(fleet, restart_stale)
     for key in targets:
         try:
             _post(f"{base_url}/lab/collectors/{key}/restart")
             logging.warning("watchdog: 수집기 재기동 %s", key)
+            _notify(f"{key}:dead", f"{key} dead 감지 — 자동 재기동함")
         except Exception:  # noqa: BLE001
             logging.exception("watchdog: 재기동 실패 %s", key)
+            _notify(f"{key}:restart_failed", f"{key} 재기동 실패 — 수동 확인 필요")
     return targets
 
 

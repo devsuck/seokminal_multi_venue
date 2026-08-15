@@ -31,6 +31,12 @@ RECONNECT_MAX_DELAY = 60.0
 # 상위 50레벨 유지 + 1초 간격으로만 기록.
 STORAGE_MAX_LEVELS = 50
 MIN_WRITE_INTERVAL_S = 1.0
+# 어댑터가 스냅샷마다 객체화할 레벨 수. 기본값(binance 5000/okx 400)은 라이브 대시보드 래더
+# 배율용이고, 여기선 STORAGE_MAX_LEVELS=50까지만 저장하므로 나머지는 만들자마자 버려진다 —
+# emit당 OrderBookLevel 1만 개 할당이 GC로 CPU를 다 먹던 원인(2026-08-14 프로파일: 실행
+# 시간의 24%가 gc_collect_main). 로컬 오더북 dict는 어댑터가 풀뎁스로 계속 유지하므로
+# diff 병합 정확도는 그대로.
+COLLECT_MAX_LEVELS = 100
 
 _last_write_ts: dict[tuple[str, str], float] = {}
 
@@ -67,8 +73,9 @@ def _make_client(venue: str):
 
 def _venue_stream(client, venue: str, coin: str):
     if venue == "hl":
+        # HL l2Book은 서버가 이미 좁게(양쪽 ~20레벨) 보내줘서 자를 게 없다.
         return client.stream(coin)
-    return client.stream_depth(coin)
+    return client.stream_depth(coin, max_levels=COLLECT_MAX_LEVELS)
 
 
 async def run_venue_coin_forever(

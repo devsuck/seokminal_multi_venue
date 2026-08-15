@@ -54,6 +54,7 @@ class OkxOrderflowClient:
         *,
         now_fn: Callable[[], float] = time.monotonic,
         throttle_sec: float = DEPTH_EMIT_THROTTLE_SEC,
+        max_levels: int = LOCAL_BOOK_MAX_LEVELS,
     ) -> AsyncIterator[OrderBookSnapshot]:
         inst_id = OKX_SYMBOL_MAP.get(coin)
         if inst_id is None:
@@ -75,7 +76,7 @@ class OkxOrderflowClient:
                 if now - last_emit < throttle_sec:
                     continue
                 last_emit = now
-                yield _materialize_okx_snapshot(coin, ts, bids, asks)
+                yield _materialize_okx_snapshot(coin, ts, bids, asks, max_levels=max_levels)
 
 
 def parse_okx_message(raw: str, coin: str) -> list[TradeEvent]:
@@ -146,7 +147,12 @@ def _merge_okx_depth_message(
 
 
 def _materialize_okx_snapshot(
-    coin: str, ts: float, bids: dict[float, float], asks: dict[float, float]
+    coin: str,
+    ts: float,
+    bids: dict[float, float],
+    asks: dict[float, float],
+    *,
+    max_levels: int = LOCAL_BOOK_MAX_LEVELS,
 ) -> OrderBookSnapshot:
     # model_construct: pydantic 검증(이미 float()로 타입 보장된 값 재검증)이 CPU 낭비 —
     # 값은 그대로, 검증만 스킵.
@@ -155,11 +161,11 @@ def _materialize_okx_snapshot(
         ts=ts,
         bids=[
             OrderBookLevel.model_construct(price=p, size=s)
-            for p, s in sorted(bids.items(), reverse=True)[:LOCAL_BOOK_MAX_LEVELS]
+            for p, s in sorted(bids.items(), reverse=True)[:max_levels]
         ],
         asks=[
             OrderBookLevel.model_construct(price=p, size=s)
-            for p, s in sorted(asks.items())[:LOCAL_BOOK_MAX_LEVELS]
+            for p, s in sorted(asks.items())[:max_levels]
         ],
     )
 

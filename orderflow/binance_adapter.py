@@ -24,7 +24,10 @@ BINANCE_REST_URL = "https://api.binance.com/api/v3/depth"
 DEPTH_SNAPSHOT_LIMIT = 5000
 # 로컬 오더북 유지 상한 — 이전엔 200으로 잘라서 스냅샷+diff로 확보한 폭을 도로 버렸음
 # (래더 ×100 배율에서 몇 칸밖에 안 뜨는 원인). ×1000까지 쓰려면 더 넓게 필요해서 스냅샷
-# 상한(5000)까지 그대로 들고 있는다.
+# 상한(5000)까지 그대로 들고 있는다. 로컬 dict(bids/asks)는 항상 이만큼 유지하되(diff 병합
+# 정확도), 스냅샷으로 객체화할 레벨 수는 stream_depth(max_levels=)로 소비자가 줄일 수 있다 —
+# 래더는 5000 다 쓰지만 리서치 컬렉터는 수십 레벨만 쓰는데 매 emit마다 1만 개
+# OrderBookLevel을 만들어 버려서 GC가 CPU의 대부분을 먹고 있었음(2026-08-14 프로파일).
 LOCAL_BOOK_MAX_LEVELS = 5000
 # @depth@100ms(초당 10회) 그대로 매번 정렬+객체화하면 낭비 — 소비자 쪽 스로틀(컬렉터
 # 1초/라이브 대시보드 0.15초)이 다 이보다 널널해서 여기서 한 번 더 걸어도 아무도 손해 안 봄.
@@ -71,6 +74,7 @@ class BinanceOrderflowClient:
         *,
         now_fn: Callable[[], float] = time.monotonic,
         throttle_sec: float = DEPTH_EMIT_THROTTLE_SEC,
+        max_levels: int = LOCAL_BOOK_MAX_LEVELS,
     ) -> AsyncIterator[OrderBookSnapshot]:
         pair = BINANCE_SYMBOL_MAP.get(coin)
         if pair is None:
@@ -130,11 +134,11 @@ class BinanceOrderflowClient:
                     ts=time.time(),
                     bids=[
                         OrderBookLevel.model_construct(price=p, size=s)
-                        for p, s in sorted(bids.items(), reverse=True)[:LOCAL_BOOK_MAX_LEVELS]
+                        for p, s in sorted(bids.items(), reverse=True)[:max_levels]
                     ],
                     asks=[
                         OrderBookLevel.model_construct(price=p, size=s)
-                        for p, s in sorted(asks.items())[:LOCAL_BOOK_MAX_LEVELS]
+                        for p, s in sorted(asks.items())[:max_levels]
                     ],
                 )
 

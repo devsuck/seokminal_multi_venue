@@ -111,6 +111,7 @@ def run_forever(
     last_seen_ts = 0.0
     seen_hashes: list[str] = []
     cycle = 0
+    backoff = poll_interval_s
     while max_cycles is None or cycle < max_cycles:
         # 마켓리스트 갱신과 체결 폴링을 별개 try로 분리 — 갱신이 실패해도(DNS 등)
         # 체결 폴링은 막히면 안 됨(2026-07-30: 같은 try에 묶여있어서 refresh가
@@ -127,9 +128,15 @@ def run_forever(
                 trades, target_markets, last_seen_ts, seen_hashes,
             )
             append_fn(new_trades)
+            wait = poll_interval_s
+            backoff = poll_interval_s
         except Exception:
-            logging.exception("polymarket whale poll failed, continuing")
-        time.sleep(poll_interval_s)
+            # run_polymarket_arb_scan.py와 동일 패턴(2026-08-02 도입): 네트워크 순간장애
+            # 시 고정 5초 재폴링 대신 지수백오프로 API 두들기는 빈도를 낮춘다.
+            logging.exception("polymarket whale poll failed, backing off")
+            wait = min(backoff, 60.0)
+            backoff = min(backoff * 2, 60.0)
+        time.sleep(wait)
         cycle += 1
 
 

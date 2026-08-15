@@ -158,6 +158,31 @@ def test_run_forever_fetch_keeps_running_when_market_refresh_keeps_failing():
     assert appended == []  # target_markets가 계속 {}라 필터에서 다 걸러짐(정상)
 
 
+def test_run_forever_backs_off_on_repeated_fetch_failure_and_resets_on_success():
+    """arb_scan과 동일 패턴 회귀 테스트: 연속 실패 시 대기시간이 배로 늘고(60s 캡),
+    성공하면 base interval로 리셋돼야 함."""
+    waits = []
+
+    def fake_sleep(s):
+        waits.append(s)
+
+    calls = {"n": 0}
+
+    def flaky_fetch():
+        calls["n"] += 1
+        if calls["n"] <= 3:
+            raise ConnectionError("boom")
+        return []
+
+    with patch("time.sleep", side_effect=fake_sleep):
+        runner.run_forever(
+            fetch_fn=flaky_fetch, refresh_fn=lambda: {"c1": "news"},
+            append_fn=lambda t: None,
+            poll_interval_s=5.0, market_refresh_interval_s=1000.0, max_cycles=4,
+        )
+    assert waits == [5.0, 10.0, 20.0, 5.0]  # 3연속 실패 백오프 후 성공 시 리셋
+
+
 def test_run_forever_starts_even_when_initial_refresh_fails():
     """최초 refresh_fn() 호출은 예전엔 try 밖이라 실패하면 프로세스 자체가 죽었음
     (unguarded). 지금은 감싸져서 빈 target으로라도 루프가 시작돼야 함."""

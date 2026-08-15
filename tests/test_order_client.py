@@ -127,13 +127,34 @@ def test_get_order_status_returns_matching_row():
 
     result = client.get_order_status(order_date="20240603", order_no="0000001234")
 
-    assert result == {"order_id": "0000001234", "status": "OPEN", "filled": 0.0, "remaining": 1.0}
+    assert result == {"order_id": "0000001234", "status": "OPEN", "filled": 0.0,
+                       "remaining": 1.0, "avg_price": 0.0}
     call = session.get.call_args
     assert call.args[0].endswith("/uapi/domestic-stock/v1/trading/inquire-daily-ccld")
     assert call.kwargs["headers"]["tr_id"] == "VTTC8001R"
     assert call.kwargs["params"]["CANO"] == "12345678"
     assert call.kwargs["params"]["INQR_STRT_DT"] == "20240603"
     assert call.kwargs["params"]["INQR_END_DT"] == "20240603"
+
+
+def test_get_order_status_computes_avg_price_from_filled_amount():
+    session = MagicMock()
+    session.get.return_value = _mock_response(
+        {
+            "rt_cd": "0",
+            "msg1": "success",
+            "output1": [
+                {"ODNO": "0000001234", "TOT_CCLD_QTY": "10", "TOT_CCLD_AMT": "9290",
+                 "NCCS_QTY": "0", "CNCL_YN": "N"},
+            ],
+        }
+    )
+    client, _ = _client(session)
+
+    result = client.get_order_status(order_date="20240603", order_no="0000001234")
+
+    assert result == {"order_id": "0000001234", "status": "FILLED", "filled": 10.0,
+                       "remaining": 0.0, "avg_price": 929.0}
 
 
 def test_get_order_status_returns_none_when_not_found():

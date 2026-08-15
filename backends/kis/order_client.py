@@ -180,11 +180,17 @@ class KISOrderClient:
         # quotations-domain endpoints (e.g. get_daily_price's stck_bsop_date)
         # which return lowercase — confirmed live: a real order-cash response
         # returned {"output": {"ODNO": ..., "ORD_TMD": ...}}. The exact names
-        # below (TOT_CCLD_QTY/NCCS_QTY/CNCL_YN) follow that same uppercase
-        # convention but are not yet confirmed live for this specific
-        # endpoint — fix here if a live inquire-daily-ccld response disagrees.
+        # below (TOT_CCLD_QTY/NCCS_QTY/CNCL_YN/TOT_CCLD_AMT) follow that same
+        # uppercase convention but are not yet confirmed live for this
+        # specific endpoint — fix here if a live inquire-daily-ccld response
+        # disagrees. Also note: confirmed live (2026-06-23, see cancel_order
+        # comment) that this endpoint returns an empty output1 for at least
+        # one mock-trading account regardless of query params — callers must
+        # treat a missing/empty result as "unknown", not "no fill".
         filled = float(row.get("TOT_CCLD_QTY", 0))
         remaining = float(row.get("NCCS_QTY", 0))
+        tot_amt = float(row.get("TOT_CCLD_AMT", 0) or 0)
+        avg_price = round(tot_amt / filled, 2) if filled > 0 else 0.0
         if row.get("CNCL_YN") == "Y":
             status = "CANCELLED"
         elif remaining == 0 and filled > 0:
@@ -193,7 +199,8 @@ class KISOrderClient:
             status = "PARTIAL"
         else:
             status = "OPEN"
-        return {"order_id": row.get("ODNO"), "status": status, "filled": filled, "remaining": remaining}
+        return {"order_id": row.get("ODNO"), "status": status, "filled": filled,
+                "remaining": remaining, "avg_price": avg_price}
 
     def _call(
         self,

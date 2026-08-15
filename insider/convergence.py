@@ -18,9 +18,10 @@ _US_TRADE_DIRECTION = {"BUY": "BULLISH", "SELL": "BEARISH"}
 _UOA_DIRECTION = {"call": "BULLISH", "put": "BEARISH"}
 
 
-def _tag_kr_legs(days: int) -> list[dict]:
+def _tag_kr_legs(days: int, bgn_de: str | None = None, end_de: str | None = None) -> list[dict]:
+    """bgn_de/end_de: 명시 윈도우로 과거 백필할 때만 넘김 — 평소엔 None (days 기반 실시간 피드)."""
     legs = []
-    for row in get_recent_kr_insider_feed(days=days):
+    for row in get_recent_kr_insider_feed(days=days, bgn_de=bgn_de, end_de=end_de):
         direction = _DART_EXEC_DIRECTION.get(row.get("trade_type", ""))
         if direction is None or not row.get("stock_code"):
             continue
@@ -32,7 +33,7 @@ def _tag_kr_legs(days: int) -> list[dict]:
             "detail": f"{row.get('corp_name', '')} {row.get('role', '')} {row.get('event_cause', '')}".strip(),
             "url": row.get("dart_url"),
         })
-    for row in get_recent_kr_corporate_actions(days=days):
+    for row in get_recent_kr_corporate_actions(days=days, bgn_de=bgn_de, end_de=end_de):
         direction = _DART_CORP_ACTION_DIRECTION.get(row.get("trade_type", ""))
         if direction is None or not row.get("ticker"):
             continue

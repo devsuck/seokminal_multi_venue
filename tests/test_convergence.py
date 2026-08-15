@@ -1,7 +1,7 @@
 """컨버전스 스코어링 순수함수 테스트 — 각 leg를 mock row로 주입."""
 from unittest.mock import patch
 
-from insider.convergence import compute_convergence
+from insider.convergence import _tag_kr_legs, compute_convergence
 
 
 def _corp_action_row(ticker="005930", trade_type="BUYBACK", trade_date="2026-08-01"):
@@ -94,3 +94,14 @@ def test_empty_ticker_universe_skips_uoa_call():
         result = compute_convergence("us", days=30)
     assert result == []
     mock_uoa.assert_not_called()
+
+
+def test_tag_kr_legs_forwards_explicit_date_window_to_both_leg_calls():
+    """과거 백필 스크립트가 bgn_de/end_de로 특정 주간 윈도우를 지정할 때, 두 leg 함수 모두에
+    그대로 전달돼야 함(days는 그 경우 무시됨) — 실시간 호출(compute_convergence)은 영향 없음."""
+    with patch("insider.convergence.get_recent_kr_insider_feed", return_value=[]) as mock_insider, \
+         patch("insider.convergence.get_recent_kr_corporate_actions", return_value=[]) as mock_corp:
+        _tag_kr_legs(days=7, bgn_de="20260101", end_de="20260107")
+
+    mock_insider.assert_called_once_with(days=7, bgn_de="20260101", end_de="20260107")
+    mock_corp.assert_called_once_with(days=7, bgn_de="20260101", end_de="20260107")

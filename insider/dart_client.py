@@ -204,15 +204,22 @@ def _parse_float(s: str) -> float:
 
 # ── Recent feed (all companies) ────────────────────────────────────────────────
 
-def get_recent_kr_insider_feed(days: int = 30, max_corps: int = 20) -> list[dict]:
+def get_recent_kr_insider_feed(
+    days: int = 30, max_corps: int = 20, bgn_de: str | None = None, end_de: str | None = None,
+) -> list[dict]:
     """
     Recent KR insider disclosures across all KOSPI/KOSDAQ companies.
     Step 1: OpenDART /list.json for recent 임원·주요주주 소유보고서
     Step 2: Parallel elestock fetch per unique corp
+
+    bgn_de/end_de (YYYYMMDD): explicit window override for historical backfill —
+    omit to keep the default "today minus `days`" live-feed behavior.
     """
     import datetime as _dt
-    end_de = _dt.date.today().strftime("%Y%m%d")
-    bgn_de = (_dt.date.today() - _dt.timedelta(days=days)).strftime("%Y%m%d")
+    if end_de is None:
+        end_de = _dt.date.today().strftime("%Y%m%d")
+    if bgn_de is None:
+        bgn_de = (_dt.date.today() - _dt.timedelta(days=days)).strftime("%Y%m%d")
 
     list_r = requests.get(
         f"{DART_BASE}/list.json",
@@ -285,12 +292,20 @@ def action_weight(trade_type: str, report_nm: str = "") -> float:
     return 1.0
 
 
-def get_recent_kr_corporate_actions(days: int = 30, max_items: int = 40) -> list[dict]:
+def get_recent_kr_corporate_actions(
+    days: int = 30, max_items: int = 40, bgn_de: str | None = None, end_de: str | None = None,
+) -> list[dict]:
     """매매 판단에 영향 주는 기업행위만: 유상/무상증자, 자기주식 취득/소각.
-    소유상황보고(보유자 보고)는 제외. DART list.json을 report_nm으로 필터."""
+    소유상황보고(보유자 보고)는 제외. DART list.json을 report_nm으로 필터.
+
+    bgn_de/end_de (YYYYMMDD): explicit window override for historical backfill —
+    omit to keep the default "today minus `days`" live-feed behavior.
+    """
     import datetime as _dt
-    end_de = _dt.date.today().strftime("%Y%m%d")
-    bgn_de = (_dt.date.today() - _dt.timedelta(days=days)).strftime("%Y%m%d")
+    if end_de is None:
+        end_de = _dt.date.today().strftime("%Y%m%d")
+    if bgn_de is None:
+        bgn_de = (_dt.date.today() - _dt.timedelta(days=days)).strftime("%Y%m%d")
 
     def _classify(nm: str) -> str | None:
         if "무상증자" in nm:

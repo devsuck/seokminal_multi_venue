@@ -3,6 +3,23 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-08-16 이어서2) — 디스크 위기 대응 + 데이터 수명주기(압축/삭제) 크론 배선
+
+사용자 요청: "모은 데이터들 처리하는 과정도 필요할 것 같아. 저장공간 때문에". 조사해보니 시스템 디스크 97% 도달 상태(`/System/Volumes/Data` 6.4Gi 여유)였음 — `research/data`(12G, `polymarket_tick`/`cross_venue_skew`가 대부분)가 원인. 하루 전(08-15) 등록한 `compress_old_data.sh` 크론(매일 04:00)이 아직 첫 실행 전이라 방치돼있었음.
+
+### 완료된 작업
+- 즉시 대응: `research.compress_old_data --keep-recent-days 1`→`0` 순차 실행해 08-13/08-14치 52개 파일 수동 압축. `research/data` 12G→6.0G, 디스크 여유 6.4Gi→19Gi(97%→38%).
+- 근본 조치: `compress_old_data.sh`의 `KEEP_RECENT_DAYS` 기본 2→0으로 낮춤. 수집기가 UTC자정에 파일 롤오버하고 크론은 UTC 02:00(KST/CEST 04:00)에 도니 전날치는 이미 마감 완료라 바로 압축해도 안전 — 원본 버퍼를 최소화.
+- `research/prune_old_data.py`(90일 지난 파일 실제 삭제, 스크립트+테스트는 이미 있었으나 크론 미배선 상태였던 걸 발견)에 `scripts/prune_old_data.sh` wrapper 신규 작성, 크론 등록(매일 05:00, compress 다음 순서). 압축은 무한증가를 늦출 뿐이라 상한선 역할로 삭제까지 배선.
+- 커밋 2개: `401c7c0`(스크립트/크론 변경), `959ffb7`(압축 결과물 52파일).
+
+### 다음 할 일
+- 없음 — 정상 운영 상태. 다음 세션에서 크론 실제 발화 로그(`logs/compress_old_data.log`, `logs/prune_old_data.log`) 한번 확인하면 좋음(아직 미발화).
+
+### 막힌 부분/결정사항
+- retention 90일 그대로 유지(사용자 승인) — 데이터 수집이 07-08부터라 아직 삭제 대상 0건, 당장 문제 없음.
+- (미해결, 사소) `crontab -l`에 stale 경로(`/Users/seokhun/Desktop/claude-test/...`) 남은 1회성 엔트리 발견 — 08-13 options_uoa 체크용, 리포 이동 전 경로라 실행 안 될 가능성 있으나 손 안 댐(사용자 요청 범위 밖).
+
 ## 세션 로그 (2026-08-10) — collector_watchdog 데스크톱 알림 추가
 
 사용자 요청: "뭐 잘못되면 플랫폼 알람으로 알려줘". 계기: 함대 헬스체크 중 프로세스 생존판정을 pgrep 자식탐색으로 잘못 해서 15개 세션 전부 죽은 걸로 오판(실제론 tmux가 커맨드 exec라 pane_pid 자체가 대상 프로세스라 자식이 없는 게 정상 — `ps -p pane_pid`로 재확인해 오판 정정). 그 과정에서 `ops/collector_watchdog.py`(dead 자동재기동, 120s 폴링)가 stuck/flapping/disk 이상을 로그만 남기고 사용자에게 실제 알림은 안 보낸다는 것 확인 — Phase22 alert엔진도 인앱(`/alerts`) 전용이라 외부 발송 채널 자체가 없었음.

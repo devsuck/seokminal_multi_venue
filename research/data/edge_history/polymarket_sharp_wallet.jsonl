@@ -592,3 +592,4 @@
 {"ts": 1786831501.320829, "verdict": "paper_candidate_forward_test_required", "min_p_value": 0.002, "n_survivors": 36, "n_tested": 18, "n_events": 18920, "significant": true}
 {"ts": 1786832161.330077, "verdict": "paper_candidate_forward_test_required", "min_p_value": 0.002, "n_survivors": 36, "n_tested": 18, "n_events": 18920, "significant": true}
 {"ts": 1786832821.3209999, "verdict": "paper_candidate_forward_test_required", "min_p_value": 0.002, "n_survivors": 36, "n_tested": 18, "n_events": 18924, "significant": true}
+{"ts": 1786833481.313622, "verdict": "paper_candidate_forward_test_required", "min_p_value": 0.002, "n_survivors": 36, "n_tested": 18, "n_events": 18924, "significant": true}

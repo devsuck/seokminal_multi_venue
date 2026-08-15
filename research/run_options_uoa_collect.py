@@ -21,6 +21,7 @@ from pathlib import Path
 from insider.congress_client import get_congress_trades
 from insider.finnhub_client import get_recent_feed
 from insider.options_uoa_client import get_unusual_options_activity
+from research.collector_heartbeat import touch_heartbeat
 
 _DATA_DIR = Path("research/data/options_uoa")
 POLL_INTERVAL_SEC = 1800.0  # 옵션체인 스캔이라 느림 — 30분 간격
@@ -86,6 +87,8 @@ def run_forever(poll_interval_sec: float = POLL_INTERVAL_SEC, max_iterations: in
     while max_iterations is None or i < max_iterations:
         try:
             append_events(run_once())
+            # 이벤트 0건이어도(미장 마감 등) 폴링은 성공한 것 — 함대 헬스가 죽음으로 오탐하지 않게
+            touch_heartbeat(_DATA_DIR)
             wait = poll_interval_sec
             backoff = poll_interval_sec
         except Exception:

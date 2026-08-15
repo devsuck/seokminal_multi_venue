@@ -199,9 +199,14 @@ def _tmux_process_status(session: str, data_dir: str) -> dict:
 
     last_write = None
     age_sec = None
-    files = sorted(Path(data_dir).glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
-    if files:
-        mtime = files[0].stat().st_mtime
+    # 이벤트가 있을 때만 파일을 쓰는 수집기(options_uoa 등)는 .heartbeat로 폴링 생존을 알린다.
+    # research/collector_heartbeat.py 참고 — 없으면 무시되므로 다른 수집기엔 영향 없음.
+    mtimes = [p.stat().st_mtime for p in Path(data_dir).glob("*.jsonl")]
+    heartbeat = Path(data_dir) / ".heartbeat"
+    if heartbeat.exists():
+        mtimes.append(heartbeat.stat().st_mtime)
+    if mtimes:
+        mtime = max(mtimes)
         last_write = _dt.datetime.fromtimestamp(mtime, tz=_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         age_sec = int(_dt.datetime.now(_dt.timezone.utc).timestamp() - mtime)
 

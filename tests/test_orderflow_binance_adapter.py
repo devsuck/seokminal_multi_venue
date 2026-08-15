@@ -131,6 +131,34 @@ async def test_stream_depth_fetches_snapshot_then_merges_diff_and_yields_snapsho
     assert fake_connect.called_with == "wss://stream.binance.com:9443/ws/btcusdt@depth@100ms"
 
 
+async def test_stream_depth_max_levels_trims_emitted_snapshot_but_keeps_local_book():
+    """max_levels는 객체화할 레벨만 줄인다 — 로컬 북은 풀뎁스로 남아 있어야 깊은 레벨의
+    후속 diff도 정상 병합된다(리서치 컬렉터가 GC 부하 줄이려 좁게 요청하는 경로)."""
+    deep_bid = json.dumps({"e": "depthUpdate", "U": 101, "u": 101, "b": [["64000.0", "9.0"]], "a": []})
+    # 위에서 넣은 깊은 레벨(64000)을 이어서 갱신 — 로컬 북에 남아 있어야 반영된다.
+    update_deep = json.dumps({"e": "depthUpdate", "U": 102, "u": 102, "b": [["64000.0", "7.0"]], "a": []})
+    fake_connect = FakeConnect([deep_bid, update_deep])
+
+    async def fake_fetch_snapshot(pair: str) -> dict:
+        return {
+            "lastUpdateId": 100,
+            "bids": [["65000.0", "0.5"], ["64999.0", "0.4"]],
+            "asks": [["65001.0", "0.3"], ["65002.0", "0.2"]],
+        }
+
+    client = BinanceOrderflowClient(connect_fn=fake_connect, fetch_snapshot_fn=fake_fetch_snapshot)
+    events = [e async for e in client.stream_depth("BTC", throttle_sec=0.0, max_levels=1)]
+
+    # emit된 스냅샷은 상위 1레벨로 잘림
+    assert all(len(e.bids) == 1 and len(e.asks) == 1 for e in events)
+    assert [e.bids[0].price for e in events] == [65000.0, 65000.0]
+    # 잘린 건 출력뿐 — 깊은 레벨은 로컬 북에 살아남아 두 번째 diff가 병합됐다
+    deep_events = [e async for e in BinanceOrderflowClient(
+        connect_fn=FakeConnect([deep_bid, update_deep]), fetch_snapshot_fn=fake_fetch_snapshot,
+    ).stream_depth("BTC", throttle_sec=0.0, max_levels=5000)]
+    assert [lvl.size for lvl in deep_events[-1].bids if lvl.price == 64000.0] == [7.0]
+
+
 async def test_stream_depth_discards_diffs_not_newer_than_snapshot():
     old_diff = json.dumps({"e": "depthUpdate", "U": 90, "u": 100, "b": [["64000.0", "1.0"]], "a": []})
     new_diff = json.dumps({"e": "depthUpdate", "U": 101, "u": 101, "b": [["64998.0", "2.0"]], "a": []})

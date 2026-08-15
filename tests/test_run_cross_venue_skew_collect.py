@@ -25,6 +25,7 @@ class FakeClient:
     def __init__(self, behaviors: list):
         self._behaviors = behaviors
         self.calls: list[str] = []
+        self.depth_max_levels: list[int | None] = []
 
     async def _consume(self, coin):
         self.calls.append(coin)
@@ -38,7 +39,8 @@ class FakeClient:
         async for event in self._consume(coin):
             yield event
 
-    async def stream_depth(self, coin):
+    async def stream_depth(self, coin, *, max_levels=None):
+        self.depth_max_levels.append(max_levels)
         async for event in self._consume(coin):
             yield event
 
@@ -78,6 +80,9 @@ async def test_run_venue_coin_forever_uses_stream_depth_for_non_hl_venues():
         append_fn=lambda venue, coin, snaps: appended.extend(snaps), max_cycles=1,
     )
     assert len(appended) == 1
+    # 어댑터 기본값(binance 5000)은 라이브 래더용 — 컬렉터는 저장분(50레벨)만 객체화시킨다.
+    assert client.depth_max_levels == [runner.COLLECT_MAX_LEVELS]
+    assert runner.COLLECT_MAX_LEVELS >= runner.STORAGE_MAX_LEVELS
 
 
 async def test_run_venue_coin_forever_backs_off_and_doubles_delay_on_repeated_failure():

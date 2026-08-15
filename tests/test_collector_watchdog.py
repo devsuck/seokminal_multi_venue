@@ -1,4 +1,5 @@
 """수집기 워치독 재기동 판정(순수) 유닛테스트."""
+import ops.collector_watchdog as watchdog
 from ops.collector_watchdog import to_restart
 
 
@@ -28,3 +29,15 @@ def test_all_fresh_no_restart():
 
 def test_empty_fleet():
     assert to_restart({}) == []
+
+
+def test_notify_dedups_same_condition_then_refires_after_clear(monkeypatch):
+    calls = []
+    monkeypatch.setattr(watchdog.subprocess, "run", lambda *a, **k: calls.append(a))
+    watchdog._NOTIFIED.clear()
+    watchdog._notify("c0:dead", "c0 dead")
+    watchdog._notify("c0:dead", "c0 dead again")
+    assert len(calls) == 1
+    watchdog._NOTIFIED.discard("c0:dead")
+    watchdog._notify("c0:dead", "c0 dead once more")
+    assert len(calls) == 2

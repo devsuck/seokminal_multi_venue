@@ -33,6 +33,7 @@ ENSURE=(
   "options-uoa|research.run_options_uoa_collect"
   "polymarket-implication-collect|research.run_polymarket_market_implication_collect"
   "polymarket-implication-watch|research.run_polymarket_market_implication_watch"
+  "convergence-legs|research.run_convergence_signal_collect"
 )
 
 for entry in "${ENSURE[@]}"; do
@@ -41,7 +42,10 @@ for entry in "${ENSURE[@]}"; do
   if tmux has-session -t "$session" 2>/dev/null; then
     continue  # 이미 살아있음 — 안 건드림
   fi
-  tmux new-session -d -s "$session" "$PY" -m "$module" \
+  # tmux new-session은 서버가 들고 있는 환경 스냅샷을 쓰지, 이 스크립트가 export한 값을
+  # 물려받지 않음 — .env 소싱은 새 세션 안에서 직접 해야 한다.
+  tmux new-session -d -s "$session" bash -c \
+    "cd '$REPO_ROOT' && set -a && [ -f .env ] && source .env; set +a; exec '$PY' -m '$module'" \
     && echo "$(date '+%F %T') 재생성: $session ($module)" \
     || echo "$(date '+%F %T') 재생성 실패: $session" >&2
 done

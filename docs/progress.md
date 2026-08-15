@@ -3,6 +3,22 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-08-10) — collector_watchdog 데스크톱 알림 추가
+
+사용자 요청: "뭐 잘못되면 플랫폼 알람으로 알려줘". 계기: 함대 헬스체크 중 프로세스 생존판정을 pgrep 자식탐색으로 잘못 해서 15개 세션 전부 죽은 걸로 오판(실제론 tmux가 커맨드 exec라 pane_pid 자체가 대상 프로세스라 자식이 없는 게 정상 — `ps -p pane_pid`로 재확인해 오판 정정). 그 과정에서 `ops/collector_watchdog.py`(dead 자동재기동, 120s 폴링)가 stuck/flapping/disk 이상을 로그만 남기고 사용자에게 실제 알림은 안 보낸다는 것 확인 — Phase22 alert엔진도 인앱(`/alerts`) 전용이라 외부 발송 채널 자체가 없었음.
+
+### 완료된 작업
+- `ops/collector_watchdog.py`: `_notify()` 추가 — `osascript display notification`으로 맥 데스크톱 알림. dead(재기동시)/재기동실패/stuck/flapping/disk warn·critical 조건에 연결. `_NOTIFIED` set으로 조건별 1회만 울리고 상태 복구되면 자동 해제(같은 문제 매 사이클 스팸 방지, 재발하면 다시 울림).
+- osascript 알림은 "터미널"이 아니라 "스크립트 편집기"(`com.apple.ScriptEditor2`) 앱 identity로 시스템알림 목록에 등록됨 — 사용자가 권한 못 찾던 원인, 확인 후 정상 수신 확인함.
+- 테스트 1개 추가(`tests/test_collector_watchdog.py::test_notify_dedups_same_condition_then_refires_after_clear`), 전체 스위트 통과.
+- `collector-watchdog` tmux 세션 재시작해서 새 코드 반영 완료(재기동 후 정상 기동 로그 확인).
+
+### 다음 할 일
+- 별건 없음, 다음 dead/stuck/flapping 발생 시 실제로 알림 뜨는지 실전 검증 대기(인위 트리거는 안 함 — 자연발생 기다림).
+
+### 막힌 부분/결정사항
+- ponytail 한계 명시: `_NOTIFIED`는 프로세스 하나짜리 인메모리 set이라 워치독 재시작하면 dedup 상태 리셋됨(사소, 재알림 한번 더 뜨는 정도) — 워치독 인스턴스 여러 개 동시에 안 돌리는 게 전제.
+
 ## 세션 로그 (2026-08-05) — options_uoa 이벤트 로깅 수집기 신규 추가
 
 사용자 질문: "옵션 만기짧은데 큰 물량 들어오면 내부자매매 의심해서 따라매매 — 엣지 있나? 노이즈면 임계값 올리면 되나?" 조사 결과 `insider/options_uoa_client.py`(탐지 로직)와 `insider/convergence.py`(다른 leg와 겹칠 때만 알람)만 있고 **저장이 전혀 안 됨** — 임계값 검증 자체가 불가능한 상태. registry(`experiment_registry.jsonl`)에도 options_uoa/insider_convergence 항목 0건.
@@ -1743,6 +1759,59 @@
 ### 다음 할 일
 - 위반 30~50건 쌓이면 QA(정성 검토 오탐률) + 포워드 pnl N≥20 게이트부터([[project_polymarket_market_implication_module]] 메모 참고). 미충족이면 sharp_wallet과 동일하게 paper 무기한 유지 — 절대 표본 부족 상태에서 라이브 전환 판단하지 말 것.
 - collect가 하루 1회, LLM_DAILY_CALL_CAP=500(태깅+분류 합산)이라 후보쌍 축적이 느릴 수 있음 — 며칠 지나서도 쌍이 한 자릿수면 MIN_VOLUME_USD/후보필터 기준 재검토.
+
+### 막힌 부분/결정사항
+- 없음.
+
+## 2026-08-13: 리포 이전 후 함대 점검 + 옵션 UOA/ICT저널 트랙 힘싣기
+
+배경: 리포를 `~/Desktop/claude-test/seokminal` → `~/seokminal`로 이전(macOS TCC가 Desktop 하위 launchd 백그라운드 접근을 막아 watchdog이 죽어있었음). 이전+watchdog 복구 후, 유저가 "슬슬 지루하다, 실제로 돈을 안버니까" → 대기중인 두 트랙(옵션 UOA, BTC ICT+오더플로우 저널) 쪽에 힘 싣기로 결정([[project_options_uoa_event_logging]], [[project_btc_ict_orderflow_journal_pending]]).
+
+### 완료된 작업
+- **리포 이전**: `~/Desktop/claude-test/seokminal` → `~/seokminal`(같은 볼륨 mv). launchd watchdog(`com.seokminal.collectors`) 신규 설치+경로 수정, 프론트 dev서버 이전 후 hang 재기동. 13개 tmux 수집기 전부 생존 확인.
+- **convergence-legs `Connection refused` 조사**: opendart/SEC 양쪽에서 간헐적 Errno 61 발생 — tmux vs direct 비교, 새 tmux세션 즉시성공 등으로 "tmux 실행환경 자체 문제" 가설 기각. 재시작한 프로세스가 이후 정상 동작해 일시적 네트워크 문제로 결론(백오프 재시도 로직 이미 있어 자체 회복).
+- **`run_options_uoa_forward.py` 실버그 발견+수정**: 티커마다 `_data_client()`를 새로 생성해 40개 티커 루프에서 매번 새 TCP/TLS 커넥션을 열다가 중간부터 연쇄 `Connection refused`(data.alpaca.markets) — 라벨링 결과가 21건→13건으로 오히려 줄어드는 회귀였음. 클라이언트를 루프 밖에서 1회 생성해 재사용 + 실패시 1회 재시도(2초 대기)로 수정. 재실행 후 이벤트 1032건(수집기가 계속 쌓아온 결과) → 신호 129건, 티커 44개 전부 성공.
+- **옵션 UOA n≥30 문턱 도달**(메모 예측 "≈08-13" 적중): fwd_1d n=89, fwd_3d n=34 — 둘 다 임계값스윕 가능선 통과. `research/run_options_uoa_threshold_sweep.py` 신규 작성(vol/oi 컷오프 3/5/10/20 × 지평선 1/3일, BH-FDR alpha=0.1). **결과: 8개 조합 전부 BH생존 0개, p값 0.25~0.95.** "임계값 올리면 노이즈 걸러진다" 가설 이 데이터로는 기각 — 옵션 UOA 사후수익률에 지금 특징(vol/oi비만)으로는 감지 가능한 엣지 없음.
+- **BTC ICT+오더플로우 자동페이퍼엔진 점검**: tmux `ict-orderflow-paper` 세션이 죽어있었음(마지막 기록 08-12 08:37, `ensure_collectors.sh` ENSURE 목록에 애초에 없어서 watchdog이 못 살림). 죽기 전까지 저널 36건 채워짐(30건 문턱 이미 넘음, ict_context+of_trigger 둘다 있는 유효행 36/36). **평균R = -0.13, 승률 58.3%** — 승률은 넘는데 손실 트레이드가 이익 트레이드보다 커서 기대값 마이너스. 프로젝트 규칙(승률 아니라 평균R 기준)대로 이 조합 REJECT.
+
+### 변경된 파일
+- `scripts/deploy/ensure_collectors.sh`(tmux env 소싱 위치 수정 — `.env`가 새 세션 프로세스 안에서 소싱되도록)
+- `research/run_options_uoa_forward.py`(클라이언트 재사용+재시도)
+- `research/run_options_uoa_threshold_sweep.py`(신규)
+- launchd plist 2종 경로 수정(`com.seokminal.collectors`, `com.seokminal.prune-research-data`)
+- `deploy/mac/start-backend.sh`, `deploy/mac/com.seokminal.backend.plist`(경로만, 미사용 상태)
+
+### 다음 할 일
+- 옵션 UOA: vol/oi 단일축 스윕은 기각됐음. 다른 축(moneyness/dte/n_contracts 조합, 또는 콜/풋 분리) 시도할지, 아니면 이 신호 자체를 완전히 접을지 다음 세션에서 결정. **표본은 계속 쌓이는 중**(신호율 늘어남 — 티커유니버스 44개, 이벤트 1032건/8일)이라 n이 더 커지면 재검토 여지는 있음. 지금 결과로 임계값 튜닝해서 억지로 살리려 하지 말 것([[feedback_tsmom_paper_discipline]] 동일 원칙).
+- ICT 저널: REJECT 확정. `ict-orderflow-paper`를 `ensure_collectors.sh`에 추가해 계속 돌릴지, 아니면 이 조합 자체를 접고 새 컨플루언스 조합으로 다시 설계할지 유저 판단 필요 — 지금 상태로 그냥 재기동만 하면 마이너스 기대값 조합이 계속 데이터만 쌓는 꼴이라 의미 낮음.
+
+### 막힌 부분/결정사항
+- 옵션 UOA·ICT저널 둘 다 "힘 싣자"로 시작했는데 둘 다 이번 검증에서 마이너스 판정 나옴 — 유저에게 이 결과 그대로 보고 예정, 낙관적으로 포장하지 않음.
+
+## 2026-08-16: agent 491d9679(lv5 가상화폐) -94.64% 원인 규명 + fills 스키마 버그 수정 + 에이전트 리셋
+
+배경: jarvis/agent_store 현황 점검 중 paper 에이전트 5개 전부 `validated:false`, 그중 `491d9679`(hl_daytrade, HL 크립토, 레버리지 3x)만 총수익률 -94.64%로 심각. `docs/roadmap.md` 블로커 항목에 이미 07-15부터 14회 연속 리뷰로 지적됐던 "Lv5 라벨링 버그"가 있었는데 실제 원인은 그보다 근본적인 구조 버그 2건이었음.
+
+### 완료된 작업
+- **원인 규명**: 로직(`daytrade_logic.py`)엔 버그 없음. 기록 파이프라인(`agents.py` → `agent_perf.py`/`lv5_learner.py`) 쪽 스키마 버그 2건:
+  1. `lv5_learner.extract_trade_outcomes()`가 `c.get("actions")`(복수, 실제 페이로드엔 존재한 적 없는 키)를 읽고 있었음 — 실제 키는 `c.get("action")`(단수 문자열). 자가학습 outcome 추출 루프가 아예 처음부터 죽어있었음(n=0 고정, autonomy≥3 전 에이전트 공통 결함).
+  2. `agents.py`의 청산(exit) 경로 4곳(HL/KR/US-Alpaca/US-IB) 전부 청산을 액션 텍스트로만 남기고 구조화 `fill`엔 안 씀(entry만 `fill` 기록). `agent_perf.compute_performance()`는 `fill`만 읽으므로 모든 청산이 원장에서 통째로 유실 — ETH가 6주+ "청산 시도 텍스트만 남고 포지션은 원가 그대로 열린 채" 남아있던 이유.
+  - 유저 가설(페이퍼 가격/거래량 이슈)은 기각 — 두 스키마 버그로 증상 전부 설명됨.
+- **수정**: entry/exit 동시발생(같은 사이클에 청산+신규진입 공존 확인됨) 대응 위해 단수 `fill`/`fill_symbol` → 복수 `fills: [{symbol,side,qty,price}]` 리스트로 스키마 변경.
+  - `api_server/routers/agents.py`: HL/KR/US-Alpaca/US-IB 4개 venue 전부 exit도 `fills`에 기록하도록 수정. payload에서 `fill`/`fill_symbol` 키 제거, `fills` 리스트로 대체.
+  - `api_server/agent_perf.py`: `_extract_fill`→`_extract_fills`(리스트), `compute_performance()` 사이클당 다중 fill 순회. 구버전 로우(단수 `fill`/`fill_symbol`)는 fallback으로 계속 읽힘(하위호환).
+  - `api_server/lv5_learner.py`: `actions`→`action`(단수, `"; "` split) 파싱으로 수정, `fills` 리스트 지원(구버전 fallback 포함).
+  - `tests/test_lv5_learner.py`: 픽스처(`_cycle_buy`/`_cycle_close`)가 옛날 버그 스키마(`actions`/`fill` 단수)를 흉내내고 있었음 — 실제 프로덕션 스키마(`action`/`fills`)로 갱신.
+- **에이전트 리셋**: `491d9679` 삭제(사이클 이력 전부 포함) 후 동일 설정(`hl_daytrade`, HL, alloc 100, paper, autonomy=3, market US)으로 `e19bf348` 신규 생성, running 전환. -94% PnL 들고가면 수정 검증이 불가능해서 유저 지시로 클린 리셋.
+- 전체 테스트(`pytest tests/ -q`) 2248 passed, 회귀 없음.
+
+### 변경된 파일
+- `api_server/routers/agents.py`, `api_server/agent_perf.py`, `api_server/lv5_learner.py`, `tests/test_lv5_learner.py`
+
+### 다음 할 일
+- `e19bf348`(신규 lv5 가상화폐) 다음 daytrade-tick부터 `fills` 신규 스키마로 정상 기록되는지, exit가 원장(`open_positions`/`realized_pnl`)에 실제 반영되는지 실전 확인(코드 아님 — 라이브 사이클 지켜봐야 함).
+- 자가학습(`compute_lv5_params`)이 새 에이전트에서 실제로 데이터 쌓이는지(min_data=5) 확인 — 지금까진 파싱 버그로 영구 0건이었던 거라 사실상 미검증 기능.
+- 다른 autonomy≥3 에이전트들도 같은 `actions`→`action` 버그로 자가학습이 죽어있었을 것 — 필요하면 나머지 에이전트도 상태 점검.
 
 ### 막힌 부분/결정사항
 - 없음.

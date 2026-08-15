@@ -29,10 +29,9 @@ def extract_trade_outcomes(cycles: list[dict]) -> list[dict]:
     """사이클 이력에서 (entry_score, outcome, net_ret) 추출.
 
     daytrade_tick 사이클 포맷:
-      fill = {"side": "buy", "qty": N, "price": P}
-      fill_symbol = "NVDA"
-      actions = ["close NVDA (익절 +5.2%)", "청산 000660 (손절 -3.1%)",
-                 "close TSLA (신호 반전)", ...]
+      fills = [{"symbol": "NVDA", "side": "buy", "qty": N, "price": P}, ...]
+      action = "close NVDA (익절 +5.2%); 청산 000660 (손절 -3.1%); close TSLA (신호 반전)"
+    (구버전 행은 fills 없이 fill/fill_symbol 단수 필드만 있음 — 같이 지원.)
 
     net_ret: 실현 수익률 fraction (비용 차감 전). % 파싱 실패(신호 반전/소멸 청산 등)
     시 None — 기대값 계산에서 제외되고 승패 카운트에만 반영.
@@ -41,17 +40,25 @@ def extract_trade_outcomes(cycles: list[dict]) -> list[dict]:
     outcomes: list[dict] = []
 
     for c in cycles:
-        actions: list[str] = c.get("actions") or []
-        fill: dict | None = c.get("fill")
-        fill_sym: str = c.get("fill_symbol") or ""
+        action_str: str = c.get("action") or ""
+        actions: list[str] = action_str.split("; ") if action_str and action_str != "none" else []
+        fills = c.get("fills")
+        if not isinstance(fills, list):
+            legacy = c.get("fill")
+            legacy_sym = c.get("fill_symbol") or ""
+            fills = [{**legacy, "symbol": legacy_sym}] if isinstance(legacy, dict) and legacy_sym else []
 
         # 신규 체결 기록
-        if fill and fill.get("side") == "buy" and fill_sym:
-            open_trades[fill_sym] = {
-                "entry_price": float(fill.get("price") or 0),
-                "entry_score": float(c.get("best_score") or 0),
-                "lv5_threshold": float(c.get("lv5_threshold") or 0),
-            }
+        for f in fills:
+            if not isinstance(f, dict):
+                continue
+            sym = f.get("symbol") or ""
+            if f.get("side") == "buy" and sym:
+                open_trades[sym] = {
+                    "entry_price": float(f.get("price") or 0),
+                    "entry_score": float(c.get("best_score") or 0),
+                    "lv5_threshold": float(c.get("lv5_threshold") or 0),
+                }
 
         # 청산 기록 파싱
         for action in actions:

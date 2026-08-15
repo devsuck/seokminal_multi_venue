@@ -1,6 +1,6 @@
 # Seokminal Multi-Venue — Roadmap
 
-**마지막 업데이트:** 2026-07-17
+**마지막 업데이트:** 2026-08-16
 **스택:** Python 3.14, FastAPI, NautilusTrader, pytest(`asyncio_mode=auto`, `@pytest.mark.asyncio` 금지)
 
 > 프론트엔드 로드맵은 별도: `seokminal-dashboard/docs/roadmap.md`
@@ -30,6 +30,7 @@
 | — | 크로스벤뉴 오더북 스큐 가설(BTC/ETH×hl/binance/okx) — SDD 6태스크, 머지레디, 실데이터 축적 대기 | `research/hypotheses/cross_venue_skew.py` | 07-12 |
 | 133 | 논문기반 알파마이닝 파이프라인(arXiv→LLM스펙추출→코드생성→스모크체크→격리 BH-FDR 검증) | `research/papers/`, `research/run_paper_ingest.py` | 07-15 |
 | — | **KR turn-of-month 포트폴리오 `paper_active` 승격** — 포트레벨 재검(p=0.002) → forward 자동배선(`tom_forward:generate`, monthly) | `research/paper/tom_forward.py` | 07-16 |
+| — | **Lv5 fills 스키마 버그 수정 + agent 491d9679 리셋** — `actions`(존재한 적 없는 키)→`action` 파싱버그, exit 4개 venue 전부 구조화 fill 미기록 버그 수정(단수 `fill`→복수 `fills` 리스트). 아래 "알려진 블로커" Lv5 항목 해소. `491d9679`(-94.64%) 삭제 후 `e19bf348`로 클린 리셋 | `api_server/routers/agents.py`, `agent_perf.py`, `lv5_learner.py` | 08-16 |
 
 ---
 
@@ -67,7 +68,7 @@
 ## 알려진 블로커
 
 - **CME/COMEX 계열(GC/ES/NQ) 실시간 tick**: "No market data permissions" — 유료구독(`CME Real-Time (NP,L2)`, ~$12.10/월) 필요, 사용자 미신청
-- **Lv5 리뷰 라벨링 버그 (agent 491d9679, HL)** — `api_server/lv5_learner.py:49` `extract_trade_outcomes()`가 포지션 오픈을 `fill.side=="buy"`일 때만 추적, close 매칭은 액션 문자열에 "close"/"청산" 필요. HYPE는 실제 체결 282건(15차 리뷰 기준 buy111/sell171, HYPE만 buy107/sell161) 있는데 청산 액션이 전체 1479사이클 동안 단 0건 — HYPE 포지션이 정상 청산 경로를 안 타고 매 사이클 반대방향 재진입으로 계속 뒤집히는 것으로 추정(정확한 메커니즘 미확인, `get_positions()` 추적 의심). 결과: outcome이 0으로 고정돼 기대값 계산 자체가 구조적으로 불가능. 리뷰 텍스트로 14회 연속(2026-07-15) 알렸는데 미수정이라 여기 기록으로 전환. 고칠 내용: (1) short 진입(`fill.side=="sell"`)도 open_trades에 등록, (2) HYPE가 close 경로를 안 타는 원인 규명. 수정 전까지 해당 에이전트 threshold/position_pct 동결, HYPE 신규 진입 중단 권고 유지 중.
+- ~~**Lv5 리뷰 라벨링 버그 (agent 491d9679, HL)**~~ ✅ **08-16 해소.** 실제 원인은 추정과 달랐음 — HYPE 포지션 반전 문제가 아니라 (1) `extract_trade_outcomes()`가 `actions`(존재한 적 없는 키)를 읽던 파싱버그, (2) exit 4개 venue 전부 구조화 `fill` 미기록. `fills` 리스트 스키마로 수정, `491d9679`는 `e19bf348`로 클린 리셋. 상세: `docs/progress.md` 2026-08-16.
 - **IB XAUUSD(Forex 타입)**: `Forex('XAUUSD')` qualify 자체 실패(Error 200, no security definition) — CMDTY 타입(`XAUUSD`/`XAGUSD`, conId 확보완료)으로 대체 경로 발견(07-12), 평일 라이브검증 대기
 - **Forex(EURUSD/USDJPY) 오더플로우**: IB FX가 quote-driven이라 기존 TradeEvent 기반 로직과 구조가 안 맞음 — 미착수, 별도 설계 필요
 - **uvicorn `--reload` hang 재발 가능성**: 근본원인(`timeout_graceful_shutdown=None`)은 CLAUDE.md 커맨드에 `--timeout-graceful-shutdown 10` 고정으로 해결됨 — 이 플래그 없이 기동하면 재발

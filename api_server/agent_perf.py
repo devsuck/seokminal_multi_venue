@@ -1,11 +1,14 @@
 """Per-agent performance ledger derived from recorded cycle fills.
 
-Each cycle may carry a ``fill`` object ({side, qty, price}) when the agent
-actually executed an order. This module FIFO-matches those fills per symbol to
-produce realized PnL, open positions (qty + average cost), and a trade log that
-keeps the *reason* (the cycle's note) for every entry — so the dashboard can
-show why each buy/sell happened. Pure functions: no network, fully testable.
-Unrealized PnL is layered on by the caller, which supplies current prices.
+Each cycle may carry a ``fills`` list ({symbol, side, qty, price} each) when
+the agent executed one or more orders that tick (an exit and a same-cycle
+entry are common). Older rows only carry the legacy singular ``fill``/
+``fill_symbol`` pair — still read for history. This module FIFO-matches those
+fills per symbol to produce realized PnL, open positions (qty + average
+cost), and a trade log that keeps the *reason* (the cycle's note) for every
+entry — so the dashboard can show why each buy/sell happened. Pure
+functions: no network, fully testable. Unrealized PnL is layered on by the
+caller, which supplies current prices.
 """
 from __future__ import annotations
 
@@ -27,19 +30,39 @@ class Performance:
     invested: float = 0.0  # cost basis currently tied up in open positions
 
 
-def _extract_fill(cycle: dict) -> dict | None:
+def _extract_fills(cycle: dict) -> list[dict]:
+    fills = cycle.get("fills")
+    if isinstance(fills, list):
+        out = []
+        for f in fills:
+            if not isinstance(f, dict):
+                continue
+            side = str(f.get("side", "")).lower()
+            symbol = f.get("symbol") or cycle.get("symbol") or "?"
+            try:
+                qty = float(f.get("qty", 0))
+                price = float(f.get("price", 0))
+            except (TypeError, ValueError):
+                continue
+            if side not in ("buy", "sell") or qty <= 0 or price <= 0:
+                continue
+            out.append({"side": side, "qty": qty, "price": price, "symbol": symbol})
+        return out
+
+    # legacy rows: singular fill/fill_symbol, no fills list.
     fill = cycle.get("fill")
     if not isinstance(fill, dict):
-        return None
+        return []
     side = str(fill.get("side", "")).lower()
     try:
         qty = float(fill.get("qty", 0))
         price = float(fill.get("price", 0))
     except (TypeError, ValueError):
-        return None
+        return []
     if side not in ("buy", "sell") or qty <= 0 or price <= 0:
-        return None
-    return {"side": side, "qty": qty, "price": price}
+        return []
+    symbol = cycle.get("fill_symbol") or cycle.get("symbol") or "?"
+    return [{"side": side, "qty": qty, "price": price, "symbol": symbol}]
 
 
 def compute_performance(cycles: list[dict]) -> Performance:
@@ -48,41 +71,38 @@ def compute_performance(cycles: list[dict]) -> Performance:
     perf = Performance()
 
     for cycle in cycles:
-        fill = _extract_fill(cycle)
-        if fill is None:
-            continue
-        symbol = cycle.get("symbol") or "?"
-        side, qty, price = fill["side"], fill["qty"], fill["price"]
         reason = cycle.get("note") or cycle.get("next_trigger") or ""
-        trade = {
-            "ts": cycle.get("ts"),
-            "cycle": cycle.get("cycle"),
-            "symbol": symbol,
-            "side": side,
-            "qty": qty,
-            "price": price,
-            "reason": reason,
-            "realized_pnl": None,
-        }
+        for fill in _extract_fills(cycle):
+            symbol, side, qty, price = fill["symbol"], fill["side"], fill["qty"], fill["price"]
+            trade = {
+                "ts": cycle.get("ts"),
+                "cycle": cycle.get("cycle"),
+                "symbol": symbol,
+                "side": side,
+                "qty": qty,
+                "price": price,
+                "reason": reason,
+                "realized_pnl": None,
+            }
 
-        book = lots.setdefault(symbol, deque())
-        if side == "buy":
-            book.append(_Lot(qty=qty, price=price))
-        else:  # sell — realize against oldest lots (FIFO)
-            remaining = qty
-            realized = 0.0
-            while remaining > 1e-9 and book:
-                lot = book[0]
-                take = min(remaining, lot.qty)
-                realized += (price - lot.price) * take
-                lot.qty -= take
-                remaining -= take
-                if lot.qty <= 1e-9:
-                    book.popleft()
-            perf.realized_pnl += realized
-            trade["realized_pnl"] = round(realized, 4)
+            book = lots.setdefault(symbol, deque())
+            if side == "buy":
+                book.append(_Lot(qty=qty, price=price))
+            else:  # sell — realize against oldest lots (FIFO)
+                remaining = qty
+                realized = 0.0
+                while remaining > 1e-9 and book:
+                    lot = book[0]
+                    take = min(remaining, lot.qty)
+                    realized += (price - lot.price) * take
+                    lot.qty -= take
+                    remaining -= take
+                    if lot.qty <= 1e-9:
+                        book.popleft()
+                perf.realized_pnl += realized
+                trade["realized_pnl"] = round(realized, 4)
 
-        perf.trades.append(trade)
+            perf.trades.append(trade)
 
     # Snapshot open positions from remaining lots.
     for symbol, book in lots.items():

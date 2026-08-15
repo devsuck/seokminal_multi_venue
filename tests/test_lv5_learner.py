@@ -9,16 +9,15 @@ from api_server.lv5_learner import (
 
 def _cycle_buy(sym: str, score: float, price: float = 100.0) -> dict:
     return {
-        "fill": {"side": "buy", "qty": 1, "price": price},
-        "fill_symbol": sym,
+        "fills": [{"symbol": sym, "side": "buy", "qty": 1, "price": price}],
         "best_score": score,
         "lv5_threshold": 40,
-        "actions": [],
+        "action": "",
     }
 
 
 def _cycle_close(sym: str, reason: str) -> dict:
-    return {"fill": None, "fill_symbol": "", "actions": [f"close {sym} ({reason})"]}
+    return {"fills": [], "action": f"close {sym} ({reason})"}
 
 
 def test_extract_parses_korean_tp_sl_labels():

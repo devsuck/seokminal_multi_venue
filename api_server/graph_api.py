@@ -222,6 +222,21 @@ def _save(g: dict) -> None:
     _GRAPH_PATH.write_text(json.dumps(g, ensure_ascii=False, indent=2))
 
 
+# ── 스코어 이력 ───────────────────────────────────────────────────────────────
+# 그래프 json은 현재 상태만 들고 있어서 "병목이 오르는 중인가"를 알 수 없다.
+# 패치될 때마다 노드 스코어를 append-only로 남겨 /history/{node_id}가 추세로 읽는다.
+_HISTORY_PATH = _GRAPH_PATH.parent / "graph_history.jsonl"
+_HISTORY_FIELDS = ("bottleneck_score", "supply_risk", "demand_pressure", "policy_risk")
+
+
+def _append_history(g: dict, ts: str) -> None:
+    _HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with _HISTORY_PATH.open("a") as f:
+        for n in g["nodes"]:
+            row = {"ts": ts, "node_id": n["id"], **{k: n.get(k) for k in _HISTORY_FIELDS}}
+            f.write(json.dumps(row) + "\n")
+
+
 # ── 엔드포인트 ────────────────────────────────────────────────────────────────
 
 @router.get("")
@@ -267,7 +282,17 @@ def patch_graph(patch: dict) -> dict:
     g["meta"]["update_log"] = ([{"ts": now, "summary": patch.get("summary", "manual patch")}]
                                 + g["meta"]["update_log"])[:50]
     _save(g)
+    _append_history(g, now)
     return {"status": "ok", "update_count": g["meta"]["update_count"]}
+
+
+@router.get("/history/{node_id}")
+def get_node_history(node_id: str, limit: int = 200) -> dict:
+    """노드 스코어 시계열(오래된 것 → 최신). 이력 없으면 빈 배열."""
+    if not _HISTORY_PATH.exists():
+        return {"node_id": node_id, "history": []}
+    rows = [json.loads(ln) for ln in _HISTORY_PATH.read_text().splitlines() if ln.strip()]
+    return {"node_id": node_id, "history": [r for r in rows if r["node_id"] == node_id][-limit:]}
 
 
 # ── AI 업데이트 파이프라인 ────────────────────────────────────────────────────

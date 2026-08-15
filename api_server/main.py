@@ -5448,8 +5448,22 @@ from api_server.console_api import router as console_router
 app.include_router(console_router)
 
 
+def _revive_agents() -> None:
+    """tmux 서버 리셋/머신 재부팅 등으로 세션이 죽었는데 status="running"만
+    남아있는 에이전트를 재기동. status는 start/stop 시점에만 쓰여져서
+    프로세스가 죽어도 스스로 반영되지 않는다 — 부팅 때마다 대조."""
+    from api_server.routers.agents import _agent_tmux, _session_exists, agent_store, start_agent
+    try:
+        for a in agent_store.list_agents():
+            if a.get("status") == "running" and not _session_exists(_agent_tmux(a["id"])):
+                start_agent(a["id"])
+    except Exception:  # noqa: BLE001
+        pass
+
+
 @app.on_event("startup")
 async def _start_dart_bot() -> None:
+    _revive_agents()
     _dart_bot_start()
     _vrp_bot_start()
     _copytrade_bot_start()

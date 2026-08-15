@@ -1,6 +1,6 @@
 # Seokminal Multi-Venue — Roadmap
 
-**마지막 업데이트:** 2026-08-16 (백로그 분리커밋 완료)
+**마지막 업데이트:** 2026-08-16 (데이터 수명주기 크론 배선 완료)
 **스택:** Python 3.14, FastAPI, NautilusTrader, pytest(`asyncio_mode=auto`, `@pytest.mark.asyncio` 금지)
 
 > 프론트엔드 로드맵은 별도: `seokminal-dashboard/docs/roadmap.md`
@@ -32,6 +32,7 @@
 | — | **KR turn-of-month 포트폴리오 `paper_active` 승격** — 포트레벨 재검(p=0.002) → forward 자동배선(`tom_forward:generate`, monthly) | `research/paper/tom_forward.py` | 07-16 |
 | — | **Lv5 fills 스키마 버그 수정 + agent 491d9679 리셋** — `actions`(존재한 적 없는 키)→`action` 파싱버그, exit 4개 venue 전부 구조화 fill 미기록 버그 수정(단수 `fill`→복수 `fills` 리스트). 아래 "알려진 블로커" Lv5 항목 해소. `491d9679`(-94.64%) 삭제 후 `e19bf348`로 클린 리셋 | `api_server/routers/agents.py`, `agent_perf.py`, `lv5_learner.py` | 08-16 |
 | — | **미커밋 백로그(08-05~08-15, 150+파일) 전수검토·분리커밋** — gz 압축데이터 무음누락 버그, options_uoa 하트비트/사후수익률 라벨링, convergence_legs 4소스 상시수집기, sharp_wallet maker/taker 체결시뮬, polymarket_bot 다각화 무엣지 사후검증, 지식그래프 스코어 이력 API, `grand_total_realized_pnl` ₩/$ 혼합 제거, 재부팅시 에이전트 자동복구, 워치독 데스크톱 알림 — 13개 논리커밋으로 분리(상세: `docs/progress.md` 2026-08-16 이어서) | 다수(커밋별 명시) | 08-16 |
+| — | **디스크 위기 대응 + 데이터 수명주기 크론 배선** — 시스템 디스크 97% 도달, `research/data` 12G→6.0G 수동압축. `compress_old_data.sh` 대기기간 2일→0일 단축, `prune_old_data.py`(90일 삭제, 기존 미배선) wrapper 신규+크론 등록(05:00) | `scripts/compress_old_data.sh`, `scripts/prune_old_data.sh` | 08-16 |
 
 ---
 

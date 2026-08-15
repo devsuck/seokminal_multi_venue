@@ -474,8 +474,11 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
         actions.append(lv5_state["lv5_note"])
     if lv5_agent_note:
         actions.append(lv5_agent_note)
-    fill = None
-    fill_symbol = None
+    # 한 사이클에 exit+entry가 동시에 일어날 수 있어(청산 후 다른 종목 진입) 단일
+    # fill이 아니라 리스트로 기록 — 예전엔 exit가 fill을 아예 안 남겨서 원장에
+    # 반영 안 되고, entry가 나중에 같은 변수를 덮어써 exit가 통째로 유실됐음
+    # (2026-08-15, 491d9679 lv5 가상화폐 -94% 사고 원인).
+    fills: list[dict] = []
 
     # Lv5 pause: 연속 손절 감지 시 entry skip (청산만 수행)
     lv5_pause = lv5_state.get("pause", False) or dd_pause
@@ -494,6 +497,7 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
         pos_raw = get_positions(paper=paper)
         equity = float(pos_raw.get("margin_summary", {}).get("accountValue", 0) or 0)
         held = []
+        qty_by_symbol: dict[str, float] = {}
         for p in pos_raw.get("asset_positions", []):
             szi = float(p["position"]["szi"])
             coin = p["position"]["coin"]
@@ -501,6 +505,7 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
                 cur = scores.get(coin, {}).get("price")
                 held.append({"symbol": coin, "side": "long" if szi > 0 else "short",
                              "entry": float(p["position"].get("entryPx", 0) or 0), "current": cur})
+                qty_by_symbol[coin] = abs(szi)
         # exits: hard TP/SL first, then signal flip/degrade
         tp_pct = float(profile.get("tp_pct", 0.05)); sl_pct = float(profile.get("sl_pct", 0.03))
         exits = daytrade_logic.stop_exits(held, tp_pct, sl_pct) + daytrade_logic.decide_exits(held, scores)
@@ -508,6 +513,10 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
             try:
                 close_position(coin=ex["symbol"], paper=paper)
                 actions.append(f"close {ex['symbol']} ({ex['reason']})")
+                q, px = qty_by_symbol.get(ex["symbol"]), scores.get(ex["symbol"], {}).get("price")
+                if q and px:
+                    fills.append({"symbol": ex["symbol"], "side": "sell" if ex["side"] == "long" else "buy",
+                                  "qty": q, "price": px})
             except Exception as e:
                 actions.append(f"close {ex['symbol']} FAILED: {e}")
         held_syms = {h["symbol"] for h in held}
@@ -532,8 +541,7 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
                 try:
                     set_leverage(entry["symbol"], int(leverage), True, paper)
                     place_order(entry["symbol"], entry["side"] == "buy", size, "market", paper=paper)
-                    fill = {"side": entry["side"], "qty": size, "price": entry["entry"]}
-                    fill_symbol = entry["symbol"]
+                    fills.append({"symbol": entry["symbol"], "side": entry["side"], "qty": size, "price": entry["entry"]})
                     actions.append(f"{entry['side']} {entry['symbol']} {size} @ {entry['entry']} (x{int(leverage)})")
                 except Exception as e:
                     actions.append(f"entry {entry['symbol']} FAILED: {e}")
@@ -569,6 +577,9 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
                 if qtyh > 0:
                     kis.place_order(ex["symbol"], "SELL", int(qtyh), "MARKET")
                     actions.append(f"청산 {ex['symbol']} ({ex['reason']})")
+                    px = next((h["current"] for h in held if h["symbol"] == ex["symbol"]), None)
+                    if px:
+                        fills.append({"symbol": ex["symbol"], "side": "sell", "qty": qtyh, "price": px})
             except Exception as e:
                 actions.append(f"청산 {ex['symbol']} FAILED: {str(e)[:50]}")
         held_syms = {h["symbol"] for h in held}
@@ -590,8 +601,7 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
             if qty > 0:
                 try:
                     kis.place_order(entry["symbol"], "BUY", qty, "MARKET")
-                    fill = {"side": "buy", "qty": qty, "price": entry["entry"]}
-                    fill_symbol = entry["symbol"]
+                    fills.append({"symbol": entry["symbol"], "side": "buy", "qty": qty, "price": entry["entry"]})
                     actions.append(f"매수 {entry['symbol']} {qty}주 @ {entry['entry']}")
                 except Exception as e:
                     actions.append(f"매수 {entry['symbol']} FAILED: {str(e)[:50]}")
@@ -609,15 +619,21 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
                     scores[sym] = {"error": str(e), "signal": "AVOID", "score": 0}
             client = shared._trading_client()
             held = []
+            qty_by_symbol: dict[str, float] = {}
             for p in client.get_all_positions():
                 q = float(p.qty)
                 if q != 0 and p.symbol in own_codes:
                     held.append({"symbol": p.symbol, "side": "long" if q > 0 else "short",
                                  "entry": float(p.avg_entry_price), "current": float(p.current_price)})
+                    qty_by_symbol[p.symbol] = abs(q)
             exits = daytrade_logic.stop_exits(held, tp_pct, sl_pct) + daytrade_logic.decide_exits(held, scores)
             for ex in {e["symbol"]: e for e in exits}.values():
                 try:
                     client.close_position(ex["symbol"]); actions.append(f"close {ex['symbol']} ({ex['reason']})")
+                    q, px = qty_by_symbol.get(ex["symbol"]), next((h["current"] for h in held if h["symbol"] == ex["symbol"]), None)
+                    if q and px:
+                        fills.append({"symbol": ex["symbol"], "side": "sell" if ex["side"] == "long" else "buy",
+                                      "qty": q, "price": px})
                 except Exception as e:
                     actions.append(f"close {ex['symbol']} FAILED: {e}")
             held_syms = {h["symbol"] for h in held}
@@ -642,8 +658,7 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
                         from alpaca.trading.enums import OrderSide, TimeInForce
                         client.submit_order(MarketOrderRequest(symbol=entry["symbol"], qty=qty,
                             side=OrderSide.BUY, time_in_force=TimeInForce.DAY))
-                        fill = {"side": "buy", "qty": qty, "price": entry["entry"]}
-                        fill_symbol = entry["symbol"]
+                        fills.append({"symbol": entry["symbol"], "side": "buy", "qty": qty, "price": entry["entry"]})
                         actions.append(f"buy {entry['symbol']} {qty} @ {entry['entry']}")
                     except Exception as e:
                         actions.append(f"entry {entry['symbol']} FAILED: {e}")
@@ -655,7 +670,7 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
             async def _ib_us():
                 ib = IBOrderClient(host=os.environ.get("IB_HOST", "127.0.0.1"), port=7496,
                                    client_id=random.randint(600, 699))
-                acts, fl, fs, sc = [], None, None, {}
+                acts, fls, sc = [], [], {}
                 try:
                     # scores from IB 5-min bars (same broker as execution)
                     for sym in universe:
@@ -675,6 +690,10 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
                             await ib.place_order(e["symbol"], "SELL" if pos["qty"] > 0 else "BUY",
                                                  int(abs(pos["qty"])), "MARKET", wait_fill=True)
                             acts.append(f"close {e['symbol']} ({e['reason']})")
+                            px = next((h["current"] for h in held if h["symbol"] == e["symbol"]), None)
+                            if px:
+                                fls.append({"symbol": e["symbol"], "side": "sell" if pos["qty"] > 0 else "buy",
+                                           "qty": abs(pos["qty"]), "price": px})
                     hs = {p["symbol"] for p in raw}
                     en = daytrade_logic.decide_entry(sc, threshold, allow_short=False)
                     if en and en["symbol"] not in hs and budget > 0:
@@ -684,22 +703,24 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
                             # 실 체결가 우선, 없으면(미체결/지연) 신호가로 폴백 표시
                             px = r.get("avg_fill_price") or en["entry"]
                             tag = "IB" if r.get("avg_fill_price") else "IB est"
-                            fl = {"side": "buy", "qty": q, "price": px}; fs = en["symbol"]
+                            fls.append({"symbol": en["symbol"], "side": "buy", "qty": q, "price": px})
                             acts.append(f"buy {en['symbol']} {q} @ {px} ({tag})")
                 finally:
                     await ib.close()
-                return acts, fl, fs, sc
+                return acts, fls, sc
 
             try:
-                a, fill, fill_symbol, scores = asyncio.run(_ib_us())
+                a, ib_fills, scores = asyncio.run(_ib_us())
                 actions.extend(a)
+                fills.extend(ib_fills)
             except Exception as e:
                 actions.append(f"IB(TWS) 실행 실패: {str(e)[:80]}")
 
     # Build + record the structured cycle (deterministic, no LLM).
     best = daytrade_logic.decide_entry(scores, 0, allow_short=(venue == "HL"))  # top candidate for display
-    decision = "BUY" if (fill and fill["side"] == "buy") else "SELL" if fill else "SKIP"
-    top_sym = fill_symbol or (best["symbol"] if best else "NONE")
+    last_fill = fills[-1] if fills else None
+    decision = "BUY" if (last_fill and last_fill["side"] == "buy") else "SELL" if last_fill else "SKIP"
+    top_sym = (last_fill["symbol"] if last_fill else (best["symbol"] if best else "NONE"))
     top_score = (best["score"] if best else 0)
     note_bits = actions if actions else ["실행 없음 — 조건 미충족"]
     payload = {
@@ -708,7 +729,7 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
         "action": "; ".join(actions) if actions else "none",
         "next_trigger": f"conviction ≥ {threshold:.0f} 신호",
         "cash_pct": None, "note": " | ".join(note_bits)[:400],
-        "fill": fill, "fill_symbol": fill_symbol, "markets": {"US": None, "KR": None},
+        "fills": fills, "markets": {"US": None, "KR": None},
         "lv5_threshold": threshold if autonomy_lv >= 3 else None,
         "lv5_note": lv5_state.get("lv5_note"),
         "lv5_agent_note": lv5_agent_note or None,

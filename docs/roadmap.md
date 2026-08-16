@@ -1,6 +1,6 @@
 # Seokminal Multi-Venue — Roadmap
 
-**마지막 업데이트:** 2026-08-16 (데이터 수명주기 크론 배선 완료)
+**마지막 업데이트:** 2026-08-16 (전체 플랫폼 헬스체크 + whale_tick 백오프 대응 완료)
 **스택:** Python 3.14, FastAPI, NautilusTrader, pytest(`asyncio_mode=auto`, `@pytest.mark.asyncio` 금지)
 
 > 프론트엔드 로드맵은 별도: `seokminal-dashboard/docs/roadmap.md`
@@ -33,6 +33,7 @@
 | — | **Lv5 fills 스키마 버그 수정 + agent 491d9679 리셋** — `actions`(존재한 적 없는 키)→`action` 파싱버그, exit 4개 venue 전부 구조화 fill 미기록 버그 수정(단수 `fill`→복수 `fills` 리스트). 아래 "알려진 블로커" Lv5 항목 해소. `491d9679`(-94.64%) 삭제 후 `e19bf348`로 클린 리셋 | `api_server/routers/agents.py`, `agent_perf.py`, `lv5_learner.py` | 08-16 |
 | — | **미커밋 백로그(08-05~08-15, 150+파일) 전수검토·분리커밋** — gz 압축데이터 무음누락 버그, options_uoa 하트비트/사후수익률 라벨링, convergence_legs 4소스 상시수집기, sharp_wallet maker/taker 체결시뮬, polymarket_bot 다각화 무엣지 사후검증, 지식그래프 스코어 이력 API, `grand_total_realized_pnl` ₩/$ 혼합 제거, 재부팅시 에이전트 자동복구, 워치독 데스크톱 알림 — 13개 논리커밋으로 분리(상세: `docs/progress.md` 2026-08-16 이어서) | 다수(커밋별 명시) | 08-16 |
 | — | **디스크 위기 대응 + 데이터 수명주기 크론 배선** — 시스템 디스크 97% 도달, `research/data` 12G→6.0G 수동압축. `compress_old_data.sh` 대기기간 2일→0일 단축, `prune_old_data.py`(90일 삭제, 기존 미배선) wrapper 신규+크론 등록(05:00) | `scripts/compress_old_data.sh`, `scripts/prune_old_data.sh` | 08-16 |
+| — | **전체 플랫폼 라이브 헬스체크 + 장애대응 5건** — 좀비 tmux 제거, Lv5 ZeroDivisionError 수정, agent `e19bf348` 드라이버 미기동 발견+기동, whale_tick sleep-wake 크래시(워치독이 세션존재만 보고 내부프로세스 생사는 안 봄 — 알려진 갭) 대응+지수백오프 이식, `prune_old_data` 크론/launchd 중복 정리, `polymarket_sharp_wallet_bot`(누적 -$2025, 순수비용잠식) 비활성화 | `api_server/lv5_agent.py`, `research/run_polymarket_whale_collect.py` | 08-16 |
 
 ---
 
@@ -64,6 +65,8 @@
 5. **US 내부자매수 UNDERPOWERED** — 27개 대형주 유니버스로는 이벤트 부족(24건/유효13건) 확정. 유니버스 확장 시 재시도 가능(미착수)
 6. **논문기반 알파마이닝 파이프라인(Phase 133) 실전 검증** — `python -m research.run_paper_ingest` 1회 실행해 라이브 arXiv 논문 e2e 통과율 확인 안 됨(구현만 완료, 최종 whole-branch 리뷰도 미실행: `scripts/review-package e18921b <HEAD>`)
 7. **`/edges` 프론트 페이지 브라우저 렌더 확인** — 백엔드 `/lab/edges`·`/lab/fleet`는 curl 스모크 완료(2026-07-22), 대시보드 `/edges` 페이지(포트폴리오 타일+함대칩+테이블+스파크라인) 실브라우저 확인은 아직 안 함. `mlb_specialist_consensus`는 이번 세션에 `warmable: True`로 승격됐으니 폴리마켓 2종+MLB 총 3종이 뜨는지 확인.
+8. **`polymarket_sharp_wallet_bot` 처분 결정** — 08-16 비활성화만 함(누적 -$2025, 순수 비용잠식). 전략 로직 재검토해서 살릴지, 완전 폐기할지 다음 세션에서 결정.
+9. **"엣지 있는 기능만 압축해서 에이전틱에 올리기" 논의 이어가기** — 사용자가 08-16에 이 방향 언급했으나 구체 실행은 안 함. `docs/agentic-roadmap.md`(07-02 작성, 검증된 엣지 0개 상태 기준이라 최신 아닐 수 있음) 갱신 필요할 수도.
 
 ---
 

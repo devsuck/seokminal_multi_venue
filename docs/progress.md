@@ -3,6 +3,35 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-08-16 이어서3) — 전체 플랫폼 라이브 헬스체크 + whale_tick 크래시 근본원인 대응
+
+사용자 요청: "돌아가는 거 하나하나 확인, 오류/수익 체크" → 이후 "노트북 잠자기 나왔는데 죽은거 없지?" → "whale_tick 고쳐줘" → "sharp_wallet_bot 끄자, 메모리 잡아먹는다" → "나머지들 잘 돌아가는지 확인" 순으로 이어진 연속 세션.
+
+### 완료된 작업
+- **좀비 tmux 세션 제거**: `seokminal-agent-491d9679`(API로 삭제된 에이전트인데 tmux는 안 죽어서 5분마다 404 반복) kill.
+- **Lv5 ZeroDivisionError 수정**: `api_server/lv5_agent.py` `_build_critic_prompt()` — 거래 0건일 때 `wins/n` 크래시(에이전트 `4c0d45be` 실사용 중 발생 확인). `(wins/n if n else 0)` 가드 + 회귀테스트(`tests/test_lv5_agent.py`). 커밋 `6929d53`.
+- **agent `e19bf348` 드라이버 루프 미기동 발견+기동**: `status: running`인데 `session_live: False`(전 세션 리셋 때 tmux 안 띄움). `POST /agents/e19bf348/start`로 기동, 라이브 확인.
+- **sleep-wake 이후 워치독 커버리지 갭 발견**: `polymarket-whale-tick` 컬렉터가 잠자기 복귀 후 크래시(ConnectionError) → 프로세스는 죽었는데 tmux 세션은 트레이스백 찍힌 채 살아있음(`remain-on-exit`). `ensure_collectors.sh`(launchd, 60s)는 **세션 존재 여부만** 보고 내부 프로세스 생사는 안 봐서 자동복구 안 됨 — 알려진 갭으로 확정. 수동 `tmux kill-session`으로 세션 자체를 없애 launchd가 재생성하도록 우회, 복구 확인.
+- **`research/run_polymarket_whale_collect.py`에 지수백오프 적용**: 기존엔 실패해도 고정 5초 재시도라 순간장애 때 API를 계속 두들김. `research/run_polymarket_arb_scan.py`와 동일 패턴(실패시 대기 배증 60s 캡, 성공시 리셋)으로 통일. 회귀테스트 추가(`tests/test_run_polymarket_whale_collect.py`), 13개 통과. 커밋 `631743f`.
+  - 배포 중 재확인: 재기동 직후 프로세스는 살아있고 API 호출도 정상인데 10분+ write 없어서 `/lab/fleet`이 `stale` 찍음 — 원인은 크래시 재발이 아니라 **target 마켓(15개) 필터를 통과하는 체결 자체가 그 시간대엔 0건**(뉴스/스포츠 한정 필터 + 새벽 저빈도)이었음. 프로세스 자체는 정상, `/lab/fleet`의 stale 임계값(600s)이 whale_tick의 본래 희소한 write 패턴엔 안 맞을 수 있음(향후 조정 검토 여지, 이번엔 안 건드림).
+- **중복 스케줄 정리**: `prune_old_data` 크론(내가 이전 세션에 05:00 크론탭 추가)이 사실 이미 존재하던 launchd 잡(`com.seokminal.prune-research-data`, 04:00)과 중복 — crontab엔 launchd 잡이 안 보여서 발견 늦었음. crontab 쪽 제거, launchd만 유지.
+- **`polymarket_sharp_wallet_bot` 비활성화**: 누적 -$1973.93(→현재 -$2025.63), 최근 14/14 전패, entry_price=exit_price 순수 비용잠식 구조 확인해 사용자에게 플래그 → "끄자" 지시받아 `POST /polymarket-sharp-wallet-bot/config {enabled:false}`로 비활성화. 설정은 `data/polymarket_sharp_wallet_bot.json`(gitignore 대상)에 저장, 재기동에도 유지됨. 기존 포지션/로그는 그대로 남아있음(조사는 안 함, 끄기만 함).
+- **전체 라이브 헬스체크(최종)**: 컬렉터 13개 중 12개 fresh, whale_tick은 재기동 후 정상(위 설명). 에이전트 5개 전부 `session_live: true`. dart_autobot/vrp_bot/polymarket_bot(+$194.49)/copytrade_autobot 전부 enabled+last_run 정상. 디스크 22% 여유.
+
+### 변경된 파일
+- `api_server/lv5_agent.py`, `tests/test_lv5_agent.py` (커밋 `6929d53`)
+- `research/run_polymarket_whale_collect.py`, `tests/test_run_polymarket_whale_collect.py` (커밋 `631743f`)
+- crontab (prune 중복 엔트리 제거, 코드 변경 아님)
+- `data/polymarket_sharp_wallet_bot.json` (런타임 설정, gitignore — 커밋 대상 아님)
+
+### 다음 할 일
+- `polymarket_sharp_wallet_bot`: 비활성화만 한 상태. 전략 로직 원인분석 후 재설계할지 완전 폐기할지 미결정 — 다음 세션에서 사용자와 결정.
+- `/lab/fleet`의 whale_tick `stale_after_s=600`이 이 컬렉터의 본래 희소 write 패턴과 안 맞을 가능성 — 오탐 반복되면 임계값 조정 검토(이번엔 안 건드림).
+- (참고) "엣지 있는 기능만 남기고 압축해서 에이전틱에 올리기" 관련 사용자 언급 있었으나 이번 세션에선 구체 실행 없이 라이브 헬스체크만 수행 — `docs/agentic-roadmap.md`(seokminal-dashboard, 2026-07-02 기준, stale 가능성 있음) 참고해서 다음 세션에서 논의 이어가면 됨.
+
+### 막힌 부분/결정사항
+- whale_tick 최초 크래시(2026-08-16 새벽)의 정확한 근본원인은 끝까지 미확정 — 기존 코드에도 `try/except Exception`이 있어 이론상 캐치됐어야 하는데 프로세스가 실제로 죽음(스레드 누수/OS 레벨 킬 등 추정, 로그로는 확증 불가). 실용적 대응(백오프+watchdog 우회 재기동)으로 진행, 추가 포렌식은 안 함.
+
 ## 세션 로그 (2026-08-16 이어서2) — 디스크 위기 대응 + 데이터 수명주기(압축/삭제) 크론 배선
 
 사용자 요청: "모은 데이터들 처리하는 과정도 필요할 것 같아. 저장공간 때문에". 조사해보니 시스템 디스크 97% 도달 상태(`/System/Volumes/Data` 6.4Gi 여유)였음 — `research/data`(12G, `polymarket_tick`/`cross_venue_skew`가 대부분)가 원인. 하루 전(08-15) 등록한 `compress_old_data.sh` 크론(매일 04:00)이 아직 첫 실행 전이라 방치돼있었음.

@@ -205,21 +205,34 @@ class StrategyRegistry:
 
 
 def seed_from_experiment_registry(reg: StrategyRegistry | None = None) -> int:
-    """기존 research registry에서 초기 시드(idempotent). 반환=추가 수."""
+    """기존 research registry에서 초기 시드(idempotent per hypothesis_id). 반환=추가 수."""
     reg = reg or StrategyRegistry()
-    if reg.all_current():
-        return 0
     try:
         from research.agents.experiment_registry import load_all
     except Exception:
         return 0
+
+    # Get set of already-registered hypothesis_ids (idempotent: skip already-registered ones)
+    existing_ids: set[str] = {s.get("strategy_id") for s in reg.all_current() if s.get("strategy_id")}
+
+    # Load latest experiment entries, keeping only one per hypothesis_id
+    try:
+        experiments = load_all()
+    except Exception:
+        return 0
+
     latest: dict = {}
-    for e in load_all():
+    for e in experiments:
         hid = e.get("hypothesis_id")
         if hid:
             latest[hid] = e
+
     added = 0
     for hid, e in latest.items():
+        # Skip if already registered
+        if hid in existing_ids:
+            continue
+
         cfg = {"hypothesis_id": hid, "verdict": e.get("verdict", "")}
         reg.register(hid, name=hid, config=cfg,
                      data_version=str(e.get("data_quality", "unknown")))

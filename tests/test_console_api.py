@@ -84,9 +84,20 @@ def test_read_only_endpoints_never_crash():
     """모든 엔드포인트가 방어적으로 dict 반환(원장 부재에도)."""
     for fn in (c.status, c.pipeline, c.regime, c.council, c.strategies, c.experiments,
                c.validation, c.agents, c.logs, c.knowledge, c.research, c.market,
-               c.allocation, c.fusion, c.overlay, c.positions, c.risk, c.orders, c.broker, c.monitor):
+               c.allocation, c.fusion, c.overlay, c.positions, c.risk, c.orders, c.broker, c.monitor,
+               c.research_strategy_generation):
         out = fn()
         assert isinstance(out, dict), f"{fn.__name__} did not return dict"
+
+
+def test_research_strategy_generation_latest_state_per_candidate():
+    """rsg_candidates 원장에서 candidate_id별 최신 이벤트만 보이는지(상태 전이 있어도 중복 행 없음)."""
+    r = c.research_strategy_generation()
+    assert isinstance(r, dict) and "candidates" in r and "summary" in r
+    ids = [row["candidate_id"] for row in r["candidates"]]
+    assert len(ids) == len(set(ids))
+    if r["candidates"]:
+        assert {"candidate_id", "session_id", "category", "statement", "state", "occurred_at"} <= set(r["candidates"][0])
 
 
 def test_no_mutation_verbs_in_source():

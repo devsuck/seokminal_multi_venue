@@ -5,7 +5,7 @@
     ],
     "experiment_prioritization": [],
     "historical_candidate_bridge": [
-      "research_discovery"
+      "hypothesis_discovery"
     ],
     "hypothesis_discovery": [
       "creative_hypothesis"
@@ -30,7 +30,7 @@
     ],
     "research_search": []
   },
-  "graph_hash": "sha1:27abd71f27726e45",
+  "graph_hash": "sha1:ce1474f82b756c6d",
   "is_advisory": true,
   "is_decision": false,
   "modules": [

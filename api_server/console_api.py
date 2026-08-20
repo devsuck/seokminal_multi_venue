@@ -845,6 +845,33 @@ def research_workflow() -> dict:
                            "자동 거래·집행·자본배분 없음.")}
 
 
+@router.get("/research-strategy-generation")
+def research_strategy_generation() -> dict:
+    """P29 — 역사적 지식 기반 연구 전략 후보 원장(rsg_ 원장) 상태. **READ ONLY. 생성만, 선택/배포 없음.**"""
+    def _candidates():
+        from jarvis.research_strategy_generation import ledger as rl
+        latest: dict = {}
+        for ev in rl.read_candidate_events():
+            latest[ev.get("candidate_id")] = ev  # 뒤에 나올수록 최신 상태로 덮어씀
+        rows = sorted(latest.values(), key=lambda r: r.get("occurred_at", ""), reverse=True)
+        return [{"candidate_id": r.get("candidate_id"), "session_id": r.get("session_id"),
+                 "category": r.get("category"), "statement": r.get("statement"),
+                 "source_refs": r.get("source_refs", []), "state": r.get("to_state"),
+                 "occurred_at": r.get("occurred_at")} for r in rows]
+    candidates = _safe(_candidates, []) or []
+
+    def _summary():
+        from jarvis.research_strategy_generation.engine import ResearchStrategyGenerationEngine
+        return ResearchStrategyGenerationEngine().summary().to_dict()
+    summary = _safe(_summary, {}) or {}
+
+    return {"candidates": candidates[:50], "summary": summary,
+            "is_advisory": True, "is_decision": False,
+            "disclaimer": ("Research Strategy Generation Intelligence — GENERATED ≠ SELECTED · "
+                           "CANDIDATE ≠ STRATEGY · CANDIDATE ≠ DEPLOYMENT. 후보 생성 기록만, "
+                           "선택·승인·배포·실행·거래 없음.")}
+
+
 @router.get("/decision-memo")
 def decision_memo(q: str = "") -> dict:
     """P65 — 주제에 대한 Decision Memo(모든 섹션 통합). **자문일 뿐, 결정 아님.**"""

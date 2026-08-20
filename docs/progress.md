@@ -3,6 +3,46 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-08-20) — jarvis Research Loop + Investment OS 전면 부활 (SDD, 계획→구현→리뷰 완료)
+
+배경: 2026-08-01 Phase1 STEP4에서 jarvis 93개 모듈 중 32개(콜러 0) 삭제, 이번 세션 초입에서 그 잔재(`__pycache__` 껍데기)까지 정리해 58개 확정. 남은 58개 재감사 결과 `dart_autobot.py`/`polymarket_bot.py`는 jarvis를 아예 import 안 함(별개 시스템) — jarvis의 진짜 운영 표면은 `jarvis.boot()` + `/lab`,`/investment-os` 대시보드뿐. 사용자가 "이미 죽은 거는 없다, 데이터 쌓일 때까지 의도적으로 잠재운 것"이라 정정 → 삭제 방향에서 부활 방향으로 전환. 계획 파일(`docs/superpowers/plans/2026-08-20-jarvis-research-investment-revival.md`) 작성 후 SDD(implementer→reviewer→fix→re-review) 파이프라인으로 Task 1→2→3 순차 실행, 최종 whole-branch review까지 완료.
+
+### 완료된 작업
+- **Task 1 — registry seed 파이프라인 root-cause 수정**: `jarvis/registry/lifecycle.py::seed_from_experiment_registry()`가 `if reg.all_current(): return 0`으로 1회성 가드 걸려있어 매 boot마다 즉시 no-op였음(registry 61건에서 멈춘 채 고정). 이미 등록된 `hypothesis_id`만 skip하고 신규만 추가하도록 변경 — idempotent 유지, `research/autoresearch`가 매일 쌓는 BH-survivor 후보가 실제로 registry에 유입되도록 고침. 결과: registry 61→92건(paper_candidate 6건 신규 포함), `/console/investment-os` consumed_candidates 5→11.
+- **Task 2 — `research_strategy_generation`(P29) 부활**: 콜러 0으로 ARCHIVED 상태였던 append-only 후보 원장에 새 모듈 `jarvis/research_workflow/historical_candidate_bridge.py` 추가 — `hypothesis_discovery.discover_research()`(recall_first, "과거 실패 대비 왜 다른지" 근거 요구) 결과를 statement로 변환해 `research_strategy_generation`에 로깅. `research_discovery.generate()`에 `mode="historical"` 분기 추가, `ARCHIVED` 마커를 `REVIVED 2026-08-20` 한 줄로 교체.
+- **Task 3 — 검증만**: `/investment-os` 페이지가 nav에 이미 살아있음 확인(오해였음, 코드 변경 불필요). 브라우저로 "소비된 리서치: 11" 렌더 확인, `/console/investment-os` API 응답과 일치.
+- **최종 whole-branch 리뷰(opus) 후속 수정 3건**:
+  - Critical: `jarvis/research_workflow/tests/golden/research_meaning.json` 골든이 registry 61→92 성장(Task 1 결과 + 이번 세션 수동검증) 때문에 stale해져 4개 테스트 실패 — Task 2 구현자가 "무관한 pre-existing 문제"로 잘못 진단한 것을 최종 리뷰어가 정정, `composed_checks` 4개 전부 통과 확인 후 골든 재생성.
+  - Important: 신규 테스트 `tests/test_jarvis_registry_lifecycle.py`가 audit-log 경로 격리 안 해서 프로덕션 `jarvis/_state/audit.jsonl`에 합성 로우 148개 유입(audit log는 설계상 delete 함수 없음, 기존 오염분은 정리 안 함/못함 — 향후 재발만 방지). `tests/test_jarvis_deploy.py`의 `_isolate_state` 패턴 복제해 격리.
+  - Important: `historical_candidate_bridge.py`가 `research_discovery.generate(mode="recall_first")`로 파사드에 되돌아 호출하는 불필요한 콜 사이클 생성 — `hypothesis_discovery.discover_research()` 직접 호출로 변경, call-graph golden도 갱신.
+  - 판정(코드 변경 없음): registry seed 수정으로 매 boot마다 신규 candidate가 `auto_deploy_all()`을 통해 자동으로 `paper_active`까지 승격되는 게 이제 상시 활성화됨(이전엔 seed가 no-op이라 사실상 죽어있던 경로). 계획 의도(연구→Investment OS 반영)와 Task 1의 명시적 "새 매핑 규칙 추가 안 함" 제약에 부합해 **의도된 동작으로 판정, 수정 안 함** — 다만 evidence-grade/redteam 검증 없이 상태 문자열 하나로 paper 진입하는 구조라는 점은 인지해둘 것.
+- 커밋(순서대로): `abbaafe`(seed 가드 제거) → `fcd5ac8`(테스트 discoverable 경로 이동) → `bd043ac`(historical_candidate_bridge) → `1a09e76`(골든 재생성) → `0a729be`(audit 격리) → `0a26430`(파사드 사이클 제거).
+
+### 변경된 파일
+- `jarvis/registry/lifecycle.py`, `tests/test_jarvis_registry_lifecycle.py`
+- `jarvis/research_workflow/historical_candidate_bridge.py`(신규), `jarvis/research_workflow/research_discovery.py`, `jarvis/research_workflow/characterization.py`, `jarvis/research_strategy_generation/__init__.py`
+- `jarvis/research_workflow/tests/golden/research_meaning.json`(재생성)
+- 테스트: `tests/test_jarvis_historical_candidate_bridge.py`, `jarvis/research_workflow/tests/test_research_discovery.py`, `jarvis/research_strategy_generation/tests/test_historical_candidate_bridge.py`
+
+### 다음 할 일
+- 없음 — 계획 3개 Task 전부 완료, 최종 리뷰 clean. `pytest tests/ -q` 2263 passed(회귀 없음), `separation.validate_separation()`/`governance.validate_all()` 모두 정상.
+- SDD 작업공간(`.superpowers/sdd/2026-08-20-jarvis-research-investment-revival/`) 삭제 완료.
+
+### 후속 — 프론트 화면 갭 메움 (같은 세션, SDD 밖에서 직접 구현)
+사용자가 "research-os/investment-os 둘로 나뉜 것처럼 프론트도 나눠져 있냐" 질문 → 확인 결과 `research_strategy_generation`(P29, Task 2로 부활) 데이터를 노출하는 API/화면이 전혀 없었음(registry seed 쪽만 investment-os에 자동 반영, P29 원장은 누구도 안 봄). API 엔드포인트 + 화면 추가로 갭 메움.
+- 추가: `GET /console/research-strategy-generation`(`api_server/console_api.py`) — candidate_id별 최신 이벤트만 뽑아 반환(상태 전이 있어도 중복 행 없음), `engine.summary()` 집계 포함. READ ONLY, 원장 wrapper만.
+- 추가: `/research-os/strategy-generation` 페이지(`seokminal-dashboard`) — CommandRail "Research·파이프라인" 그룹에 링크 추가. `lib/console-api.ts`에 `getResearchStrategyGeneration` 타입 fetcher 추가.
+- 테스트: `tests/test_console_api.py`에 `test_research_strategy_generation_latest_state_per_candidate` 추가(dedup 계약 잠금) + 크래시 스모크 리스트에 포함.
+- 실제로 `research_discovery.generate(topic, mode="historical")` 1회 실전 호출해서 원장에 후보 3건 실제로 쌓이는 것 확인, 브라우저로 `/research-os/strategy-generation`에서 3건 렌더되는 것 확인(스크린샷 확인, 실데이터).
+- **아직 갭:** `historical_candidate_bridge.propose()`를 실제로 호출하는 트리거가 프로덕션에 없음(boot 크론에도 안 걸림, API에도 POST 트리거 없음) — 이번엔 화면 확인용으로 1회 수동 호출만 함. 정기적으로 새 후보가 쌓이게 하려면 별도로 트리거 지점(스케줄러든 API POST든) 필요 — 이번 스코프 밖, 다음에 논의.
+- 회귀: 백엔드 `pytest tests/ -q` 2263→2264 passed, 프론트 `npx tsc --noEmit` clean.
+- 커밋: 미완료(이 로그 작성 직후 커밋 예정).
+
+### 막힌 부분/결정사항
+- **audit.jsonl 오염(148 로우)은 그대로 남아있음** — 이번 세션 신규 테스트가 프로덕션 audit log에 격리 없이 쓴 합성 데이터. audit log는 설계상 delete 함수가 없어(정책상 삭제 금지) 정리하지 않았음. 향후 audit.jsonl 기반 집계/분석 시 `hyp_001`류 합성 hypothesis_id가 섞여있다는 점 감안할 것.
+- `jarvis/_state/*.jsonl`(registry.jsonl, forward_deployments.jsonl 등)은 이번 세션 이전부터 커밋 안 된 dirty 상태였고, 이번 세션 검증 과정에서 더 자랐음(registry 61→92) — 이번엔 건드리지 않고 그대로 둠(git add/커밋 안 함). 다음 세션에서 커밋할지 계속 로컬 상태로만 둘지 결정 필요.
+- auto-promotion(위 "판정" 항목) — 코드는 안 건드렸지만, 이제 evidence-grade/redteam 게이트 없이 상태 문자열만으로 paper_active까지 자동 승격되는 경로가 상시 활성 상태. 자본은 0(paper)이고 `AUTO_EXECUTION_ENABLED`는 안 건드렸지만, 원한다면 다음 세션에서 게이트 강화 논의 가능.
+
 ## 세션 로그 (2026-08-16 이어서3) — 전체 플랫폼 라이브 헬스체크 + whale_tick 크래시 근본원인 대응
 
 사용자 요청: "돌아가는 거 하나하나 확인, 오류/수익 체크" → 이후 "노트북 잠자기 나왔는데 죽은거 없지?" → "whale_tick 고쳐줘" → "sharp_wallet_bot 끄자, 메모리 잡아먹는다" → "나머지들 잘 돌아가는지 확인" 순으로 이어진 연속 세션.

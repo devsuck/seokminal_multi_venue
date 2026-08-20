@@ -40,6 +40,34 @@ def test_facade_generate_modes():
         assert g["mode"] == mode and g["is_decision"] is False
 
 
+# ── mode=historical: recall_first → research_strategy_generation(P29) 로깅(격리 상태) ──
+def _iso_rsg(tmp_path, monkeypatch):
+    monkeypatch.setattr("jarvis.research_strategy_generation.ledger.state_path",
+                        lambda name: str(tmp_path / name))
+
+
+def test_facade_historical_mode_shape(tmp_path, monkeypatch):
+    _iso_rsg(tmp_path, monkeypatch)
+    g = rd.generate("momentum KR", limit=3, mode="historical")
+    assert g["mode"] == "historical" and g["is_decision"] is False
+    assert set(g) == set(rd.generate("momentum KR", limit=3, mode="creative"))  # 3개 모드와 동일 shape
+
+
+def test_facade_historical_mode_logs_ledger(tmp_path, monkeypatch):
+    _iso_rsg(tmp_path, monkeypatch)
+    from jarvis.research_strategy_generation import ledger as rsg_ledger
+    g = rd.generate("momentum KR", limit=3, mode="historical")
+    assert g["count"] >= 1
+    assert len(rsg_ledger.read_session_events()) >= 1
+    assert len(rsg_ledger.read_candidate_events()) == g["count"]
+    assert all(ev["is_selected"] is False for ev in rsg_ledger.read_candidate_events())
+
+
+def test_facade_historical_references_bridge():
+    cg = ch.build_call_graph()["graph"]
+    assert "historical_candidate_bridge" in cg["research_discovery"]
+
+
 def test_facade_discover_full_flow():
     d = rd.discover("momentum KR", limit=5)
     assert "research_queue" in d and d["is_decision"] is False

@@ -5,7 +5,8 @@
 
 밖에서는 이것만 호출. 내부에서만 기존 모듈 조율(모두 **유지·deprecated**, ≥1 릴리스):
   hypothesis_discovery(P183, recall-first) · creative_hypothesis(P171) · hypothesis_generator(P73) ·
-  research_search(P172) · research_expansion(P175) · research_critic(P75) · research_priority(P185).
+  research_search(P172) · research_expansion(P175) · research_critic(P75) · research_priority(P185) ·
+  historical_candidate_bridge(P29 로깅, mode=historical).
 
 **기존 모듈 삭제 안 함 — 파사드는 조율만.** 새 지능/저장소 없음. 호출 구조는 Call Graph Golden 이 감시.
 원칙(§Constitution): 통합·조율만 · 결정적 · 자문 전용 · 거래·집행 없음 · 사람이 결정.
@@ -22,11 +23,17 @@ def _safe(fn, default=None):
 
 def generate(topic: str = "", *, opportunity=None, limit: int = 8, mode: str = "recall_first") -> dict:
     """가설 발견(제안). mode: recall_first(hypothesis_discovery) | creative(creative_hypothesis) |
-    template(hypothesis_generator). 기본 recall_first(과거 실패 유사 시 '왜 다른지' 포함). 결정적."""
+    template(hypothesis_generator) | historical(historical_candidate_bridge, recall_first→P29 로깅).
+    기본 recall_first(과거 실패 유사 시 '왜 다른지' 포함). 결정적."""
     m = (mode or "recall_first").lower()
     if m == "creative":
         r = _safe(lambda: __import__("jarvis.research_workflow.creative_hypothesis",
                                      fromlist=["discover_hypotheses"]).discover_hypotheses(topic, limit=limit),
+                  {}) or {}
+        items = r.get("hypotheses", [])
+    elif m == "historical":
+        r = _safe(lambda: __import__("jarvis.research_workflow.historical_candidate_bridge",
+                                     fromlist=["propose"]).propose(topic, limit=limit),
                   {}) or {}
         items = r.get("hypotheses", [])
     elif m == "template":

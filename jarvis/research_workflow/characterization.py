@@ -145,7 +145,8 @@ _SRC_DIR = pathlib.Path(__file__).resolve().parent
 # 호출 구조를 감시할 서브시스템(P204 discovery workflow)
 CALL_GRAPH_MODULES = ("research_discovery", "hypothesis_discovery", "creative_hypothesis",
                       "hypothesis_generator", "research_search", "research_expansion",
-                      "research_critic", "research_priority", "experiment_prioritization")
+                      "research_critic", "research_priority", "experiment_prioritization",
+                      "historical_candidate_bridge")
 # P208 — research workflow 호출 구조(발견→가설→실험→검증→랭킹 루프)
 RESEARCH_WORKFLOW_MODULES = ("research_loop_v3", "research_cycle", "market_observation",
                              "hypothesis_discovery", "experiment_designer", "research_priority",

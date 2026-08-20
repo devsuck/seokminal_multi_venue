@@ -4,6 +4,9 @@
       "hypothesis_generator"
     ],
     "experiment_prioritization": [],
+    "historical_candidate_bridge": [
+      "research_discovery"
+    ],
     "hypothesis_discovery": [
       "creative_hypothesis"
     ],
@@ -11,6 +14,7 @@
     "research_critic": [],
     "research_discovery": [
       "creative_hypothesis",
+      "historical_candidate_bridge",
       "hypothesis_discovery",
       "hypothesis_generator",
       "research_critic",
@@ -26,7 +30,7 @@
     ],
     "research_search": []
   },
-  "graph_hash": "sha1:ee675c04d6c7b0ad",
+  "graph_hash": "sha1:27abd71f27726e45",
   "is_advisory": true,
   "is_decision": false,
   "modules": [
@@ -38,7 +42,8 @@
     "research_expansion",
     "research_critic",
     "research_priority",
-    "experiment_prioritization"
+    "experiment_prioritization",
+    "historical_candidate_bridge"
   ],
   "note": "Call Graph Golden(읽기전용) — 파사드가 내부 모듈을 재구현 않고 조율만 하는지 AST 호출 구조로 검증. 리팩터링이 호출 위상을 바꾸면 감지.",
   "schema": "call_graph_v1"

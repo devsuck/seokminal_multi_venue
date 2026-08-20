@@ -14,7 +14,7 @@
     },
     "knowledge_health": {
       "grade": "HEALTHY",
-      "lessons_ex_predictions": 42
+      "lessons_ex_predictions": 47
     },
     "recall": {
       "buyback drift": {
@@ -39,9 +39,9 @@
   },
   "data_meaning": {
     "experiments": {
-      "per_strategy_fingerprint": "sha1:a21bf27ec0ba47e8",
-      "strategies_with_data": 55,
-      "total_rows": 613
+      "per_strategy_fingerprint": "sha1:4fd20355e397081e",
+      "strategies_with_data": 86,
+      "total_rows": 4267
     },
     "ingestion": {
       "by_outcome": {
@@ -56,14 +56,15 @@
         "blocked_by_data": 6,
         "draft": 15,
         "paper_active": 4,
-        "rejected": 35,
+        "paper_candidate": 6,
+        "rejected": 60,
         "watchlist": 1
       },
-      "count": 61,
-      "strategy_fingerprint": "sha1:e8dde7764bf4d1ba"
+      "count": 92,
+      "strategy_fingerprint": "sha1:f525f7b7adcfddbd"
     }
   },
-  "data_meaning_hash": "sha1:d03d2150c6fe35ac",
+  "data_meaning_hash": "sha1:72c752c21f44b99c",
   "is_advisory": true,
   "is_decision": false,
   "note": "Golden Research Snapshot(읽기전용) — meaning==meaning 안전망. data_meaning 은 예측 무관 하드 불변. composed 는 리팩터링 가드(세션 내 재생성 기준).",

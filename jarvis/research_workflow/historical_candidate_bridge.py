@@ -33,13 +33,15 @@ def _source_refs(h: dict) -> list:
 def propose(topic: str, limit: int = 5) -> dict:
     """recall_first 후보 → research_strategy_generation 세션/후보 원장에 로깅(append-only). 결정적.
 
+    hypothesis_discovery(P183)를 직접 호출(research_discovery 파사드를 되돌아 호출하지 않음 —
+    파사드는 "밖에서는 이것만 호출" 계약이라 내부 모듈끼리는 서로 직접 호출).
     generate()(mode=historical) 에서 바로 합류 가능하도록 다른 3 모드와 동일한 shape 반환
     (stage/mode/topic/count/hypotheses/...).
     """
     gen = _safe(lambda: __import__(
-        "jarvis.research_workflow.research_discovery", fromlist=["generate"]
-    ).generate(topic, mode="recall_first", limit=limit), {}) or {}
-    hyps = gen.get("hypotheses", [])
+        "jarvis.research_workflow.hypothesis_discovery", fromlist=["discover_research"]
+    ).discover_research(topic, limit=limit), {}) or {}
+    hyps = gen.get("research_hypotheses", [])
 
     from jarvis.research_strategy_generation.engine import ResearchStrategyGenerationEngine
 
@@ -58,7 +60,7 @@ def propose(topic: str, limit: int = 5) -> dict:
                                          now=now, commit=True)
         items.append({**h, "candidate_id": cand.candidate_id, "session_id": sess})
 
-    return {"stage": "generate", "mode": "historical", "topic": gen.get("topic", topic),
+    return {"stage": "generate", "mode": "historical", "topic": gen.get("topic") or topic,
             "count": len(items), "hypotheses": items, "session_id": sess,
             "requires_human_review": True, "is_advisory": True, "is_decision": False,
             "note": ("Historical Candidate Bridge(읽기전용 조율) — recall_first 후보를 "

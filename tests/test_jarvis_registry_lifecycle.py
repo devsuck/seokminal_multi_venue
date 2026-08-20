@@ -1,7 +1,20 @@
 """Test suite for jarvis/registry/lifecycle.py — seed_from_experiment_registry idempotency & incremental."""
+import os
+
 import pytest
 from unittest.mock import patch
 from jarvis.registry.lifecycle import StrategyRegistry, Status, seed_from_experiment_registry
+
+
+@pytest.fixture(autouse=True)
+def _isolate_audit_log(tmp_path, monkeypatch):
+    """transition() 이 jarvis.audit.log.record() 를 호출 — 운영 audit.jsonl 오염 방지(tests/test_jarvis_deploy.py 패턴)."""
+    import jarvis.audit.log as al
+
+    def sp(name):
+        return os.path.join(tmp_path, name)
+
+    monkeypatch.setattr(al, "state_path", sp)
 
 
 @pytest.fixture

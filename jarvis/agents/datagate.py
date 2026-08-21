@@ -37,6 +37,10 @@ _CAPABILITY = {
     "crypto_intraday": True,                 # HL 분/시간봉
     "crypto_funding": True,                  # HL 펀딩(단, 검증서 REJECT됨)
     "crypto_orderbook_hist": False,          # HL L2 스냅샷만, 히스토리 없음
+    "crypto_open_interest": True,       # HL metaAndAssetCtxs 폴링(백필 불가, run_oi_collect.py로 축적)
+    "crypto_liquidation": True,         # Binance 선물 WS(forceOrder), run_liquidation_collect.py로 축적
+    "crypto_basis": True,               # HL perp markPx vs Binance spot, run_basis_collect.py로 축적
+    "crypto_cross_venue_spread": True,  # 기존 cross_venue_skew.py 재사용(HL/Binance/OKX 오더북)
 }
 
 # soft-missing = 검증 가능하나 편향 경고(SANITY). hard-missing = 검증 불가(BLOCKED).

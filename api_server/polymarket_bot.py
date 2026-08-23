@@ -1,10 +1,9 @@
 """Polymarket 페이퍼 다각화 배스킷 봇.
 
-주의: 이건 알파(초과수익) 전략이 아니다. 이벤트 예측시장은 주식/크립토와
-상관관계가 낮아 "분산" 목적으로만 쓴다 — 방향성 엣지를 주장하지 않고,
 유동성 있고 극단(롱샷/헤비페이버릿)이 아닌 이진 시장에 균등 배분한 뒤
 만기까지 보유(hold-to-resolution)한다. house 규율(TSMOM 등과 동일하게
-"검증 전엔 paper")에 따라 이 봇도 실집행 없이 paper 전용으로 시작한다.
+"검증 전엔 paper")에 따라 실집행 경로는 아직 없음 — paper 전용, 예산·
+포지션 한도는 실적 검증에 맞춰 상향 조정 중(2026-08-23).
 
 dart_autobot.py와 동일한 파일 저장 패턴 — JSON 설정 + JSONL 로그.
 Gamma API는 공개·무인증이라 IB/KIS와 달리 동기 requests만으로 충분.
@@ -31,7 +30,7 @@ _LOG = _DATA / "polymarket_bot_log.jsonl"
 
 _DEFAULT = {
     "enabled": False, "interval_sec": 3600,
-    "budget": 500.0, "per_market_usd": 20.0, "max_positions": 20,
+    "budget": 2000.0, "per_market_usd": 40.0, "max_positions": 50,
     "min_liquidity": 3000.0, "min_price": 0.10, "max_price": 0.90,
     "min_days_to_resolution": 3, "max_days_to_resolution": 21,
     "side": "favorite",  # "favorite" | "underdog" | "random" — 무엣지, 다각화 전용
@@ -230,7 +229,9 @@ def status() -> dict:
         "remaining": max(cfg["budget"] - cfg.get("spent", 0.0), 0.0),
         "positions": cfg.get("positions", []), "last_run": cfg.get("last_run"),
         "log": _recent_log(40),
-        "note": "무방향 다각화 배스킷 — 엣지 주장 없음, 상관관계 낮은 이벤트 리스크 분산용. paper 전용.",
+        "note": "무방향 다각화 배스킷, 상관관계 낮은 이벤트 리스크 분산용. mid_favorite 밴드(0.49~0.74)는 "
+                "BH-FDR 생존(p=0.026, n=37 기준) — 미검증 아님, candidate. 단 사후설계(비pre-registration)"
+                "+표본 소량이라 n≥100 재검증 전까지 실집행 승격 아님, paper 유지.",
     }
 
 

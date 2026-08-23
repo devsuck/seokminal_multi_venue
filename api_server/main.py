@@ -5389,12 +5389,20 @@ from api_server.polymarket_sharp_wallet_bot import (
 )
 app.include_router(polymarket_sharp_wallet_bot_router)
 
+# ── Polymarket AI 판단(Tavily+Groq) paper 집행 봇 (서버측) ──────────────────────
+from api_server.polymarket_ai_bot import (
+    router as polymarket_ai_bot_router,
+    start_loop as _polymarket_ai_bot_start,
+)
+app.include_router(polymarket_ai_bot_router)
+
 # ── 통합 손익 대시보드 (council 에이전트 + 5개 독립봇) ────────────────────────────
 from api_server.dart_autobot import status as _dart_bot_status
 from api_server.vrp_bot import status as _vrp_bot_status
 from api_server.copytrade_autobot import status as _copytrade_bot_status
 from api_server.polymarket_bot import status as _polymarket_bot_status
 from api_server.polymarket_sharp_wallet_bot import status as _sharp_wallet_bot_status
+from api_server.polymarket_ai_bot import status as _polymarket_ai_bot_status
 from api_server.routers.agents import agents_overview as _agents_overview
 
 
@@ -5410,6 +5418,8 @@ def dashboard_pnl_all() -> dict:
         {"id": "polymarket_bot", "name": "Polymarket 배스킷", "realized_pnl": _polymarket_bot_status().get("realized_pnl", 0.0)},
         {"id": "polymarket_sharp_wallet_bot", "name": "Polymarket sharp_wallet",
          "realized_pnl": _sharp_wallet_bot_status().get("realized_pnl", 0.0)},
+        {"id": "polymarket_ai_bot", "name": "Polymarket AI판단",
+         "realized_pnl": _polymarket_ai_bot_status().get("realized_pnl", 0.0)},
         {"id": "copytrade_autobot", "name": "카피트레이딩", "realized_pnl": _copytrade_bot_status().get("realized_pnl", 0.0)},
     ]
     bots_realized_total = sum(b["realized_pnl"] for b in bots if b["realized_pnl"] is not None)
@@ -5469,6 +5479,7 @@ async def _start_dart_bot() -> None:
     _copytrade_bot_start()
     _polymarket_bot_start()
     _polymarket_sharp_wallet_bot_start()
+    _polymarket_ai_bot_start()
     # Jarvis 부트(시드 + paper_candidate 자동 forward 배선) + 서버사이드 리서치 서비스(D).
     try:
         import jarvis

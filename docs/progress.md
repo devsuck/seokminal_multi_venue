@@ -3,6 +3,28 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-08-25) — 모바일 대시보드 "마켓 퀄리티(PWA급)" 4서브시스템 중 백엔드 Web Push 인프라 (사용자 자리비움, 위임 판단으로 진행)
+
+배경: 사용자가 "모바일 플랫폼 마켓 올라가도 될 정도로 다 해줘"(PWA급 완성도로 확정) 위임. 4서브시스템(PWA 설치/오프라인, 터치/제스처, 푸시알림, QA) 중 이 리포 담당분(푸시알림 백엔드) 작업. 프론트 쪽 세부는 `seokminal-dashboard/docs/progress.md` 참고.
+
+### 완료된 작업
+- **Web Push 인프라 신규 구축**: 기존 `AlertPoller.tsx`의 "푸시"는 브라우저 `Notification` API(탭 열려있어야만 동작)였고 진짜 Web Push(앱 종료/백그라운드에서도 수신)는 없었음 — VAPID 키쌍 생성, `pywebpush` 의존성 추가(`pyproject.toml`).
+- `api_server/push_notify.py` 신규: 구독 저장(`jarvis/_state/push_subscriptions.json`, watchdog.json과 동일한 단순 read-all/write-all 패턴), `pywebpush.webpush()`로 구독자별 daemon 스레드 발송, 만료 구독(404/410) 자동 정리.
+- `api_server/main.py`: `POST/DELETE /push/subscribe`, `GET /push/vapid-public-key` 엔드포인트 추가. `_check_insider_convergence()`/`get_triggered_alerts()`의 alert 트리거 지점 2곳에 `push_notify.send()` 연동. `alert_push_loop()`(30초 주기, startup에서 `asyncio.create_task`)로 프론트 미접속 상태에서도 서버가 자체적으로 alert 평가+푸시.
+- VAPID 키 `.env`에 실값 기록(gitignored 확인됨), `.env.example`엔 플레이스홀더.
+- `pytest tests/ -q` 1928 passed(회귀 없음) 확인 후 커밋(`9c4db94`).
+- API 재기동(`scripts/restart_api.sh`) 후 `/push/subscribe`(POST/DELETE)·`/push/vapid-public-key` 3개 엔드포인트 curl로 실제 동작 확인. Chrome MCP로 대시보드(390px/375px 뷰포트) 열어 알림 권한 승인 → `pushManager.getSubscription()`으로 FCM 엔드포인트 구독 실제 등록까지 end-to-end 확인(콘솔 에러 없음).
+
+### 변경된 파일
+- `pyproject.toml`(pywebpush 의존성), `api_server/push_notify.py`(신규), `api_server/main.py`, `.env`(VAPID 실값, gitignored), `.env.example`
+
+### 다음 할 일
+- **`lv6_notify.py`(Telegram) 미배선 발견 — 사람 판단 필요**: `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` `.env`에 실값으로 이미 설정돼 있고 `lv6_notify.py`도 완성돼 있는데(리뷰용/실거래/서킷브레이커/전략전환/일일요약 포매터 전부 구현됨) 리포 전체에서 콜사이트 0건 — 완전히 죽어있는 채널. 값싸고 효과 큰 후속작업이지만 `live_engine/risk_guard.py::validate_order()`(전 주문경로 리스크 체크 단일 지점)나 체결경로에 배선하는 건 사용자 부재 중 자율판단으로 건드리기엔 실거래 money-path 리스크가 크다고 판단해 **의도적으로 스킵**. 사용자 검토 후 배선 여부/위치 결정 필요.
+- 실기기(iOS Safari/Android Chrome PWA 설치 후) 푸시 실제 수신은 에이전트가 검증 불가 — 사용자 복귀 후 폰에서 알림 권한 허용 + 실제 alert 트리거해서 확인 필요.
+
+### 막힌 부분/결정사항
+- `lv6_notify.py` 배선은 스코프 밖으로 판단(위 참고) — 이번 세션에서 손대지 않음.
+
 ## 세션 로그 (2026-08-25) — roadmap "다음 세션 최우선" 4항목 착수 (사용자 자리비움, 위임 판단으로 진행 중)
 
 배경: 사용자가 "밥먹고 올테니까 나머지는 판단해서 해줘"로 위임(대시보드 모바일 개발과 별도 스레드). `docs/roadmap.md`의 "다음 세션 최우선" 4항목을 순서대로 처리 중. 진행 중 작성 — 세션 끊길 경우를 대비한 중간 체크포인트.

@@ -216,35 +216,12 @@ def _tmux_process_status(session: str, data_dir: str) -> dict:
 # 수집기 키 → (tmux 세션명, 데이터 디렉토리, 재기동 모듈). 잠자기 등으로 WS가 끊겨
 # 재연결 루프가 막히거나 프로세스 자체가 죽었을 때 HUD에서 kill+재기동하기 위한 레지스트리.
 COLLECTOR_SESSIONS: dict[str, dict[str, str]] = {
-    "polymarket_tick": {"session": "polymarket-tick", "data_dir": "research/data/polymarket_tick",
-                        "module": "research.run_polymarket_tick_collect"},
-    "polymarket_arb": {"session": "polymarket-arb", "data_dir": "research/data/polymarket_arb",
-                       "module": "research.run_polymarket_arb_scan"},
     "hl_orderflow_tick": {"session": "hl-orderflow-tick", "data_dir": "research/data/hl_orderflow_tick",
                           "module": "research.run_hl_orderflow_tick_collect"},
     "cross_venue_skew_tick": {"session": "cross-venue-skew-tick", "data_dir": "research/data/cross_venue_skew",
                               "module": "research.run_cross_venue_skew_collect"},
-    "polymarket_whale_tick": {"session": "polymarket-whale-tick", "data_dir": "research/data/polymarket_whale",
-                              "module": "research.run_polymarket_whale_collect"},
-    "polymarket_updown_arb": {"session": "polymarket-updown-arb", "data_dir": "research/data/polymarket_updown_arb",
-                              "module": "research.run_polymarket_updown_arb_scan"},
-    "polymarket_sharp_wallet_tick": {"session": "polymarket-sharp-wallet-tick",
-                                     "data_dir": "research/data/polymarket_sharp_wallet",
-                                     "module": "research.run_polymarket_sharp_wallet_collect"},
-    "polymarket_mlb_specialist_tick": {"session": "polymarket-mlb-specialist-tick",
-                                       "data_dir": "research/data/mlb_specialist",
-                                       "module": "research.run_mlb_specialist_collect"},
-    "polymarket_event_divergence": {"session": "polymarket-event-divergence",
-                                    "data_dir": "research/data/polymarket_event_divergence",
-                                    "module": "research.run_polymarket_event_divergence_scan"},
     "options_uoa": {"session": "options-uoa", "data_dir": "research/data/options_uoa",
                     "module": "research.run_options_uoa_collect"},
-    "polymarket_implication_collect": {"session": "polymarket-implication-collect",
-                                       "data_dir": "research/data/polymarket_market_implication",
-                                       "module": "research.run_polymarket_market_implication_collect"},
-    "polymarket_implication_watch": {"session": "polymarket-implication-watch",
-                                     "data_dir": "research/data/polymarket_market_implication",
-                                     "module": "research.run_polymarket_market_implication_watch"},
     "convergence_legs": {"session": "convergence-legs", "data_dir": "research/data/convergence_legs",
                          "module": "research.run_convergence_signal_collect"},
 }
@@ -388,18 +365,11 @@ def lab_status() -> dict:
     # congress = 온디맨드 피드(상시봇 아님)
     out["congress"] = {"type": "on_demand_feed", "note": "페이지 열 때 가져옴(상시봇 아님)"}
 
-    # 백그라운드 tmux 프로세스 (폴리마켓 틱 수집기 / arb 스캐너)
+    # 백그라운드 tmux 프로세스
     try:
         out["processes"] = {
-            "polymarket_tick": _tmux_process_status("polymarket-tick", "research/data/polymarket_tick"),
-            "polymarket_arb": _tmux_process_status("polymarket-arb", "research/data/polymarket_arb"),
             "hl_orderflow_tick": _tmux_process_status("hl-orderflow-tick", "research/data/hl_orderflow_tick"),
             "cross_venue_skew_tick": _tmux_process_status("cross-venue-skew-tick", "research/data/cross_venue_skew"),
-            "polymarket_whale_tick": _tmux_process_status("polymarket-whale-tick", "research/data/polymarket_whale"),
-            "polymarket_updown_arb": _tmux_process_status("polymarket-updown-arb", "research/data/polymarket_updown_arb"),
-            "polymarket_sharp_wallet_tick": _tmux_process_status("polymarket-sharp-wallet-tick", "research/data/polymarket_sharp_wallet"),
-            "polymarket_mlb_specialist_tick": _tmux_process_status("polymarket-mlb-specialist-tick", "research/data/mlb_specialist"),
-            "polymarket_event_divergence": _tmux_process_status("polymarket-event-divergence", "research/data/polymarket_event_divergence"),
             "options_uoa": _tmux_process_status("options-uoa", "research/data/options_uoa"),
         }
     except Exception as exc:  # noqa: BLE001
@@ -414,22 +384,6 @@ def lab_health() -> dict:
     매매/정산 로직엔 관여 안 함, 관찰 전용. api_server/invariants.py 참고."""
     from api_server import invariants
     violations: list[dict] = []
-
-    # 폴리마켓 다각화 봇
-    try:
-        from api_server.polymarket_bot import _load as _pm_load
-        violations += invariants.check_polymarket_bot(_pm_load())
-    except Exception as exc:  # noqa: BLE001
-        violations.append({"severity": "warn", "entity": "polymarket_bot",
-                           "code": "CHECK_FAILED", "detail": f"검사 실패: {exc}"[:200]})
-
-    # Polymarket sharp_wallet 집행봇
-    try:
-        from api_server.polymarket_sharp_wallet_bot import _load as _psw_load
-        violations += invariants.check_polymarket_sharp_wallet_bot(_psw_load())
-    except Exception as exc:  # noqa: BLE001
-        violations.append({"severity": "warn", "entity": "polymarket_sharp_wallet_bot",
-                           "code": "CHECK_FAILED", "detail": f"검사 실패: {exc}"[:200]})
 
     # AI 에이전트들 (성과 회계 정합성)
     try:
@@ -454,7 +408,7 @@ def lab_health() -> dict:
     }
 
 
-# ── Polymarket 엣지 검증(p-value/BH-FDR) 노출 — 백그라운드 워밍 캐시 ──────────────
+# ── 엣지 검증(p-value/BH-FDR) 노출 — 백그라운드 워밍 캐시 ──────────────
 # validate 러너는 500셔플이라 느림 → 매 요청 동기실행 금지. _task_forward 선례대로
 # 캐시 스냅샷 반환 + stale시 백그라운드 스레드 워밍(요청 절대 비블록). 읽기 전용.
 def _edge_val_runners() -> dict:
@@ -500,7 +454,7 @@ def _maybe_warm_edge(force: bool = False) -> None:
 
 @router.get("/edge-validation")
 def edge_validation() -> dict:
-    """Polymarket 엣지 검증(p-value/BH-FDR) 스냅샷 — 읽기전용. stale시 백그라운드
+    """엣지 검증(p-value/BH-FDR) 스냅샷 — 읽기전용. stale시 백그라운드
     워밍(요청 비블록). ⚠️ 스크리닝 결과일 뿐 실집행 근거 아님."""
     import time
     _maybe_warm_edge()

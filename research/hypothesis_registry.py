@@ -12,34 +12,6 @@ from __future__ import annotations
 
 # key → 메타. validator=load_and_report 보유 모듈(warmable) 또는 None.
 HYPOTHESES: dict[str, dict] = {
-    "polymarket_sharp_wallet": {
-        "title": "샤프월렛 컨버전스",
-        "category": "polymarket",
-        "data_source": "Data-API /trades (공식 리더보드 top50)",
-        "validator": "research.run_polymarket_sharp_wallet_validate",
-        "warmable": True,
-    },
-    "polymarket_whale": {
-        "title": "Whale 트래킹",
-        "category": "polymarket",
-        "data_source": "Data-API /trades (대형 체결)",
-        "validator": "research.run_polymarket_whale_validate",
-        "warmable": True,
-    },
-    "polymarket_whale_coincidence": {
-        "title": "Whale 동시다발 동조",
-        "category": "polymarket",
-        "data_source": "Data-API /trades (같은 마켓·같은 방향 60초내 지갑 2개+ 동조)",
-        "validator": "research.run_polymarket_whale_coincidence_validate",
-        "warmable": True,
-    },
-    "mlb_specialist_consensus": {
-        "title": "MLB 스페셜리스트 컨센서스",
-        "category": "sports",
-        "data_source": "Data-API MLB 마켓 체결/정산",
-        "validator": "research.run_mlb_specialist_validate",
-        "warmable": True,   # load_and_report() 완성 + 수집기 상시구동 중(맥 작업 완료)
-    },
     "cross_venue_skew": {
         "title": "크로스벤뉴 스큐",
         "category": "orderflow",

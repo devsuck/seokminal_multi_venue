@@ -22,19 +22,9 @@ from __future__ import annotations
 # 수집기별 신선도 임계(초). 미지정 시 DEFAULT. 폴링 5s류는 낮게, 스캔/느린류는 높게.
 DEFAULT_STALE_AFTER_S = 900          # 15분
 STALE_AFTER_S: dict[str, int] = {
-    "polymarket_tick": 300,
     "hl_orderflow_tick": 300,
     "cross_venue_skew_tick": 300,
-    "polymarket_whale_tick": 600,
-    "polymarket_sharp_wallet_tick": 600,
-    "polymarket_arb": 1800,          # 스캔류는 간헐적
-    "polymarket_updown_arb": 1800,
-    "polymarket_event_divergence": 1800,
-    "polymarket_mlb_specialist_tick": 7200,  # 저유동성 체결 간격 30~110분 실측(2026-08-01) — 900s는 상시 오탐
     "options_uoa": 3600,              # 30분 폴링 — 폴링주기 2배로 오탐 방지
-    # 아래 둘은 사이클 자체가 김. DEFAULT 900s면 사이클 대기 중에 상시 stale(2026-08-06 발견).
-    "polymarket_implication_watch": 7200,     # WATCH_INTERVAL_S=3600 × 2
-    "polymarket_implication_collect": 172800,  # SCAN_INTERVAL_S=86400(24h) × 2
     "convergence_legs": 43200,        # POLL_INTERVAL_SEC=21600(6h) × 2 — DEFAULT 900s면 상시 stale 오탐
 }
 

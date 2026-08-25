@@ -56,15 +56,3 @@ def ib_futures_effective_cost_bps(symbol: str, notional: float) -> float:
     commission = IB_FUTURES_COMMISSION_USD[symbol]
     slippage = IB_FUTURES_SLIPPAGE_TICKS[symbol] * IB_FUTURES_TICK_VALUE_USD[symbol]
     return round((commission + slippage) / notional * 10_000.0, 6)
-
-
-# ── Polymarket 예측시장 전용 ──────────────────────────────────────────────
-# ⚠️ 미검증 근사치. 공식 수수료 0%(2026-07 기준, Polymarket은 트레이딩 수수료
-# 없음 — 대신 스프레드가 사실상 비용) — paper 단계 진입 전 재확인 필수.
-POLYMARKET_TAKER_BPS = 0.0
-POLYMARKET_SPREAD_BPS = 200.0  # 유동성≥5000 컷 통과 마켓 기준 보수적 근사
-
-
-def polymarket_effective_cost_bps(spread_bps: float = POLYMARKET_SPREAD_BPS) -> float:
-    """Polymarket 체결 1회당 유효 비용(bps) = taker fee + spread/2 왕복 근사."""
-    return POLYMARKET_TAKER_BPS + spread_bps / 2.0

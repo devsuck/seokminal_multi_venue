@@ -2,17 +2,17 @@
 from research.hypothesis_registry import HYPOTHESES, registry_list, warmable_runners
 
 
-def test_warmable_runners_include_mlb_now_promoted():
+def test_warmable_runners_only_include_flagged_entries():
     wr = warmable_runners()
-    assert set(wr) == {"polymarket_sharp_wallet", "polymarket_whale", "polymarket_whale_coincidence",
-                        "mlb_specialist_consensus"}
+    assert set(wr) == {k for k, v in HYPOTHESES.items() if v["warmable"]}
     assert all(v.startswith("research.run_") for v in wr.values())
 
 
 def test_registry_list_warmable_first():
     rl = registry_list()
-    assert rl[0]["warmable"] and rl[1]["warmable"] and rl[2]["warmable"]
-    assert not rl[-1]["warmable"]
+    assert len(rl) == len(HYPOTHESES)
+    warmable_flags = [r["warmable"] for r in rl]
+    assert warmable_flags == sorted(warmable_flags, reverse=True)
 
 
 def test_every_entry_has_required_meta():

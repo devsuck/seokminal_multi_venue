@@ -3565,42 +3565,6 @@ _MAX_TRIGGERED = 200
 _DEDUP_SECONDS = 300
 _alert_lock = threading.Lock()
 
-# 샤프월렛 봇 진입 로그 → 알림 파이프라인 편입(전용 규칙 UI 없이 자동 감시).
-_sw_last_seen_ts: float | None = None
-
-
-def _check_sharp_wallet_entries() -> None:
-    """polymarket_sharp_wallet_bot의 entry 로그를 훑어 신규분을 _triggered_alerts에 편입.
-
-    로그 한 줄이라도 ts 누락/타입 이상이면 전체 /alerts/triggered가 500나던 버그 재발
-    방지용 방어: entry_events를 ts 문자열 보유분으로만 제한(실제 봇은 항상 isoformat).
-    """
-    global _sw_last_seen_ts
-    entry_events = [e for e in _sw_bot_recent_log(20)
-                     if e.get("kind") == "entry" and isinstance(e.get("ts"), str)]
-    if not entry_events:
-        return
-    if _sw_last_seen_ts is None:
-        _sw_last_seen_ts = entry_events[0]["ts"]  # 부팅 직후 과거분 스팸 방지
-        return
-    new = [e for e in entry_events if e["ts"] > _sw_last_seen_ts]
-    if not new:
-        return
-    for ev in reversed(new):  # 오래된 것부터 순서대로 append
-        _triggered_alerts.append(TriggeredAlertOut(
-            rule_id="sharp_wallet_bot_entry",
-            rule_label="샤프월렛 봇 진입",
-            condition_type="position_entered",
-            bot_id="polymarket_sharp_wallet_bot",
-            detail=f"{ev.get('condition_id', '?')} "
-                   f"{'매수' if (ev.get('direction') or 0) > 0 else '매도'} · "
-                   f"진입가 {ev.get('entry_price')} · ${ev.get('usd')} · {ev.get('horizon_s')}초 보유",
-            triggered_at=ev["ts"],
-        ))
-        if len(_triggered_alerts) > _MAX_TRIGGERED:
-            _triggered_alerts.pop(0)
-    _sw_last_seen_ts = new[0]["ts"]
-
 
 _CONVERGENCE_SOURCE_LABEL = {
     "dart_exec": "임원 지분공시", "dart_corp_action": "법인 이벤트",
@@ -3745,7 +3709,6 @@ def get_triggered_alerts() -> TriggeredAlertsResponse:
     statuses = live_engine.get_all_statuses()
     now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
     with _alert_lock:
-        _check_sharp_wallet_entries()
         _check_insider_convergence()
         for rule in list(_alert_rules.values()):
             triggered, detail = _evaluate_alert_condition(rule, statuses)
@@ -5377,49 +5340,22 @@ app.include_router(vrp_bot_router)
 from api_server.copytrade_autobot import router as copytrade_bot_router, start_loop as _copytrade_bot_start
 app.include_router(copytrade_bot_router)
 
-# ── Polymarket 페이퍼 다각화 배스킷 봇 (서버측) ───────────────────────────────────
-from api_server.polymarket_bot import router as polymarket_bot_router, start_loop as _polymarket_bot_start
-app.include_router(polymarket_bot_router)
-
-# ── Polymarket sharp_wallet 컨버전스 신호 paper 집행 봇 (서버측) ────────────────────
-from api_server.polymarket_sharp_wallet_bot import (
-    router as polymarket_sharp_wallet_bot_router,
-    start_loop as _polymarket_sharp_wallet_bot_start,
-    _recent_log as _sw_bot_recent_log,
-)
-app.include_router(polymarket_sharp_wallet_bot_router)
-
-# ── Polymarket AI 판단(Tavily+Groq) paper 집행 봇 (서버측) ──────────────────────
-from api_server.polymarket_ai_bot import (
-    router as polymarket_ai_bot_router,
-    start_loop as _polymarket_ai_bot_start,
-)
-app.include_router(polymarket_ai_bot_router)
-
-# ── 통합 손익 대시보드 (council 에이전트 + 5개 독립봇) ────────────────────────────
+# ── 통합 손익 대시보드 (council 에이전트 + 독립봇) ────────────────────────────
 from api_server.dart_autobot import status as _dart_bot_status
 from api_server.vrp_bot import status as _vrp_bot_status
 from api_server.copytrade_autobot import status as _copytrade_bot_status
-from api_server.polymarket_bot import status as _polymarket_bot_status
-from api_server.polymarket_sharp_wallet_bot import status as _sharp_wallet_bot_status
-from api_server.polymarket_ai_bot import status as _polymarket_ai_bot_status
 from api_server.routers.agents import agents_overview as _agents_overview
 
 
 @app.get("/dashboard/pnl/all")
 def dashboard_pnl_all() -> dict:
-    """council 에이전트(5) + 독립봇(5) 실현손익 통합 요약. 각 소스의 기존
+    """council 에이전트(5) + 독립봇 실현손익 통합 요약. 각 소스의 기존
     status()/overview 함수를 그대로 재사용 — 새 계산/영속화 없음."""
     agents = _agents_overview()
     bots = [
         {"id": "dart_autobot", "name": "DART 기업행위", "realized_pnl": None,
          "note": "% 단위만 기록 — $ 실현손익 미추적"},
         {"id": "vrp_bot", "name": "VRP 아이언콘도어", "realized_pnl": _vrp_bot_status().get("realized_pnl", 0.0)},
-        {"id": "polymarket_bot", "name": "Polymarket 배스킷", "realized_pnl": _polymarket_bot_status().get("realized_pnl", 0.0)},
-        {"id": "polymarket_sharp_wallet_bot", "name": "Polymarket sharp_wallet",
-         "realized_pnl": _sharp_wallet_bot_status().get("realized_pnl", 0.0)},
-        {"id": "polymarket_ai_bot", "name": "Polymarket AI판단",
-         "realized_pnl": _polymarket_ai_bot_status().get("realized_pnl", 0.0)},
         {"id": "copytrade_autobot", "name": "카피트레이딩", "realized_pnl": _copytrade_bot_status().get("realized_pnl", 0.0)},
     ]
     bots_realized_total = sum(b["realized_pnl"] for b in bots if b["realized_pnl"] is not None)
@@ -5477,9 +5413,6 @@ async def _start_dart_bot() -> None:
     _dart_bot_start()
     _vrp_bot_start()
     _copytrade_bot_start()
-    _polymarket_bot_start()
-    _polymarket_sharp_wallet_bot_start()
-    _polymarket_ai_bot_start()
     # Jarvis 부트(시드 + paper_candidate 자동 forward 배선) + 서버사이드 리서치 서비스(D).
     try:
         import jarvis

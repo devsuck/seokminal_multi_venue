@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from jarvis.execution import broker_bridge
 from jarvis.execution.arm import arm_state, is_armed
+from jarvis.execution.arm_criteria import CRITERIA as ARM_CRITERIA
 from jarvis.execution.edge_providers import EDGE_PROVIDER_VENUE, edge_go
 from jarvis.fusion.fusion import FusionEngine
 from jarvis.fusion.performance import perf_for
@@ -42,23 +43,54 @@ def _kr_last_close(code: str) -> float | None:
     return float(rows[-1]["stck_clpr"])
 
 
-def _build_order(fs, capital: float, backer_strategy_id: str) -> dict | None:
-    """가격 못 구하거나 1주도 못 사면 None(호출부가 blocked 처리).
-    paper=False 명시 — broker_bridge.route_order 기본값이 True라, 생략하면
-    게이트가 다 열려도 계속 페이퍼로만 나감(실거래 라우터의 핵심 전제)."""
+def _kr_position_qty(code: str) -> float | None:
+    """실보유 수량(KIS get_holdings) — 이미 보유중이면 중복 BUY, 이미 청산됐으면
+    중복 SELL이 안 나가게(멱등성). 크레덴셜 없거나 조회 실패면 None(안전하게 block —
+    포지션을 모르는 채로 실주문을 내보내지 않는다)."""
+    import os
+    from backends.kis.order_client import KISOrderClient
+
+    app_key = os.environ.get("KIS_APP_KEY", "")
+    app_secret = os.environ.get("KIS_APP_SECRET", "")
+    cano = os.environ.get("KIS_CANO", "")
+    acnt_prdt_cd = os.environ.get("KIS_ACNT_PRDT_CD", "")
+    if not all([app_key, app_secret, cano, acnt_prdt_cd]):
+        return None
+    try:
+        client = KISOrderClient(app_key, app_secret, cano, acnt_prdt_cd, mock=False)
+        holdings = client.get_holdings()
+    except Exception:
+        return None
+    for h in holdings:
+        if h["code"] == code:
+            return h["qty"]
+    return 0.0
+
+
+def _build_order(fs, capital: float, backer_strategy_id: str) -> tuple[dict | None, str | None]:
+    """가격 못 구하거나 1주도 못 사면 (None, reason). paper=False 명시 —
+    broker_bridge.route_order 기본값이 True라, 생략하면 게이트가 다 열려도
+    계속 페이퍼로만 나감(실거래 라우터의 핵심 전제)."""
     venue = EDGE_PROVIDER_VENUE.get(backer_strategy_id)
     side = "BUY" if fs.direction == 1 else "SELL"
     if venue != "KR":
-        return None  # HL 등 다른 venue의 edge provider 생기면 그때 분기 추가
+        return None, "unsupported_venue"  # HL 등 다른 venue의 edge provider 생기면 그때 분기 추가
     price = _kr_last_close(fs.instrument)
     if price is None or price <= 0:
-        return None
+        return None, "unpriceable_or_too_small"
+    held = _kr_position_qty(fs.instrument)
+    if held is None:
+        return None, "position_check_failed"
+    if side == "BUY" and held > 0:
+        return None, "already_holding"
+    if side == "SELL" and held <= 0:
+        return None, "nothing_to_sell"
     quantity = int(capital // price)
     if quantity < 1:
-        return None
+        return None, "unpriceable_or_too_small"
     return {"venue": "KR", "symbol": fs.instrument, "side": side, "quantity": quantity,
             "order_type": "MARKET", "price": price, "paper": False,
-            "strategy_id": backer_strategy_id}
+            "strategy_id": backer_strategy_id}, None
 
 
 def route_all(as_of: str = "") -> dict:
@@ -75,24 +107,29 @@ def route_all(as_of: str = "") -> dict:
     for fs in fused:
         if fs.direction == 0:
             continue
-        armed_backers = [c for c in fs.contributions
-                          if c.direction == fs.direction
-                          and is_armed(c.strategy_id)
-                          and edge_go(c.strategy_id)]
-        if not armed_backers:
-            blocked.append({"instrument": fs.instrument, "reason": "no_armed_go_backer",
-                             "n_strategies": fs.n_strategies})
-            continue
-        lead = armed_backers[0]
-        base_capital = min(arm_state(b.strategy_id)["capital_limit"] for b in armed_backers)
-        size_mult = (BOOST_MULTIPLIER if fs.n_strategies >= 2 else 1.0) * fs.confidence
-        order = _build_order(fs, base_capital * size_mult, lead.strategy_id)
-        if order is None:
-            blocked.append({"instrument": fs.instrument, "reason": "unpriceable_or_too_small"})
-            continue
         try:
+            armed_backers = [c for c in fs.contributions
+                              if c.direction == fs.direction
+                              and c.weight > 0
+                              and is_armed(c.strategy_id)
+                              and edge_go(c.strategy_id)]
+            if not armed_backers:
+                blocked.append({"instrument": fs.instrument, "reason": "no_armed_go_backer",
+                                 "n_strategies": fs.n_strategies})
+                continue
+            lead = armed_backers[0]
+            base_capital = min(arm_state(b.strategy_id)["capital_limit"] for b in armed_backers)
+            same_direction_n = sum(1 for c in fs.contributions if c.direction == fs.direction)
+            size_mult = (BOOST_MULTIPLIER if same_direction_n >= 2 else 1.0) * fs.confidence
+            capital = min(base_capital * size_mult, ARM_CRITERIA["first_tranche_krw_max"])
+            order, reason = _build_order(fs, capital, lead.strategy_id)
+            if order is None:
+                blocked.append({"instrument": fs.instrument, "reason": reason})
+                continue
             result = broker_bridge.route_order(order)
             routed.append({"instrument": fs.instrument, "result": result})
         except broker_bridge.BrokerOrderRejected as exc:
             blocked.append({"instrument": fs.instrument, "reason": str(exc)})
+        except Exception as exc:  # noqa: BLE001 — one instrument's failure must never abort the batch (I4)
+            blocked.append({"instrument": fs.instrument, "reason": f"error: {exc}"})
     return {"as_of": as_of, "routed": routed, "blocked": blocked, "skipped": skipped}

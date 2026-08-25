@@ -1,5 +1,5 @@
-"""Alpaca 계좌/시세/주문 라우트 — 페이퍼 배스킷 봇(api_server/polymarket_bot.py는 아니고
-daytrade/swing 에이전트)이 쓰는 계좌 조회·주문·컨텍스트·인트라데이 스코어링 엔드포인트.
+"""Alpaca 계좌/시세/주문 라우트 — daytrade/swing 에이전트가 쓰는 계좌 조회·주문·
+컨텍스트·인트라데이 스코어링 엔드포인트.
 공유 헬퍼(_fetch_intraday_bars 등)는 alpaca_shared 모듈 경유로 호출 — 테스트가
 `monkeypatch.setattr(alpaca_shared, ...)`로 패치하면 여기와 agents.py 양쪽에 반영된다."""
 from __future__ import annotations

@@ -21,18 +21,9 @@ cd "$REPO_ROOT" || { echo "repo root 없음: $REPO_ROOT" >&2; exit 1; }
 # 상시 유지할 수집기(세션명  모듈). 안 돌릴 것은 줄 삭제/주석 처리 — 이게 desired state.
 # (launchd가 매분 이 목록대로 죽은 것만 되살림)
 ENSURE=(
-  "polymarket-tick|research.run_polymarket_tick_collect"
-  "polymarket-arb|research.run_polymarket_arb_scan"
   "hl-orderflow-tick|research.run_hl_orderflow_tick_collect"
   "cross-venue-skew-tick|research.run_cross_venue_skew_collect"
-  "polymarket-whale-tick|research.run_polymarket_whale_collect"
-  "polymarket-updown-arb|research.run_polymarket_updown_arb_scan"
-  "polymarket-sharp-wallet-tick|research.run_polymarket_sharp_wallet_collect"
-  "polymarket-mlb-specialist-tick|research.run_mlb_specialist_collect"
-  "polymarket-event-divergence|research.run_polymarket_event_divergence_scan"
   "options-uoa|research.run_options_uoa_collect"
-  "polymarket-implication-collect|research.run_polymarket_market_implication_collect"
-  "polymarket-implication-watch|research.run_polymarket_market_implication_watch"
   "convergence-legs|research.run_convergence_signal_collect"
 )
 

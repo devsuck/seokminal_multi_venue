@@ -74,10 +74,13 @@ def route_order(order: dict) -> dict:
     else:
         raise BrokerOrderRejected(f"unknown venue: {venue}")
 
-    record({"layer": "broker_bridge", "action": "route_order", "venue": venue,
-            "symbol": order.get("symbol"), "side": side, "quantity": quantity,
-            "paper": paper, "result": "submitted"})
-    _notify(order, paper)
+    try:
+        record({"layer": "broker_bridge", "action": "route_order", "venue": venue,
+                "symbol": order.get("symbol"), "side": side, "quantity": quantity,
+                "paper": paper, "result": "submitted"})
+        _notify(order, paper)
+    except Exception:  # noqa: BLE001 — 브로커 제출은 이미 성공, 감사기록/알림 실패로
+        pass            # route_order()가 예외를 던지면 호출부가 이미 나간 주문을 blocked로 오기록함
     return result
 
 

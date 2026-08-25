@@ -84,6 +84,31 @@ def test_hl_places_order_and_notifies(monkeypatch, _no_real_notify):
     assert _no_real_notify[0]["venue"] == "HL"
 
 
+def test_notify_failure_does_not_mislabel_submitted_order(monkeypatch):
+    """주문 제출 성공 후 감사기록/알림이 터져도 route_order는 성공 result를 반환해야 함
+    (호출부가 이미 나간 주문을 blocked로 오기록하는 사고 방지)."""
+    monkeypatch.setenv("KIS_MOCK_APP_KEY", "k")
+    monkeypatch.setenv("KIS_MOCK_APP_SECRET", "s")
+    monkeypatch.setenv("KIS_MOCK_CANO", "c")
+    monkeypatch.setenv("KIS_ACNT_PRDT_CD", "01")
+    monkeypatch.delenv("MAX_ORDER_QTY_KR", raising=False)
+
+    class _FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        def place_order(self, symbol, side, qty, order_type, price):
+            return {"status": "filled", "symbol": symbol}
+
+    monkeypatch.setattr(bb, "KISOrderClient", _FakeClient)
+    monkeypatch.setattr(
+        "api_server.lv6_notify.notify_live_trade",
+        lambda **kw: (_ for _ in ()).throw(RuntimeError("telegram down")),
+    )
+    result = bb.route_order(_kr_order())
+    assert result["status"] == "filled"
+
+
 def test_unknown_venue_rejected():
     with pytest.raises(bb.BrokerOrderRejected, match="unknown venue"):
         bb.route_order(_kr_order(venue="US"))

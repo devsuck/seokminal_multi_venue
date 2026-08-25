@@ -5,14 +5,14 @@ from api_server.fleet_health import classify, classify_disk, count_restarts_by_k
 
 
 def test_classify_fresh():
-    r = classify("polymarket_tick", {"running": True, "session_exists": True,
-                                     "last_write": "2026-07-22T00:00:00Z", "age_sec": 30})
+    r = classify("hl_orderflow_tick", {"running": True, "session_exists": True,
+                                       "last_write": "2026-07-22T00:00:00Z", "age_sec": 30})
     assert r["verdict"] == "fresh" and r["stale_after_s"] == 300
 
 
 def test_classify_stale_over_threshold():
-    r = classify("polymarket_tick", {"running": True, "session_exists": True,
-                                     "last_write": "x", "age_sec": 400})
+    r = classify("hl_orderflow_tick", {"running": True, "session_exists": True,
+                                       "last_write": "x", "age_sec": 400})
     assert r["verdict"] == "stale"          # 400 > 300 임계
 
 
@@ -30,26 +30,12 @@ def test_classify_dead_no_data():
 
 def test_default_threshold_for_unknown_key():
     assert stale_after("something_new") == 900
-    assert stale_after("polymarket_arb") == 1800
-
-
-def test_long_cycle_collectors_not_stale_between_cycles():
-    """사이클이 긴 수집기는 대기 중에 stale로 찍히면 안 된다(2026-08-06 오탐).
-    임계는 각 스크립트의 실제 사이클 상수보다 커야 함."""
-    from research.run_polymarket_market_implication_collect import SCAN_INTERVAL_S
-    from research.run_polymarket_market_implication_watch import WATCH_INTERVAL_S
-
-    assert stale_after("polymarket_implication_collect") > SCAN_INTERVAL_S
-    assert stale_after("polymarket_implication_watch") > WATCH_INTERVAL_S
-    # 사이클 직후~다음 사이클 직전까지 전 구간 fresh
-    for key, cycle in [("polymarket_implication_collect", SCAN_INTERVAL_S),
-                       ("polymarket_implication_watch", WATCH_INTERVAL_S)]:
-        r = classify(key, {"running": True, "age_sec": int(cycle) - 1})
-        assert r["verdict"] == "fresh", f"{key}: 사이클 대기 중 {r['verdict']}"
+    assert stale_after("options_uoa") == 3600
 
 
 def test_convergence_legs_not_stale_between_cycles():
-    """convergence_legs(6h 폴링)도 같은 오탐 클래스 — DEFAULT 900s면 상시 stale(2026-08-15 발견)."""
+    """convergence_legs(6h 폴링)는 사이클 대기 중에 stale로 찍히면 안 된다(2026-08-15 발견).
+    임계는 실제 사이클 상수보다 커야 함."""
     from research.run_convergence_signal_collect import POLL_INTERVAL_SEC
 
     assert stale_after("convergence_legs") > POLL_INTERVAL_SEC
@@ -69,9 +55,9 @@ def test_heartbeat_keeps_event_driven_collector_fresh(tmp_path):
 
 def test_fleet_summary_worst_and_counts():
     rows = [
-        classify("polymarket_tick", {"running": True, "age_sec": 30}),           # fresh
-        classify("polymarket_arb", {"running": True, "age_sec": 5000}),          # stale (>1800)
-        classify("hl_orderflow_tick", {"running": False, "age_sec": 1}),         # dead
+        classify("hl_orderflow_tick", {"running": True, "age_sec": 30}),         # fresh
+        classify("options_uoa", {"running": True, "age_sec": 5000}),             # stale (>3600)
+        classify("cross_venue_skew_tick", {"running": False, "age_sec": 1}),     # dead
     ]
     s = fleet_summary(rows)
     assert s["ok"] is False
@@ -81,27 +67,27 @@ def test_fleet_summary_worst_and_counts():
 
 
 def test_fleet_summary_all_fresh_ok():
-    rows = [classify("polymarket_tick", {"running": True, "age_sec": 10})]
+    rows = [classify("hl_orderflow_tick", {"running": True, "age_sec": 10})]
     s = fleet_summary(rows)
     assert s["ok"] is True and s["worst_verdict"] == "fresh"
 
 
 def test_classify_stuck_far_past_threshold():
-    # polymarket_tick 임계 300s, STUCK_MULTIPLIER=4 → 1200s 넘으면 stuck
-    r = classify("polymarket_tick", {"running": True, "age_sec": 1300})
+    # hl_orderflow_tick 임계 300s, STUCK_MULTIPLIER=4 → 1200s 넘으면 stuck
+    r = classify("hl_orderflow_tick", {"running": True, "age_sec": 1300})
     assert r["verdict"] == "stuck"
 
 
 def test_classify_stale_not_yet_stuck():
-    r = classify("polymarket_tick", {"running": True, "age_sec": 1199})
+    r = classify("hl_orderflow_tick", {"running": True, "age_sec": 1199})
     assert r["verdict"] == "stale"
 
 
 def test_stuck_ranks_worse_than_stale_but_better_than_dead():
     rows = [
-        classify("polymarket_tick", {"running": True, "age_sec": 1300}),   # stuck
-        classify("polymarket_arb", {"running": True, "age_sec": 5000}),    # stale
-        classify("hl_orderflow_tick", {"running": False, "age_sec": 1}),   # dead
+        classify("hl_orderflow_tick", {"running": True, "age_sec": 1300}),   # stuck
+        classify("options_uoa", {"running": True, "age_sec": 5000}),         # stale
+        classify("cross_venue_skew_tick", {"running": False, "age_sec": 1}), # dead
     ]
     s = fleet_summary(rows)
     assert s["worst_verdict"] == "dead"
@@ -110,15 +96,15 @@ def test_stuck_ranks_worse_than_stale_but_better_than_dead():
 
 
 def test_classify_flapping_flag_from_restart_count():
-    fresh_not_flapping = classify("polymarket_tick", {"running": True, "age_sec": 10}, restart_count_24h=2)
-    fresh_flapping = classify("polymarket_tick", {"running": True, "age_sec": 10}, restart_count_24h=3)
+    fresh_not_flapping = classify("hl_orderflow_tick", {"running": True, "age_sec": 10}, restart_count_24h=2)
+    fresh_flapping = classify("hl_orderflow_tick", {"running": True, "age_sec": 10}, restart_count_24h=3)
     assert fresh_not_flapping["flapping"] is False
     assert fresh_flapping["flapping"] is True
     assert fresh_flapping["restart_count_24h"] == 3
 
 
 def test_fleet_summary_not_ok_when_flapping_even_if_fresh():
-    rows = [classify("polymarket_arb", {"running": True, "age_sec": 10}, restart_count_24h=5)]
+    rows = [classify("hl_orderflow_tick", {"running": True, "age_sec": 10}, restart_count_24h=5)]
     s = fleet_summary(rows)
     assert s["ok"] is False
     assert s["worst_verdict"] == "fresh"       # verdict 자체는 그대로
@@ -127,13 +113,13 @@ def test_fleet_summary_not_ok_when_flapping_even_if_fresh():
 def test_count_restarts_by_key_windows_and_groups():
     now = 1_000_000.0
     events = [
-        {"key": "polymarket_arb", "ts": now - 100},
-        {"key": "polymarket_arb", "ts": now - 200},
-        {"key": "polymarket_arb", "ts": now - 90_000},   # 24h 밖(>86400s)
-        {"key": "polymarket_updown_arb", "ts": now - 300},
+        {"key": "hl_orderflow_tick", "ts": now - 100},
+        {"key": "hl_orderflow_tick", "ts": now - 200},
+        {"key": "hl_orderflow_tick", "ts": now - 90_000},   # 24h 밖(>86400s)
+        {"key": "cross_venue_skew_tick", "ts": now - 300},
     ]
     counts = count_restarts_by_key(events, now)
-    assert counts == {"polymarket_arb": 2, "polymarket_updown_arb": 1}
+    assert counts == {"hl_orderflow_tick": 2, "cross_venue_skew_tick": 1}
 
 
 def test_classify_disk_tiers():

@@ -220,8 +220,6 @@ COLLECTOR_SESSIONS: dict[str, dict[str, str]] = {
                           "module": "research.run_hl_orderflow_tick_collect"},
     "cross_venue_skew_tick": {"session": "cross-venue-skew-tick", "data_dir": "research/data/cross_venue_skew",
                               "module": "research.run_cross_venue_skew_collect"},
-    "options_uoa": {"session": "options-uoa", "data_dir": "research/data/options_uoa",
-                    "module": "research.run_options_uoa_collect"},
     "convergence_legs": {"session": "convergence-legs", "data_dir": "research/data/convergence_legs",
                          "module": "research.run_convergence_signal_collect"},
 }
@@ -726,6 +724,46 @@ def execution_edge() -> dict:
     캐시(service가 배경 워밍). 콘솔과 분리(프로그레시브). 첫 콜(캐시 콜드)만 느림."""
     from research.paper.buyback_edge import edge_status
     return edge_status(read_only=True)  # 계산 안 함 — service 워밍한 캐시만. 없으면 warming.
+
+
+# arm 대기중 3개 전략 — registry_id ↔ config/edge 모듈 명시 매핑(암묵 매칭 금지, edge_providers.py와 동일 원칙)
+_READINESS_STRATEGIES = [
+    ("kr_dart_buyback_drift_v1", "research.paper.buyback_config", "research.paper.buyback_edge"),
+    ("futures_tsmom_32mkt", "research.paper.tsmom_config", "research.paper.tsmom_edge"),
+    ("kr_turn_of_month_v1_PORTFOLIO", "research.paper.tom_config", "research.paper.tom_edge"),
+]
+
+
+@router.get("/execution/readiness")
+def execution_readiness() -> dict:
+    """arm 대기중 3개 전략(buyback/tsmom/tom)의 paper 시계 진행률 — 한 화면.
+    read_only(계산 안 함, 각 전략 edge_status의 service 워밍 캐시만 사용)."""
+    import datetime as _dt
+    import importlib
+    from jarvis.execution.arm_criteria import CRITERIA, evaluate as arm_eval
+
+    out = []
+    for reg_id, cfg_mod, edge_mod in _READINESS_STRATEGIES:
+        CFG = importlib.import_module(cfg_mod)
+        edge_status = importlib.import_module(edge_mod).edge_status
+        try:
+            frozen = _dt.date.fromisoformat(CFG.FROZEN_AT)
+            paper_months = round((_dt.date.today() - frozen).days / 30.0, 1)
+        except Exception:  # noqa: BLE001
+            paper_months = 0.0
+        edge = edge_status(read_only=True)
+        decision = arm_eval(edge, paper_months)
+        out.append({
+            "strategy_id": CFG.VERSION, "registry_id": reg_id, "status": CFG.STATUS,
+            "frozen_at": CFG.FROZEN_AT, "paper_months": paper_months,
+            "min_paper_months": CRITERIA["min_paper_months"],
+            "months_remaining": max(0.0, round(CRITERIA["min_paper_months"] - paper_months, 1)),
+            "edge_status": edge.get("status"), "oos_months": edge.get("oos_months"),
+            "oos_in_envelope": edge.get("oos_in_envelope"), "need_months": edge.get("need_months"),
+            "decision": decision.get("decision"), "reasons": decision.get("reasons", []),
+        })
+    return {"strategies": out, "min_paper_months": CRITERIA["min_paper_months"],
+            "first_tranche_krw_max": CRITERIA["first_tranche_krw_max"]}
 
 
 @router.get("/jarvis/detail")

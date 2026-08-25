@@ -41,6 +41,18 @@ cp scripts/deploy/launchd/com.seokminal.api.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.seokminal.api.plist
 ```
 
+## 4. (선택) 일일 성과 요약 텔레그램
+에이전트별 오늘 체결 요약을 `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`로 발송(`api_server/daily_summary.py`).
+오늘 체결 없는 에이전트는 스킵 — 매일 조용히 idle 알림 안 옴. 매일 22:30(로컬)에 1회.
+```bash
+cp scripts/deploy/launchd/com.seokminal.daily-summary.plist ~/Library/LaunchAgents/
+# <REPO>/<PYTHON> 치환 (두 군데)
+launchctl load ~/Library/LaunchAgents/com.seokminal.daily-summary.plist
+tail -f logs/daily-summary.log
+```
+수동 검증: `SEOKMINAL_PYTHON=<python경로> bash scripts/deploy/run_daily_summary.sh`
+해제: `launchctl unload ~/Library/LaunchAgents/com.seokminal.daily-summary.plist`
+
 ## 주의
 - LaunchAgent는 로그인 세션에서 돎(tmux가 유저 tmux 서버를 쓰므로 정상). 로그아웃 상태 상시구동이
   필요하면 LaunchDaemon(root)로 승격해야 하는데, tmux 유저 컨텍스트 이슈가 있어 권장 안 함 —

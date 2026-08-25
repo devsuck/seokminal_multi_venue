@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  일일 성과 요약 텔레그램 알림 — 매일 22:30(로컬)에 run_daily_summary.sh 1회 실행.
+  ensure_collectors.sh와 같은 패턴(비침습, launchd가 주기 실행). 22:30 = KR 정규장 +
+  US 정규장 둘 다 종료된 이후(로컬시각 기준 대략치 — 정확한 종가 회계는
+  /agents/overview/all 참고, 이 알림은 digest 목적).
+
+  설치(경로/파이썬을 실제에 맞게 수정 — <REPO>는 맥의 seokminal-multi-venue 절대경로):
+    cp scripts/deploy/launchd/com.seokminal.daily-summary.plist ~/Library/LaunchAgents/
+    # ~/Library/LaunchAgents/com.seokminal.daily-summary.plist 안의 <REPO>/<PYTHON> 치환
+    launchctl load ~/Library/LaunchAgents/com.seokminal.daily-summary.plist
+    launchctl list | grep seokminal      # 등록 확인
+    tail -f <REPO>/logs/daily-summary.log
+  해제: launchctl unload ~/Library/LaunchAgents/com.seokminal.daily-summary.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.seokminal.daily-summary</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string><REPO>/scripts/deploy/run_daily_summary.sh</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>SEOKMINAL_REPO</key>
+        <string><REPO></string>
+        <key>SEOKMINAL_PYTHON</key>
+        <string><PYTHON></string>
+    </dict>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>22</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string><REPO>/logs/daily-summary.log</string>
+    <key>StandardErrorPath</key>
+    <string><REPO>/logs/daily-summary.log</string>
+</dict>
+</plist>

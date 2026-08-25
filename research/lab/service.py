@@ -3,7 +3,10 @@
 백그라운드 스레드가 주기적으로:
   - research_queue pending 있으면 run_pending(BH-FDR 검증) — 아이디어는 대화/수동 제출로 채워짐.
   - pending 없으면 그냥 대기(스프레이 없음, 죽은연못 자동생성 안 함).
-안전: live 절대 없음(Jarvis 강제). $0(맥·무료 데이터). 아이디어 생성 = 우리 대화($0).
+안전: 실주문 경로 있음(live_router, 6h 스로틀) — 단 arm()은 사람 ADMIN 전용,
+AUTONOMY_LEVEL<MIN_LIVE_LEVEL이면 broker_bridge가 자체 BLOCK. 구조적으로 이
+두 게이트(+arm_criteria GO)가 다 열리기 전까진 여전히 무동작. $0(맥·무료 데이터).
+아이디어 생성 = 우리 대화($0).
 """
 from __future__ import annotations
 
@@ -48,6 +51,10 @@ class ResearchService:
         self.tsmom_last_month: str | None = None
         self.tsmom_in_envelope: bool | None = None
         self.watchdog_new_total = 0
+        self._last_execution_ts = 0.0
+        self.last_execution_check: str | None = None
+        self.execution_routed_total = 0
+        self.last_execution_result: dict | None = None
 
     def _load(self) -> dict:
         p = state_path(_CFG)
@@ -223,11 +230,29 @@ class ResearchService:
         except Exception:  # noqa: BLE001
             pass
 
+    def _execution_check(self) -> None:
+        """6h 스로틀 — live_router 실행. armed+GO 전략 없으면 사실상 항상 no-op."""
+        if time.time() - self._last_execution_ts < 21600:
+            return
+        self._last_execution_ts = time.time()
+        try:
+            from jarvis.execution.live_router import route_all
+            r = route_all(as_of=_now())
+            self.last_execution_check = _now()
+            self.last_execution_result = r
+            self.execution_routed_total += len(r.get("routed", []))
+            if r.get("routed"):
+                from jarvis.watchdog import observe
+                observe({"live_order_routed": True, "n": len(r["routed"])})
+        except Exception:  # noqa: BLE001
+            pass
+
     def _tick(self) -> None:
         self.ticks += 1
         self._refresh_buyback()
         self._autoresearch_batch()
         self._warm_edge()
+        self._execution_check()
         self._warm_tsmom()
         # 데이터 pull 큐 — 세션 babysit 없이 장시간 pull 처리(재개 지원, 한 번에 하나)
         try:
@@ -268,9 +293,12 @@ class ResearchService:
             "last_edge_warm": self.last_edge_warm, "edge_status": self.edge_status_cache,
             "arm_decision": self.arm_decision,
             "tsmom_last_month": self.tsmom_last_month, "tsmom_in_envelope": self.tsmom_in_envelope,
+            "last_execution_check": self.last_execution_check,
+            "execution_routed_total": self.execution_routed_total,
+            "last_execution_result": self.last_execution_result,
             "watchdog": self._watchdog_summary(),
             "pull_queue": self._pull_queue_summary(),
-            "note": "pending 큐 + buyback 24h 갱신 + Auto-Research 24h 배치 + lab 되먹임 + jarvis 감사큐 브릿지 + 엣지 6h 워밍 + 감시견. live 불가. $0.",
+            "note": "pending 큐 + buyback 24h 갱신 + Auto-Research 24h 배치 + lab 되먹임 + jarvis 감사큐 브릿지 + 엣지 6h 워밍 + 실행체크 6h + 감시견. 실주문 경로 있음(게이트 미달시 무동작). $0.",
         }
 
     def _watchdog_summary(self) -> dict:

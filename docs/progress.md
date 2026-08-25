@@ -2007,8 +2007,163 @@
 
 ### 다음 할 일
 - `com.seokminal.daily-summary.plist`는 맥에 아직 미설치(코드/스크립트만 준비) — 실제 launchd 등록은 유저가 맥에서 `launchctl load` 해야 함.
-- `lv6_notify._send()`에 retry/backoff/큐 없음 — 빠른 사이클 봇이 `notify_live_trade`를 버스트로 쏘면 텔레그램 429로 조용히 드롭 가능. 아직 발생 안 함, 필요해지면 추가.
+- ~~`lv6_notify._send()`에 retry/backoff/큐 없음~~ → 같은 날 이어서 처리, 아래 섹션 참조.
 - 이걸로 `lv6_notify.py` 6개 알림 함수 전부 배선 완료(1개는 스킵 결정) — Lv6 텔레그램 알림 배선 작업 자체는 종료.
 
 ### 막힌 부분/결정사항
 - 없음.
+
+## 2026-08-25 (이어서): 텔레그램 429 retry/backoff
+
+배경: 위 항목에서 "필요해지면 추가"로 남겨뒀던 걸 같은 세션에서 유저가 바로 요청("텔레그램 429 대응 retry/backoff도 추가해줘").
+
+### 완료된 작업
+- `84e7df0` fix: 텔레그램 429 retry/backoff — 스레드 내 대기, 최대 3회
+  - `lv6_notify._send()`를 재시도 루프로 재작성. `_MAX_RETRIES=3`, 429 응답 바디의 `parameters.retry_after`(파싱 실패시 1초 기본값)만큼 대기 후 재시도, `_MAX_BACKOFF_S=30.0`으로 상한. `send()`가 이미 daemon 스레드로 발송하므로 루프 내 `time.sleep()`이 메인/uvicorn 스레드는 안 막음.
+  - 429 외 에러(다른 HTTPError, 일반 Exception)는 재시도 없이 즉시 드롭 — 원인이 다른 실패를 한 backoff에 섞으면 드롭만 늦춰질 뿐이라 429로 한정.
+  - `tests/test_lv6_notify_retry.py` 신규 4개: 429 재시도 후 성공, 최대횟수 소진 후 포기(재시도 `_MAX_RETRIES-1`회, 안 죽음), 비-429는 재시도 없이 즉시 드롭, retry_after 상한 캡.
+  - 전체 스위트 `pytest tests/ -q` 1938 passed, 회귀 없음.
+
+### 변경된 파일
+- `api_server/lv6_notify.py`, `tests/test_lv6_notify_retry.py`(신규)
+
+### 다음 할 일
+- 없음 — 이번 요청 범위 완결.
+
+### 막힌 부분/결정사항
+- 없음.
+
+## 2026-08-25 (이어서 2): REJECT 확정된 UOA/ICT 페이퍼봇 전면삭제
+
+배경: 유저 요청 "리젝트 되었으면 tmux 꺼. 삭제해도 좋아." — options-uoa(08-13 REJECT, BH-FDR 0/8 survive)와 ict-orderflow-paper(08-13 REJECT, 평균R=-0.13) 둘 다 이미 리젝트 확정된 지 오래된 봇, 자원만 태우고 있었음.
+
+### 완료된 작업
+- `options-uoa` tmux 세션 kill, `ensure_collectors.sh` ENSURE 목록에서 제거(watchdog 재기동 안 함)
+- `lab_api.py` COLLECTOR_SESSIONS에서 options_uoa 항목 삭제
+- `main.py`: `/insider/options-uoa` 라이브 스캔 엔드포인트 + `OptionsUOA` 모델 + `_options_uoa` import 삭제(대시보드/다른 백엔드 코드 어디서도 호출 안 함, 확인함). `insider/options_uoa_client.py`는 존치(convergence 파이프라인이 직접 import해서 씀, label 매핑 `"options_uoa": "이상 옵션거래"`도 그래서 존치)
+- `research/run_options_uoa_*.py`(collect/forward/threshold_sweep) 3개, `scripts/options_uoa_n_check.sh`, 테스트 2개, `research/data/options_uoa*` 데이터 전량 삭제
+- `research/run_ict*.py` 4개, `research/ict/` 모듈 전체(7파일+paper/ 5파일), `tests/test_ict_*.py` 7개 + `test_run_ict_paper_engine.py` 삭제
+- `api_server/router_ict.py`(ICT 백테스트 콤비네이터 탐색 UI, `research.ict.combinator` 의존이라 같이 죽음) + main.py 등록 라인 삭제
+- **주의 — `research/ict/primitives.py`는 복구함**: killzone_indices/market_structure/swings가 REJECT 안 된 다른 트랙(`research/hypotheses/orderflow_context_gate.py` — 이것도 사실 REJECT 확정이지만 이번 스콥 아님, `research/run_smt_control.py`, `research/strategies/orderflow_signal_matrix.py`)에서 계속 씀. ICT "모듈 전체 삭제"가 아니라 "페이퍼봇+백테스트UI만 삭제, 공유 프리미티브는 유지"가 정확한 표현
+- `tests/test_insider.py`의 `/insider/options-uoa` 관련 테스트 5개(엔드포인트 삭제로 무의미해짐) 삭제
+- 전체 스위트 `pytest tests/ -q` **1869 passed**, 회귀 없음
+
+### 변경된 파일
+- 삭제: `research/run_options_uoa_*.py`(3), `scripts/options_uoa_n_check.sh`, `tests/test_run_options_uoa_collect.py`, `tests/test_options_uoa_forward.py`, `research/data/options_uoa*`, `research/run_ict*.py`(4), `research/ict/{__init__,backtest,combinator,models_2024,strategy}.py` + `research/ict/paper/*.py`(5), `tests/test_ict_*.py`(7), `tests/test_run_ict_paper_engine.py`, `api_server/router_ict.py`
+- 수정: `api_server/lab_api.py`, `api_server/main.py`, `scripts/deploy/ensure_collectors.sh`, `tests/test_insider.py`
+- 유지(중요): `research/ict/primitives.py`, `insider/options_uoa_client.py`
+
+### 다음 할 일
+- `research/hypotheses/orderflow_context_gate.py` 자체도 이미 REJECT 확정(07-12)인데 이번엔 안 건드림 — 원한다면 별도 세션에서 정리
+- 대시보드 쪽 ICT 관련 API 호출(`lib/api.ts`의 `/ict/symbols`, `/ict/backtest`, `/ict/events`)은 지금 다 502/404 남 — 이번 세션에서 진행 중인 대시보드 전면 재설계(증권사식 컨트롤 UI → AI 판단근거 read-only 뷰)에서 같이 정리 예정
+
+### 막힌 부분/결정사항
+- 없음.
+
+## 2026-08-25 (이어서 3): `orderflow_context_gate.py` 죽은 임포트체인 전면삭제
+
+배경: 유저 지시 "3,4 ㄱㄱ" — 위에서 미룬 `orderflow_context_gate.py` 정리(3번) 실행. 지난 UOA/ICT 삭제 때 `router_ict.py`/`ict/primitives.py`에서 두 번 겪은 "REJECT 파일 지웠다가 살아있는 트랙이 공유 유틸을 쓰고 있어서 깨짐" 패턴 재발 방지 위해, 삭제 전 임포터 4개 전부 상태 확인부터 함.
+
+### 조사 결과
+- `orderflow_context_gate.py` 자체: REJECT 확정(07-12)
+- 임포터 4개 전부 죽어있음 확인:
+  - `run_orderflow_futures_on_btc.py` — REJECT(14/14 BH-FDR 전멸, docs/progress.md:975)
+  - `orderflow_signal_matrix.py` — REJECT(3-way AND 0/99, 4-way majority 0/103 전부 BH-FDR 미생존, "신호 자체가 없다는 쪽이 맞음" 결론, docs/progress.md:1168-1169)
+  - `orderflow_futures_bar_matrix.py` — progress.md/roadmap.md 어디에도 언급 없음, git log상 단일 "autoresearch snapshot" 자동커밋뿐 → 실행된 적 없는 방치된 스캐폴드. 유일한 임포터 `run_orderflow_futures_bar_sweep.py`도 동일하게 방치됨
+  - `orderflow_gex_gate.py` — 자체 검증 기록 없음, 자신을 임포트하는 외부 코드도 0개(테스트 파일만)
+- `api_server`/`bots` 전체 grep으로 이 4개 파일 중 어느 것도 라이브 트레이딩 경로에서 쓰이지 않음 확인(순수 연구 스크립트)
+- `orderflow_signal_matrix.py`가 재사용하는 공유 프리미티브(`orderflow_absorption.py`, `orderflow_tape_vwap.py`, `orderflow_futures.py`, `research/ict/primitives.py`)는 **이 체인에 속하지 않고** 다른 진행중 트랙(`run_orderflow_maker_cost_retest.py`, `orderflow_tpo.py`, `run_smt_control.py` 등)이 여전히 씀 → 손대지 않음(존치)
+- `research/run_cross_venue_skew_validate.py`가 `run_orderflow_futures_on_btc.py`를 언급하는 줄은 실제 import 아니라 docstring 코멘트뿐(패턴 재사용 설명) — 삭제해도 안 깨짐. `cross_venue_skew` 트랙 자체는 별개 REJECT(08-15, 이번 스콥 아님, 안 건드림)
+
+### 완료된 작업
+- 죽은 체인 11파일 전부 삭제(`git rm`): `research/hypotheses/orderflow_context_gate.py`, `research/hypotheses/orderflow_gex_gate.py`, `research/run_orderflow_futures_on_btc.py`, `research/strategies/orderflow_futures_bar_matrix.py`, `research/run_orderflow_futures_bar_sweep.py`, `research/strategies/orderflow_signal_matrix.py`, `research/run_orderflow_signal_matrix.py`, `research/run_orderflow_signal_matrix_k3.py`, `research/run_orderflow_signal_matrix_k4_majority.py`, `tests/test_orderflow_context_gate.py`, `tests/test_orderflow_gex_gate.py`
+- 잔여 참조 0건 확인(`grep -rl "orderflow_context_gate\|orderflow_gex_gate"` 결과 없음)
+- 전체 스위트 `pytest tests/ -q` **1848 passed**, 회귀 없음
+
+### 변경된 파일
+- 삭제(11): 위 목록 그대로
+
+### 다음 할 일
+- 이제 이 세션 "3,4 ㄱㄱ" 중 4번(골드 데이터소스 확정: IB `1OZ`/`XAUUSD` vs HL `xyz:GOLD`) 진행
+
+### 막힌 부분/결정사항
+- 없음.
+
+## 2026-08-25 (이어서 4): 골드 데이터소스 확정 — `xyz:GOLD`(HL)로 최종 결론, IB 경로 폐기
+
+배경: "3,4 ㄱㄱ" 중 4번. 오늘 이전 자율세션이 같은 항목을 시도했다가 IB Gateway 미구동(GUI+2FA 필요)으로 BLOCKED 처리한 기록이 있었으나(위 "roadmap 다음세션최우선" 섹션), 오늘 낮 12:38 유저가 별도로 **IB를 active venue scope에서 제외**한다고 확정함([[project_active_venue_scope.md]] 메모리) — KIS/Alpaca/HL 3개만 active. 이 결정으로 IB Gateway 기동 자체가 불필요해짐(전제가 사라짐).
+
+### 결론
+- **`xyz:GOLD`(HL 빌더DEX `xyz`) 채택. IB `1OZ`/`XAUUSD`/`GC` 경로는 전면 폐기(재검토 안 함).**
+- 근거: (1) IB가 active venue scope 밖이라 애초에 후보가 아님. (2) 07-12/07-22 조사에서 `xyz:GOLD`는 이미 실사용 검증 끝남 — 거래량 $43.9M/day(PAXG의 10배), 가격이 GC 선물과 거의 일치(4079.9 vs 4097), `LIQUID_PERPS`에 이미 등록돼 코드 변경 없이 1m/5m/15m 라이브조회+캐시 정상 동작(`hl_candle_loader.py` 콜론포함 심볼 그대로 처리). (3) `run_xau_session_backtest.py`가 이미 xyz:GOLD로 77트레이드 백테스트(승률76.5%/PF1.31) 실행+`/research/xau-session` 엔드포인트+대시보드 패널까지 노출 완료된 상태 — 사실상 기존에 이미 이 결정대로 운영 중이었음.
+- **코드 변경 불필요** — 이미 그렇게 동작 중. 이번 항목은 "미해결로 남아있던 기록을 최종 확정으로 정리"만 함.
+
+### 변경된 파일
+- 없음(코드 변경 불요, 기록 정리만)
+
+### 다음 할 일
+- 없음(이번 요청 "3,4 ㄱㄱ" 완료)
+
+### 막힌 부분/결정사항
+- 없음. IB 골드 경로는 재오픈하지 않음([[project_active_venue_scope.md]]과 동일 기조).
+
+## 2026-08-25/26 (밤샘 자율세션): 실거래 완전자동 실행 파이프라인 — KIS 10만원/HL $170 투입 전 배선
+
+배경: 유저가 KIS 10만원(계속 추가입금 예정)/HL $170(현재잔고) 실입금 확정 통보 후 취침, "스펙쓰고 개발까지 다 해줘 ... autopilot 급으로 완성도 있는" 지시. 입대(2026-10-19, 18개월 무감독)가 배경 동인. superpowers:brainstorming(architectural) 진행, 스펙은 `docs/superpowers/specs/2026-08-25-live-execution-bridge-design.md`. 유저 수면 중 자율진행([[feedback_full_autonomy_when_offline]]).
+
+### 핵심 발견 — 계획 수정 사유
+- **처음부터 만들 필요 없었음**: `jarvis/execution/`(arm_criteria/arm/gateway) + `jarvis/risk/governor.py` + `jarvis/permissions/policy.py` + `jarvis/registry`(LIVE_CANDIDATE→MICRO_LIVE 사다리)로 실자본 실행용 governance stack이 이미 완성돼 있었으나 **아무것도 안 쓰고 있었음**. 애초 승인받은 "`jarvis/live_execution/` 신규 구축" 계획을 폐기하고 기존 `jarvis/execution/` 확장으로 전환(재사용 우선, ponytail 원칙) — 유저에게 사후보고 필요한 이탈.
+- **`investment_os.AUTO_EXECUTION_ENABLED`와 진짜 실행 게이트는 완전히 별개**: 전자는 Investment OS 어디에도 execute()가 없어 아무것도 안 잠금(장식용). 진짜 게이트는 `jarvis.config.AUTONOMY_LEVEL`(기본5) vs `MIN_LIVE_LEVEL=6` + `jarvis.execution.arm.arm()`(사람 ADMIN 전용) — 둘 다 그대로 잠긴 채 유지.
+- **오늘 밤 어떤 전략도 실자본 arm 불가**: `arm_criteria.py`(2026-07-04 동결, 수정 금지)가 GO에 `paper_months≥6 AND oos_months≥3 AND envelope_ratio≥2/3` 요구. 현재 최고참 KIS paper_active 전략도 페이퍼 ~40일(요구 180일)뿐이라 구조적으로 몇 주~몇 달은 아무 전략도 못 arm — 코드 완성도와 무관하게 원천 차단됨. 정직하게 보고: "플랫폼 다 만들었다"와 "오늘 밤 뭔가 자동으로 실거래 나간다"는 다른 얘기.
+
+### 완료된 작업
+- `jarvis/execution/broker_bridge.py`(신규): Gateway의 `SIMULATED` 고정반환 다음 단계 — 진짜 KIS/HL 주문. risk_guard 이중체크(제안단계 RiskGovernor와 통화인지 risk_guard는 다른 축), 감사기록, Lv6 텔레그램 알림.
+- `jarvis/execution/ensemble.py`(신규): 유저 명시 요구("하나로만 가는건 너무 위험") — Tier A(armed+arm_criteria GO)만 단독 트리거 가능, Tier B(draft+실데이터)는 Tier A와 같은 방향 2개 이상 동의시만 사이즈 +30% 부스터. Tier B 단독 트리거 절대 불가(회귀테스트로 고정).
+- `live_engine/risk_guard.py`: `RiskConfig.from_env(venue="KR"|"HL")` — 통화단위 무시 단일한도(원래 KRW/USD 동일 숫자 적용되던 버그)를 venue 접미사 env var로 분리, 폴백 유지. 파일기반 kill switch(`set_kill_switch_file`/`_kill_switch_file_active`) 추가 — 기존 env var 방식(재시작 필요)에 OR로 병행, 회귀 없음.
+- `api_server/main.py`: `/orders/kr`·`/hl/order`에 `venue=` 전달. `GET/POST /admin/kill-switch` 신규(대시보드 버튼 아님 — CLI/curl 전용, 대시보드 read-only 유지 원칙 준수).
+- `.env`: `MAX_ORDER_NOTIONAL_KR=500000` 등 KR/HL 분리 한도 8개 추가.
+- `jarvis/execution/arm.py`: `record_auto_execution_approval()`/`auto_execution_approved()` — 사람 ADMIN이 명시 승인 기록해야 `AUTO_EXECUTION_ENABLED=True`가 architectural-separation invariant를 통과(자동 self-approve 금지).
+- `jarvis/investment_os/__init__.py`: `AUTO_EXECUTION_ENABLED` `False→True`(유저 명시 요청) — 위 이유로 실질적 위험 없음(장식용 플래그).
+- `jarvis/investment_os/separation.py`, `execution_planning.py`: 승인 아티팩트 파일존재 체크로 게이트(⚠`_BROKER_PREFIX` 격리 규칙상 `jarvis.execution` 직접 import 금지 — `jarvis.config.state_path`만 사용).
+- 신규 테스트 4개: `tests/test_broker_bridge.py`(5), `tests/test_risk_guard_venue.py`(4), `tests/test_kill_switch_file.py`(5, admin endpoint 포함), `tests/test_ensemble.py`(9) — 전부 pass.
+- `jarvis/investment_os/tests/test_investment_os.py` 갱신(2개 테스트) — `test_architectural_separation`은 이제 승인 아티팩트 미기록 상태에서 `separated=False`가 정직한 신호임을 검증(예전엔 `True` 기대, 이제 의도적으로 `False`).
+- 회귀 확인: `jarvis/investment_os/tests`(12) + `tests/test_risk_guard.py`+`test_order_risk.py`+`test_trading_mode.py`+`test_circuit_breaker_notify.py`(22) 전부 pass. 전체 `pytest tests/ jarvis/ -q` 94 failed/5644 passed — **94개는 전부 07-31 "remove autonomous research dead cluster" 커밋(agent_runtime 등 13모듈 삭제) 이후 방치된 golden-snapshot/module-count 테스트로 확인(오늘 변경분 stash 후 baseline만 돌려서 동일 실패 재현 완료), 오늘 작업과 무관**. `CLAUDE.md`의 "pre-existing failures: 없음(2026-07-30)" 문구는 그 다음날 커밋 이후로 stale — 다음 세션에서 갱신 필요.
+
+### 변경된 파일
+- 신규: `jarvis/execution/broker_bridge.py`, `jarvis/execution/ensemble.py`, `tests/test_broker_bridge.py`, `tests/test_risk_guard_venue.py`, `tests/test_kill_switch_file.py`, `tests/test_ensemble.py`, `docs/superpowers/specs/2026-08-25-live-execution-bridge-design.md`
+- 수정: `live_engine/risk_guard.py`, `api_server/main.py`, `.env`, `jarvis/execution/arm.py`, `jarvis/investment_os/{__init__,separation,execution_planning}.py`, `jarvis/investment_os/tests/test_investment_os.py`
+
+### 다음 할 일
+- **CLI 단발 러너(`ensemble.evaluate→RiskGovernor.check→ExecutionGateway.execute→broker_bridge.route_order` 연결)는 의도적으로 안 만듦** — 전략별 edge 데이터 조회 인터페이스가 표준화 안 돼있어(`buyback_edge.edge_status`는 buyback 전용) 지금 만들면 존재하지 않는 인터페이스를 가정한 추측성 코드가 됨. 실제 전략이 arm_criteria GO 받을 때(몇 주~몇 달 후) 그 전략의 실데이터 소스를 보고 그때 연결.
+- 스케줄러/cron/launchd는 명시적으로 안 만듦(상시 인프라 설치는 유저 확인 필요 사항으로 판단, 코드 작성과 다른 범주) — 유저가 깨어난 뒤 원하면 별도 확정 필요.
+- CLAUDE.md의 "pre-existing failures: 없음" 문구 갱신 필요(07-31 이후 94개 실패 존재, 오늘 작업과 무관하지만 방치하면 다음 세션에서 진짜 회귀와 혼동 위험).
+- staged된 ICT/UOA 전면삭제(오늘 낮 세션, `router_ict.py` 등)와 `docs/progress.md`/`docs/roadmap.md`/`api_server/lab_api.py` 등의 미커밋 변경분이 여전히 커밋 안 된 채 남아있음 — 오늘 밤 작업과 섞지 않고 그대로 둠, 유저가 깨어나면 커밋 여부 확인 필요.
+
+### 막힌 부분/결정사항
+- **세 개의 사람 전용 게이트는 오늘 밤 그대로 잠긴 채 유지**(의도적, 건드리지 않음): ① `AUTONOMY_LEVEL`(5→6은 사람이 env var로) ② 동결된 `arm_criteria.py`의 GO 판정(현재 전 전략 미달) ③ 사람 `arm()` 호출. 셋 다 통과해야 `broker_bridge.route_order()`까지 도달 — 오늘 밤은 물론 몇 주~몇 달간 구조적으로 실주문 안 나감.
+- `arm_criteria.py`는 유저가 "6개월 안 채워도 되게" 요청해도 수정하지 않기로 결정(파일 자체가 "규칙 변경=v2 신규 파일" 명시, 데이터 보고 기준 옮기는 것 방지가 존재이유) — 유저가 원하면 v2 파일 신규등록을 명시로 요청해야 함.
+
+## 2026-08-26: live_router — ensemble.py를 fusion 엔진으로 대체, broker_bridge AUTONOMY_LEVEL 구멍 수정, 실행루프 배선
+
+배경: "그러면 이제 에이전틱 트레이딩 플랫폼 급이라 생각해?" 질문에 "아니다 — 실행루프 없고, 몇 달간 arm 가능 전략도 0개"로 직답. "1,2 문제 해결해보자"(1=실행루프)로 착수. superpowers:brainstorming(architectural) 진행 — 재탐색 중 어젯밤 만든 ensemble.py가 이미 존재하던 검증된 jarvis/fusion/과 중복임을 발견, 유저 승인 후 fusion으로 대체.
+
+### 완료된 작업
+- `jarvis/execution/edge_providers.py`(신규): 전략별 arm_criteria 호환 edge 판정 명시 레지스트리(암묵 매칭 금지, fusion/adapters 관례 따름). 현재 buyback 하나만 등록.
+- `jarvis/execution/live_router.py`(신규, `ensemble.py` 대체): fusion.collect_signals→FusionEngine.fuse→armed+GO 필터→broker_bridge.route_order. Tier B(draft) 단독 트리거 절대 불가(회귀테스트로 고정). 가격조회는 KISClient.get_daily_price 재사용(신규 quote 인프라 안 만듦).
+- `jarvis/execution/broker_bridge.py`: route_order() 최상단에 AUTONOMY_LEVEL 게이트 체크 추가 — 어젯밤 배선에서 빠져있던 구멍(08-25 발견, 08-26 수정). 이전엔 무장+arm_criteria GO만 통과하면 AUTONOMY_LEVEL 무관하게 실주문 나갈 뻔했음.
+- `research/lab/service.py`: `_execution_check()` 6h 스로틀 서브틱 추가, `_tick()`에 배선 — 리서치 서비스가 이미 상시 가동 중이므로 이게 곧 실행루프. 정직성: "안전: live 절대 없음" 독스트링을 실제 상태로 갱신.
+- 삭제: `jarvis/execution/ensemble.py`, `tests/test_ensemble.py`.
+- 신규 테스트: `tests/test_edge_providers.py`, `tests/test_live_router.py`, `tests/test_lab_service_execution_check.py` + `tests/test_broker_bridge.py`에 AUTONOMY_LEVEL 회귀 케이스 1개 추가. 전부 pass.
+
+### 변경된 파일
+- 신규: `jarvis/execution/edge_providers.py`, `jarvis/execution/live_router.py`, `tests/test_edge_providers.py`, `tests/test_live_router.py`, `tests/test_lab_service_execution_check.py`, `docs/superpowers/specs/2026-08-26-live-execution-router-design.md`, `docs/superpowers/plans/2026-08-26-live-execution-router.md`
+- 수정: `jarvis/execution/broker_bridge.py`, `research/lab/service.py`, `tests/test_broker_bridge.py`, `docs/roadmap.md`
+- 삭제: `jarvis/execution/ensemble.py`, `tests/test_ensemble.py`
+
+### 다음 할 일
+- 없음(이번 요청 "1번 실행루프" 완료). 2번(arm 가능 전략 0개)은 코드로 해결 불가 — arm_criteria.py(동결) 요구치를 buyback 전략이 채우는 데 몇 주~몇 달 필요, 재조사 불필요([[project_live_execution_bridge_08-25]]).
+- tsmom/turn-of-month용 edge provider는 미착수(스코프 밖, 각 전략의 arm_criteria 호환 edge 함수 자체가 아직 없음) — provider 추가되면 edge_providers.py에 등록만 하면 바로 편입.
+- jarvis/portfolio/(allocator/decision_engine) 편입은 armed 전략 2개 이상 동시운용 시점까지 보류.
+
+### 막힌 부분/결정사항
+- fusion v1_risk_adjusted 가중치 스킴은 track record(score>0) 없는 전략에 0표를 준다 — buyback이 closed 포지션 2개 이상(observation_count 늘어남) 쌓이기 전엔 armed+GO를 받아도 fused direction이 0으로 나와 트레이드가 안 나감. 코드 결함 아님(fusion의 의도된 "무트랙레코드=무표" 설계) — 다음 세션에서 "왜 여전히 안 나가지" 질문 나오면 이 문단 먼저 참조.

@@ -181,16 +181,23 @@ class ResearchService:
             from research.paper import buyback_config as CFG
             from jarvis.execution.arm_criteria import evaluate as arm_eval
             months = (_dt.date.today() - _dt.date.fromisoformat(CFG.FROZEN_AT)).days / 30.0
-            self.arm_decision = arm_eval(s, round(months, 1)).get("decision")
+            arm_out = arm_eval(s, round(months, 1))
+            self.arm_decision = arm_out.get("decision")
             # 감시견: 상태 변화만 이벤트로(스팸 없음). KILL/이탈/조기경보 = critical.
             ev = s.get("event_level") or {}
             pw = ev.get("p_worse")
             from jarvis.watchdog import observe
-            self.watchdog_new_total += len(observe({
+            new_events = observe({
                 "edge": s.get("status"), "arm": self.arm_decision,
                 "oos_months": s.get("oos_months"),
                 "p_worse_alert": (pw is not None and pw < 0.05) if ev.get("powered") else None,
-            }))
+            })
+            self.watchdog_new_total += len(new_events)
+            # 텔레그램: arm 판정 전이(observe가 이미 dedup)만 알림 — 6h 워밍마다 스팸 안 됨.
+            if any(e["key"] == "arm" for e in new_events):
+                from api_server.lv6_notify import notify_arm_check
+                notify_arm_check(agent_id="kr_buyback_drift_v1", decision=self.arm_decision,
+                                  reasons=arm_out.get("reasons", []))
         except Exception:  # noqa: BLE001
             pass
 

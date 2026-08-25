@@ -2167,3 +2167,30 @@
 
 ### 막힌 부분/결정사항
 - fusion v1_risk_adjusted 가중치 스킴은 track record(score>0) 없는 전략에 0표를 준다 — buyback이 closed 포지션 2개 이상(observation_count 늘어남) 쌓이기 전엔 armed+GO를 받아도 fused direction이 0으로 나와 트레이드가 안 나감. 코드 결함 아님(fusion의 의도된 "무트랙레코드=무표" 설계) — 다음 세션에서 "왜 여전히 안 나가지" 질문 나오면 이 문단 먼저 참조.
+
+## 2026-08-25/26 (밤샘 자율세션 계속): live_router 최종 브랜치 리뷰 fix + 3전략 arm 진행률 대시보드 + 스케줄링
+
+배경: "전부 다 해줘 ... 나 곧 외출할거라 그냥 다 해줘. 중간에 끊지 말고. 이번에 돌아왔을 때에도 뭐 안되어있다 이런거 하지마" — 3개 작업 지시: ①오토리서치 스케줄링, ②신규 전략 후보, ③arm 진행률 가시성 대시보드. subagent-driven-development로 `docs/superpowers/plans/2026-08-26-live-execution-router.md` 최종 브랜치 리뷰의 Critical/Important fix까지 병행.
+
+### 완료된 작업
+- **live_router 최종 브랜치 리뷰 fix** (커밋 `7b65b7e`): Critical 2건 — C1(`route_all()` 서비스 재시작 시 멱등성 없어 중복주문 위험, client_order_id/포지션 dedup 추가) · C2(`armed_backers` 필터가 zero-weight fusion 기여분 배제 안 함, invariant 취지 위반 수정). Important 2건 — I1(1.3x 부스트가 방향합의 무관 n_strategies로만 발동 → 동일방향 합의 조건 추가) · I2(`edge_go()`가 `evaluate()`의 `first_tranche_krw_max` 상한을 버려 사이징이 이를 초과 가능 → 상한 적용). I4(배치루프에서 `BrokerOrderRejected`만 잡고 다른 예외는 틱 전체를 죽임 → 인스트루먼트별 예외격리). `tests/test_live_router.py`에 116줄 회귀 추가. I3(`max_order_qty`/`kill_switch` 필드 미사용, 기존 갭)과 Minor 5건은 최종 리뷰에서 명시적으로 파킹.
+- **재검토(scoped re-review) 진행 중** — 위 fix 커밋(`dbc09ac..7b65b7e`)을 대상으로 C1/C2/I1/I2/I4 5건 모두 실제로 해소됐는지 별도 subagent 재검토 디스패치, 결과 대기 중(이 세션 끝에 별도 기록 추가 예정).
+- `af8b3dd` tsmom/tom edge providers — `jarvis/execution/edge_providers.py`에 buyback 외 2전략(`tsmom_edge.py`, `tom_edge.py`) 등록. `read_only=True` 모드로 캐시/워밍 상태만 반환(계산 없음), 기존 buyback 패턴 그대로 재사용.
+- `5124505` launchd 주간 오토리서치 스케줄링 — `com.seokminal.autoresearch`, 매주 일요일 05:00 `research/run_autoresearch.py` 실행, 설치·로드 완료.
+- `72331c6`+`5d1cce5` `GET /lab/execution/readiness` 신규 엔드포인트 — 3전략(buyback/tsmom/tom) arm 진행률(paper_months/min/remaining, decision GO/WAIT/KILL, edge_status)을 `edge_status(read_only=True)` + `arm_criteria.evaluate()` 재사용만으로 한 응답에 집계(신규 비즈니스 로직 없음, 순수 aggregation). `_READINESS_STRATEGIES` 명시 매핑 리스트로 구현(암묵 매칭 금지 관례).
+- **사고 및 자체복구**: `72331c6` 커밋 시 신규 테스트 파일명(`tests/test_execution_readiness.py`)이 기존 무관 모듈(P7.7 Execution Readiness Certification, 15개 테스트)과 파일명 충돌 — `git add`가 파일 전체를 스테이징하며 기존 15개 테스트를 덮어씀. 커밋 diff의 비정상적으로 큰 삭제량(216줄)으로 자체 발견, `git show <이전커밋>:파일 > 파일`로 원본 정확히 복구(diff로 byte-identical 확인) 후 신규 테스트 2개는 `tests/test_lab_execution_readiness_endpoint.py`로 개명해 `5d1cce5`로 별도 수정커밋 처리. 유저 개입 없이 자체 발견·복구.
+- 대시보드(`seokminal-dashboard`, 별도 레포, 커밋 `ef3719c`): `lib/api.ts`에 `getExecutionReadiness()` 추가, `ExecutionTab.tsx`에 3전략 arm 진행률 패널(3열 그리드, decision 배지, paper_months 진행률, edge_status 칩) 삽입. 로컬 `ap-*` 토큰 컨벤션(프로젝트 전역 토큰과 다름, 파일 내 기존 관례 우선 판단) 그대로 따름. Chrome DevTools MCP로 실제 브라우저 렌더링·네트워크 요청 확인 완료, `tsc --noEmit` 클린.
+- 백엔드 전체 회귀: `pytest tests/ -q` 1893 passed, 0 regression.
+
+### 변경된 파일
+- 신규: `jarvis/execution/edge_providers.py`(tsmom/tom 등록 추가), `api_server/lab_api.py`(readiness 엔드포인트), `tests/test_lab_execution_readiness_endpoint.py`, `com.seokminal.autoresearch.plist`(launchd)
+- 수정: `jarvis/execution/live_router.py`, `tests/test_live_router.py`, `tests/test_execution_readiness.py`(사고 복구, 원본과 byte-identical)
+- (별도 레포) `seokminal-dashboard/lib/api.ts`, `seokminal-dashboard/components/hud/ExecutionTab.tsx`
+
+### 다음 할 일
+- 재검토 subagent 결과 수신 후: 전부 해소면 SDD ledger에 완료 기록 남기고 워크스페이스(`.superpowers/sdd/2026-08-26-live-execution-router/`) 삭제 + `finishing-a-development-branch` 진행. 미해소 항목 있으면 fix round 2 진행(round≤3이라 동일 implementer resume).
+- `72331c6`이 무관 미스테이지 변경(`COLLECTOR_SESSIONS`의 `options_uoa` 엔트리 삭제)을 같이 실어보냄 — 전체파일 `git add` 부작용. 기존 "옵션 제외" 정책([[project_active_venue_scope]])과 일치해 되돌리지 않았으나 유저 확인 필요(FYI).
+- CLAUDE.md "pre-existing failures: 없음(2026-07-30)" 문구 갱신 아직 미완([[project_claude_md_stale_test_claim]] — 07-31 이후 94개 무관 실패 존재).
+
+### 막힌 부분/결정사항
+- 신규 전략 후보(유저 지시 ②): 새로 만들 필요 없었음 — `research/autoresearch/status.json` 확인 결과 오토리서치 배치가 오늘 새벽(07:53~07:57) 이미 자체 돌아 18개 가설 테스트, **3개가 BH-FDR+레드팀 완전통과(verdict=CANDIDATE, p=0.0033)**: `fac_kr_size_smb`(소형주 팩터), `fac_kr_amihud_illiq`(비유동성 팩터), `fac_kr_turnover_neglect`(회전율 소외 팩터) — 전부 KR 팩터 계열, 기존 buyback/tsmom/tom과 겹치지 않는 신규 축. 나머지 6개는 BH는 통과했으나 레드팀에서 걸러짐(REJECT_REDTEAM). `honest_note`: "발견은 증거 아님 → 페이퍼 OOS 재현 필요"— 3개 CANDIDATE를 buyback/tsmom/tom처럼 전용 `research/paper/*_forward.py` 페이퍼트래커로 승격하는 건 각각 config/edge/forward 모듈 신설 + arm_criteria 편입이 필요한 별도 아키텍처급 작업이라 이번 세션엔 승격까지 안 감(무리하게 급조하면 기존 3전략 수준의 검증 없이 실거래 파이프라인에 편입되는 위험). 다음 세션: 유저에게 3개 후보 제시 후 승격 우선순위 확인 → brainstorming으로 스펙 잡고 승격.

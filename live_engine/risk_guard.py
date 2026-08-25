@@ -17,6 +17,11 @@ class RiskViolation(Exception):
     """Raised when an order would breach a configured risk limit."""
 
 
+class DailyLossLimitBreached(RiskViolation):
+    """Raised specifically for the daily realized-loss breach, so callers can
+    distinguish it from other risk violations (e.g. to fire an alert)."""
+
+
 @dataclass(frozen=True)
 class RiskConfig:
     max_order_qty: int
@@ -76,7 +81,7 @@ def validate_order(
 
     # Daily loss: block opening risk once the day's realized loss breaches the limit.
     if day_realized_pnl <= -abs(config.daily_loss_limit):
-        raise RiskViolation(
+        raise DailyLossLimitBreached(
             f"daily loss limit reached (realized {day_realized_pnl:.2f}, "
             f"limit {-abs(config.daily_loss_limit):.2f})"
         )

@@ -69,6 +69,37 @@ def test_distill_missing_agent_404(client):
     assert client.post("/agents/ghost/distill").status_code == 404
 
 
+def test_cycle_fill_triggers_live_trade_notify(client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "api_server.lv6_notify.notify_live_trade",
+        lambda **kw: calls.append(kw),
+    )
+    agent = client.post("/agents", json={"name": "D", "type": "swing", "market": "US"}).json()
+    r = client.post(f"/agents/{agent['id']}/cycles", json={
+        "cycle": 1, "decision": "BUY", "symbol": "AAPL",
+        "fill": {"side": "buy", "qty": 5, "price": 200},
+    })
+    assert r.status_code == 200
+    assert len(calls) == 1
+    assert calls[0]["agent_id"] == agent["id"]
+    assert calls[0]["symbol"] == "AAPL"
+    assert calls[0]["side"] == "buy"
+    assert calls[0]["size"] == 5.0
+    assert calls[0]["price"] == 200.0
+
+
+def test_cycle_without_fill_skips_notify(client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "api_server.lv6_notify.notify_live_trade",
+        lambda **kw: calls.append(kw),
+    )
+    agent = client.post("/agents", json={"name": "D", "type": "swing"}).json()
+    client.post(f"/agents/{agent['id']}/cycles", json={"cycle": 1, "decision": "WATCH", "symbol": "AAPL"})
+    assert calls == []
+
+
 def test_overview_aggregates(client):
     a = client.post("/agents", json={"name": "A", "type": "swing", "account_alloc": 1000}).json()["id"]
     client.post("/agents", json={"name": "B", "type": "hl_daytrade", "account_alloc": 500})

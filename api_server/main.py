@@ -44,6 +44,7 @@ from risk_analysis.timeseries import compute_timeseries
 from live_engine.engine import engine as live_engine, make_broker
 from live_engine.broker_interface import BotStatus
 from live_engine.risk_guard import (
+    DailyLossLimitBreached,
     DailyPnLTracker,
     RiskConfig,
     RiskViolation,
@@ -3068,6 +3069,7 @@ class AllBotsStatusResponse(BaseModel):
 # Shared firm-wide risk state: one config snapshot (env-driven) and one
 # realized-PnL ledger feed the pre-trade guard on every order path.
 daily_pnl_tracker = DailyPnLTracker()
+_circuit_breaker_notified_day: str | None = None  # debounce: alert once per breach-day, not per blocked retry
 
 
 def _check_risk(
@@ -3092,6 +3094,18 @@ def _check_risk(
         )
         if option_expiry is not None:
             validate_option_expiry(option_expiry, cfg)
+    except DailyLossLimitBreached as exc:
+        global _circuit_breaker_notified_day
+        today = dt.datetime.now(dt.UTC).date().isoformat()
+        if _circuit_breaker_notified_day != today:
+            _circuit_breaker_notified_day = today
+            from api_server.lv6_notify import notify_circuit_breaker
+            notify_circuit_breaker(
+                agent_id="FIRM",  # firm-wide chokepoint, not per-agent — see module docstring
+                daily_loss_usd=abs(daily_pnl_tracker.realized()),
+                limit_usd=cfg.daily_loss_limit,
+            )
+        raise HTTPException(status_code=422, detail=f"risk check failed: {exc}") from exc
     except RiskViolation as exc:
         raise HTTPException(status_code=422, detail=f"risk check failed: {exc}") from exc
 

@@ -157,12 +157,30 @@ def get_agent_cycles(agent_id: str, limit: int = 50) -> dict:
 
 @agents_router.post("/{agent_id}/cycles")
 def post_agent_cycle(agent_id: str, body: CyclePayload) -> dict:
-    if agent_store.get_agent(agent_id) is None:
+    agent = agent_store.get_agent(agent_id)
+    if agent is None:
         raise HTTPException(status_code=404, detail="agent not found")
     try:
-        return agent_store.record_cycle(agent_id, body.model_dump())
+        result = agent_store.record_cycle(agent_id, body.model_dump())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if body.fill and body.symbol:
+        try:
+            from api_server.lv6_notify import notify_live_trade
+            notify_live_trade(
+                agent_id=agent_id,
+                venue=agent.get("market", "?"),
+                symbol=body.symbol,
+                side=str(body.fill.get("side", "?")),
+                size=float(body.fill.get("qty", 0)),
+                price=float(body.fill.get("price", 0)),
+                paper=bool(agent.get("paper", True)),
+            )
+        except Exception:
+            pass  # 알림 실패는 조용히 — cycle 기록 자체는 이미 성공
+
+    return result
 
 
 # ── Per-agent performance dashboard ───────────────────────────────────────────

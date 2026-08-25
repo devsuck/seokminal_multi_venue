@@ -41,6 +41,11 @@ _CAPABILITY = {
     "crypto_liquidation": True,         # Binance 선물 WS(forceOrder), run_liquidation_collect.py로 축적
     "crypto_basis": True,               # HL perp markPx vs Binance spot, run_basis_collect.py로 축적
     "crypto_cross_venue_spread": True,  # 기존 cross_venue_skew.py 재사용(HL/Binance/OKX 오더북)
+    # ── Insider/Convergence (KR DART + US EDGAR/FMP + Alpaca options) ──
+    "kr_insider_disclosure": True,     # DART 임원·주요주주 소유보고(insider/dart_client.py), 백필 가능
+    "us_congress_trades": True,        # FMP senate/house-latest, point-in-time만(백필 불가) — run_convergence_signal_collect.py로 축적
+    "us_insider_form4": True,          # SEC EDGAR Form4 Archives, 백필 가능
+    "options_uoa_signal": True,        # Alpaca 옵션체인 UOA, point-in-time만(백필 불가) — options_uoa/*.jsonl.gz로 축적
 }
 
 # soft-missing = 검증 가능하나 편향 경고(SANITY). hard-missing = 검증 불가(BLOCKED).

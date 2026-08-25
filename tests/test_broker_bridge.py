@@ -22,6 +22,12 @@ def _reset_tracker(monkeypatch):
     monkeypatch.setattr(bb, "_daily_pnl", None)
 
 
+@pytest.fixture(autouse=True)
+def _allow_live_execution(monkeypatch):
+    """기본값: 게이트 통과. 개별 테스트가 False로 덮어쓰면 그 테스트만 차단됨."""
+    monkeypatch.setattr(bb, "live_execution_enabled", lambda: True)
+
+
 def _kr_order(**over):
     o = dict(venue="KR", symbol="005930", side="BUY", quantity=1,
              order_type="MARKET", price=70000, paper=True)
@@ -81,3 +87,13 @@ def test_hl_places_order_and_notifies(monkeypatch, _no_real_notify):
 def test_unknown_venue_rejected():
     with pytest.raises(bb.BrokerOrderRejected, match="unknown venue"):
         bb.route_order(_kr_order(venue="US"))
+
+
+def test_blocked_when_autonomy_level_insufficient(monkeypatch):
+    monkeypatch.setattr(bb, "live_execution_enabled", lambda: False)
+    monkeypatch.setenv("KIS_MOCK_APP_KEY", "k")
+    monkeypatch.setenv("KIS_MOCK_APP_SECRET", "s")
+    monkeypatch.setenv("KIS_MOCK_CANO", "c")
+    monkeypatch.setenv("KIS_ACNT_PRDT_CD", "01")
+    with pytest.raises(bb.BrokerOrderRejected, match="live execution disabled"):
+        bb.route_order(_kr_order())

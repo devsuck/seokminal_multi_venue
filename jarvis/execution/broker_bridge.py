@@ -17,6 +17,7 @@ import os
 
 from backends.kis.order_client import KISOrderClient
 from jarvis.audit import record
+from jarvis.config import AUTONOMY_LEVEL, MIN_LIVE_LEVEL, live_execution_enabled
 from live_engine.risk_guard import DailyLossLimitBreached, RiskConfig, RiskViolation, validate_order
 
 
@@ -43,6 +44,11 @@ def _tracker():
 def route_order(order: dict) -> dict:
     """order: {venue: KR|HL, symbol, side, quantity, order_type, price, paper,
     client_order_id}. 반환: place_order 결과 dict. 실패 시 BrokerOrderRejected."""
+    if not live_execution_enabled():
+        reason = f"AUTONOMY_LEVEL={AUTONOMY_LEVEL} < MIN_LIVE_LEVEL={MIN_LIVE_LEVEL}"
+        record({"layer": "broker_bridge", "action": "route_order", "venue": order.get("venue"),
+                "symbol": order.get("symbol"), "result": "autonomy_blocked", "reason": reason})
+        raise BrokerOrderRejected(f"live execution disabled ({reason})")
     venue = order["venue"]
     side = order["side"]
     quantity = float(order["quantity"])

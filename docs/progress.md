@@ -20,14 +20,22 @@
 - **논문기반 알파마이닝 파이프라인 라이브 검증 완료**: `python -m research.run_paper_ingest` 1회 실행 — arXiv 50건 fetch, 전부 reject(coverage_reject 43 — v1이 equity_intraday만 지원해 crypto/other 논문 거름, smoke_reject 5 — entry 전부 False인 무신호 코드 거름, spec_error 2). 최종 통과 0건이지만 **파이프라인 자체는 end-to-end 정상 동작 확인**(필터 단계별로 정확한 사유 기록, `research/data/paper_pipeline/rejected.jsonl`에 근거 남음). 신규 통과 가설 없음 — 재시도는 다음 세션 아무때나 재실행하면 됨(cursor 기반이라 중복 없음).
 - 최종 whole-branch 리뷰(`docs/roadmap.md`에 `scripts/review-package e18921b <HEAD>`로 적혀있었으나 실제 그런 스크립트는 없음 — main 직접커밋 저장소라 "브랜치"가 없어 pseudocode였던 것으로 판단) 대신 `/code-review high` 스킬을 `e18921b..HEAD -- research/papers/ research/run_paper_ingest.py tests/` 경로 스코프로 백그라운드 실행(전체 range는 431 커밋이라 무관 작업까지 섞임 — 기능 관련 13개 커밋만 경로필터로 스코핑). 결과 미확인.
 
+- **US 내부자매수 재검증 완료**: `run_us_insider.py` 확장 유니버스(63개 심볼, 신규 37개 포함)로 재실행 — 내부자매수 63건/유효진입 37건(2026-07-17 UNDERPOWERED 당시보다 대폭 증가). 평균수익 +3.6117%, vs random pct=94.8 p=0.0539(median +1.4562%), walk-forward 전반 +5.5983%/후반 +1.7297%. **판정 UNDERPOWERED → WEAK로 전이**(p=0.0539는 통상 임계 0.05 바로 위 — 경계선, "약하지만 유의미할 수도"). 스크립트 자체가 `log_experiment()`로 `research/agents/experiment_registry.jsonl`에 자동 기록(`us_insider_buy_v1`, status=weak). REJECT/PROMOTE 확정 판단은 보류(경계값이라 사람 판단 필요).
+- **`/code-review high` 결과 반영 완료(paper-ingest 파이프라인, `9bbebe8..c342ad1` 15커밋 스코프)**: 8건 중 6건 수정 판단, 커밋 `98308e2`.
+  - `filter_new_papers`/`save_cursor`에 동시각(같은 초) 논문 tie-break용 id 목록(`ids_at_published`/`seen_ids`) 추가 — arXiv published가 초단위라 순수 `>` 비교면 같은 초에 몰린 논문이 폴링 경계에서 영구 누락될 수 있었음.
+  - 중복 정의됐던 `_strip_code_fence`(extract_spec.py/run_paper_ingest.py 각각) → `llm_cli.strip_code_fence` 하나로 통합, 대소문자 무관 코드펜스 매칭으로 수정(기존엔 ` ```JSON ` 같은 대문자 언어태그를 못 벗겨냄).
+  - `smoke_check.py`: `entry=True`인 인덱스가 `eligible`(opportunity set) 밖에 있으면 reject하는 검증 추가 — 방치 시 `runner.py` 랜덤베이스라인이 잘못된 기회집합에서 샘플링해 p-value 왜곡.
+  - 시그니처 변경으로 깨진 테스트 3건(`test_arxiv_fetcher.py`, `test_run_paper_ingest.py` 2건) 전부 수정 확인, `pytest tests/ -q` 1928 passed(회귀 없음).
+  - 나머지 2건은 판단상 스킵(경미/스타일 수준 — 세부 미기록, 다음 세션에서 재검토 원하면 리뷰 코멘트 재조회 필요).
+
 ### 다음 할 일
-- `run_us_insider.py` 재실행 결과 확인 — SEC EDGAR 종목별 조회라 느림(수분 소요), 확장 유니버스로 이벤트/유효진입 수 늘었는지 UNDERPOWERED 해소 여부 판정
-- `/code-review high` 백그라운드 결과 확인 → Critical/Important 있으면 수정
+- US 내부자매수 WEAK(p=0.0539) 판정 — REJECT_BH 확정할지 추가 유니버스 확장으로 표본 더 늘려볼지 사람 판단 필요
 - buyback v3 shadow: 신규 buyback 공시 쌓일 때까지 forward 대기 필요(현재 0건) — 즉시 할 일 없음, v2와 동일 패턴으로 대기만
 
 ### 막힌 부분/결정사항
 - 골드 데이터소스 결정은 IB Gateway 수동 기동(GUI+2FA) 없이는 진행 불가 — 사용자 복귀 대기
-- CB/BW v3, 내부자매수 유니버스 확장 둘 다 "설계 미착수"에서 "설계+최초실행 완료, forward/재검증 대기"로 전이. 승격 판단은 아직 없음(discipline 그대로: v1 동결, forward 재현 전 live/paper 금지)
+- CB/BW v3, 내부자매수 유니버스 확장 둘 다 "설계 미착수"에서 "설계+최초실행+재검증 완료"로 전이. 승격 판단은 아직 없음(discipline 그대로: v1 동결, forward 재현 전 live/paper 금지). 내부자매수는 REJECT_BH 확정 여부만 남음(경계선 p-value라 자동판정 안 함)
+- roadmap "다음 세션 최우선" 4항목 전부 처리 완료(1 BLOCKED, 3 완료) — 대시보드 모바일 개발과 함께 이번 위임 스코프 종료. 사용자 복귀 대기.
 
 ## 세션 로그 (2026-08-20) — jarvis Research Loop + Investment OS 전면 부활 (SDD, 계획→구현→리뷰 완료)
 

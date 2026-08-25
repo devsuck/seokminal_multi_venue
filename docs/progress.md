@@ -1990,3 +1990,25 @@
 
 ### 막힌 부분/결정사항
 - `api_server/fleet_health.py`의 `polymarket_implication_watch`/`polymarket_implication_collect` stale 임계값 보정을 convergence_legs 커밋(`9a696a3`)에 같이 넣을지 별도 커밋으로 뺄지 애매했음 — 이미 한 diff hunk로 붙어있어 억지로 쪼개기보다 같이 묶는 쪽으로 판단(코멘트도 "아래 둘은" 식으로 같이 설명하고 있어서 원 작성자도 한 덩어리로 취급한 것으로 보임).
+
+## 2026-08-25: 텔레그램 알림 나머지 3건 배선 (arm_check/strategy_pivot/daily_summary)
+
+배경: 이전 세션(`358417a`)에서 회로차단기·실체결 2건 배선 완료, 나머지 3건은 스팸/중복 위험 때문에 보류. 유저가 "이 셋도 이어서 해줘"로 계속 요청, 각각 조사 후 개별 처리.
+
+### 완료된 작업
+- `a6421ac` feat: 텔레그램 알림 나머지 배선 — arm_check(전이감지 재사용), daily_summary(launchd)
+  - **arm_check**: `research/lab/service.py::_warm_edge()`에 배선. 새 상태파일 안 만들고 기존 `jarvis/watchdog.py::observe()`(6h 워밍마다 상태 스냅샷 diff — 변화 있을 때만 이벤트, 이미 스팸방지 설계)가 반환하는 이벤트에서 `key=="arm"`인 것만 감지해 발송. `lab_api.py`의 `/execution` GET(대시보드 폴링용)에는 안 걺 — 요청마다 재계산이라 거기 걸면 폴링마다 알림 뜸.
+  - **strategy_pivot**: 배선 안 함(결정). "전략 중대 변경"류 신호(universe_add/remove, DSL 변경)는 코드베이스 전수 grep 결과 `lv5_agent.py`의 `notify_lv5_review_done`이 사이클마다 이미 보고 중이고, 그 말고 다른 트리거 지점이 없음 — 억지로 걸면 중복 알림만 생김.
+  - **daily_summary**: 스케줄러 자체가 없어서 신규 구축. `api_server/daily_summary.py`(에이전트별 "오늘" 체결만 필터링 후 `agent_perf.compute_performance` 재사용, 오늘 체결 없으면 스킵) + `scripts/deploy/run_daily_summary.sh` + `com.seokminal.daily-summary.plist`(매일 22:30 launchd, 기존 `ensure_collectors.sh` 패턴 그대로 재사용) + `docs/deploy/mac-launchd.md` 섹션 4 추가.
+  - 전체 스위트 `pytest tests/ -q` 1934 passed, 회귀 없음. 백그라운드 수집기 데이터 churn은 이번에도 커밋 제외(파일명 지정 스테이징).
+
+### 변경된 파일
+- `research/lab/service.py`, `api_server/daily_summary.py`(신규), `tests/test_daily_summary.py`(신규), `scripts/deploy/run_daily_summary.sh`(신규), `scripts/deploy/launchd/com.seokminal.daily-summary.plist`(신규), `docs/deploy/mac-launchd.md`
+
+### 다음 할 일
+- `com.seokminal.daily-summary.plist`는 맥에 아직 미설치(코드/스크립트만 준비) — 실제 launchd 등록은 유저가 맥에서 `launchctl load` 해야 함.
+- `lv6_notify._send()`에 retry/backoff/큐 없음 — 빠른 사이클 봇이 `notify_live_trade`를 버스트로 쏘면 텔레그램 429로 조용히 드롭 가능. 아직 발생 안 함, 필요해지면 추가.
+- 이걸로 `lv6_notify.py` 6개 알림 함수 전부 배선 완료(1개는 스킵 결정) — Lv6 텔레그램 알림 배선 작업 자체는 종료.
+
+### 막힌 부분/결정사항
+- 없음.

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  오토리서치 배치 — 매주 일요일 05:00(로컬)에 run_autoresearch.sh 1회 실행.
+  daily-summary와 같은 패턴(비침습, launchd가 주기 실행). 팩터/이벤트 후보를
+  BH-FDR+레드팀 통제하에 재탐색해 research/autoresearch/{status.json,results.jsonl}에
+  누적한다. 읽기전용 리서치 — 어떤 전략도 자동으로 paper FROZEN 승격하지 않음
+  (그건 사람이 결과 보고 별도 사전등록해서 결정).
+
+  설치(경로/파이썬을 실제에 맞게 수정 — <REPO>는 맥의 seokminal-multi-venue 절대경로):
+    cp scripts/deploy/launchd/com.seokminal.autoresearch.plist ~/Library/LaunchAgents/
+    # ~/Library/LaunchAgents/com.seokminal.autoresearch.plist 안의 <REPO>/<PYTHON> 치환
+    launchctl load ~/Library/LaunchAgents/com.seokminal.autoresearch.plist
+    launchctl list | grep seokminal      # 등록 확인
+    tail -f <REPO>/logs/autoresearch.log
+  해제: launchctl unload ~/Library/LaunchAgents/com.seokminal.autoresearch.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.seokminal.autoresearch</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string><REPO>/scripts/deploy/run_autoresearch.sh</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>SEOKMINAL_REPO</key>
+        <string><REPO></string>
+        <key>SEOKMINAL_PYTHON</key>
+        <string><PYTHON></string>
+    </dict>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>5</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string><REPO>/logs/autoresearch.log</string>
+    <key>StandardErrorPath</key>
+    <string><REPO>/logs/autoresearch.log</string>
+</dict>
+</plist>

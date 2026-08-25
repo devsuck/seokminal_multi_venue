@@ -74,6 +74,7 @@ from condition_engine.indicator_registry import IndicatorRegistry, _BUILDERS as 
 from api_server import idempotency
 from api_server import oms
 from api_server import order_pnl
+from api_server import push_notify
 
 CATALOG_PATH = "./catalog"
 BOTS_FILE = Path("./bots.json")
@@ -3590,16 +3591,19 @@ def _check_insider_convergence() -> None:
             leg_labels = dict.fromkeys(
                 _CONVERGENCE_SOURCE_LABEL.get(l["source"], l["source"]) for l in sig["legs"]
             )
+            rule_label = f"컨버전스 {dir_label}: {sig['ticker']}"
+            detail = f"{sig['ticker']} · 점수 {sig['score']} · 신호: {', '.join(leg_labels)}"
             _triggered_alerts.append(TriggeredAlertOut(
                 rule_id=rule_id,
-                rule_label=f"컨버전스 {dir_label}: {sig['ticker']}",
+                rule_label=rule_label,
                 condition_type="insider_convergence",
                 bot_id="insider-convergence",
-                detail=f"{sig['ticker']} · 점수 {sig['score']} · 신호: {', '.join(leg_labels)}",
+                detail=detail,
                 triggered_at=now_iso,
             ))
             if len(_triggered_alerts) > _MAX_TRIGGERED:
                 _triggered_alerts.pop(0)
+            push_notify.send(rule_label, detail)
 
 
 def _evaluate_alert_condition(
@@ -3724,8 +3728,47 @@ def get_triggered_alerts() -> TriggeredAlertsResponse:
                 _triggered_alerts.append(entry)
                 if len(_triggered_alerts) > _MAX_TRIGGERED:
                     _triggered_alerts.pop(0)
+                push_notify.send(rule.label, detail)
         snapshot = list(reversed(_triggered_alerts))
     return TriggeredAlertsResponse(triggered=snapshot)
+
+
+_ALERT_PUSH_POLL_SEC = 30
+
+
+async def alert_push_loop() -> None:
+    """프론트 폴링이 안 열려있어도(앱 종료/백그라운드) 알럿을 감지해 푸시하도록
+    get_triggered_alerts()와 동일 평가 로직을 서버 자체 주기로도 돌림."""
+    while True:
+        try:
+            get_triggered_alerts()
+        except Exception:
+            pass
+        await asyncio.sleep(_ALERT_PUSH_POLL_SEC)
+
+
+class PushSubscriptionRequest(BaseModel):
+    endpoint: str
+    keys: dict[str, str]
+
+
+class VapidPublicKeyResponse(BaseModel):
+    public_key: str | None
+
+
+@app.get("/push/vapid-public-key", response_model=VapidPublicKeyResponse)
+def get_vapid_public_key() -> VapidPublicKeyResponse:
+    return VapidPublicKeyResponse(public_key=push_notify.get_vapid_public_key())
+
+
+@app.post("/push/subscribe", status_code=204)
+def push_subscribe(sub: PushSubscriptionRequest) -> None:
+    push_notify.add_subscription(sub.model_dump())
+
+
+@app.delete("/push/subscribe", status_code=204)
+def push_unsubscribe(endpoint: str = Query(...)) -> None:
+    push_notify.remove_subscription(endpoint)
 
 
 # ── /insider ───────────────────────────────────────────────────────────────────
@@ -5462,6 +5505,7 @@ async def _start_dart_bot() -> None:
     asyncio.create_task(gex_poll_loop())
     from orderflow.hl_funding import funding_poll_loop
     asyncio.create_task(funding_poll_loop())
+    asyncio.create_task(alert_push_loop())
 
 
 # ── Market Overview ───────────────────────────────────────────────────────────

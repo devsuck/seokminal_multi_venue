@@ -19,6 +19,7 @@ dependencies = [
     "pandas>=2.0",
     "websockets>=15.0",
     "pdfplumber>=0.11",
+    "pywebpush>=2.0",
 ]
 
 [project.optional-dependencies]

@@ -5,11 +5,21 @@ extract_spec.py/codegen_signal.py 전용 LLM 호출 경로. 툴 접근 없이 �
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 
 
 class LLMCallError(Exception):
     pass
+
+
+def strip_code_fence(text: str) -> str:
+    """LLM이 프롬프트 지시를 무시하고 마크다운 코드펜스(```json, ```python 등)로 감싼 응답을 벗겨낸다."""
+    stripped = text.strip()
+    match = re.match(r"^```(?:\w+)?\s*\n?(.*?)\n?```$", stripped, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return stripped
 
 
 def call_claude(prompt: str, timeout: int = 300) -> str:

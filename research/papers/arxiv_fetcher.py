@@ -26,12 +26,20 @@ def load_cursor(path: str = _CURSOR_PATH) -> str | None:
         return json.load(f).get("last_seen_published")
 
 
-def save_cursor(published: str, path: str = _CURSOR_PATH) -> None:
+def load_cursor_ids(path: str = _CURSOR_PATH) -> list[str]:
+    """last_seen_published와 정확히 같은 published를 가진 논문 id들(동시각 tie 재처리 방지용)."""
+    if not os.path.exists(path):
+        return []
+    with open(path) as f:
+        return json.load(f).get("last_seen_ids", [])
+
+
+def save_cursor(published: str, ids_at_published: list[str] = (), path: str = _CURSOR_PATH) -> None:
     dirname = os.path.dirname(path)
     if dirname:
         os.makedirs(dirname, exist_ok=True)
     with open(path, "w") as f:
-        json.dump({"last_seen_published": published}, f)
+        json.dump({"last_seen_published": published, "last_seen_ids": list(ids_at_published)}, f)
 
 
 def _parse_atom(xml_text: str) -> list[dict]:
@@ -75,10 +83,16 @@ def fetch_papers(max_results: int = 50, categories: list[str] | None = None) -> 
     raise RuntimeError(f"arXiv fetch 최대 재시도 초과: {last_err}")
 
 
-def filter_new_papers(papers: list[dict], last_seen: str | None) -> list[dict]:
+def filter_new_papers(papers: list[dict], last_seen: str | None, seen_ids: list[str] = ()) -> list[dict]:
+    """published가 커서보다 미래거나, 커서와 정확히 같은 초라도 지난번에 못 본 id면 포함.
+
+    arXiv published는 초단위라 같은 초에 여러 논문이 몰릴 수 있음 — 순수 '>' 비교면
+    이전 폴링 윈도우에 없던 동시각 논문이 영구히 누락된다.
+    """
     if last_seen is None:
         return list(papers)
-    return [p for p in papers if p["published"] > last_seen]
+    seen = set(seen_ids)
+    return [p for p in papers if p["published"] > last_seen or (p["published"] == last_seen and p["id"] not in seen)]
 
 
 def download_pdf_text(pdf_url: str) -> str:

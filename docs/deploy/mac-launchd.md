@@ -27,8 +27,8 @@ launchctl load ~/Library/LaunchAgents/com.seokminal.collectors.plist
 launchctl list | grep seokminal          # 등록 확인
 tail -f logs/collectors-watchdog.log      # 매분 로그
 ```
-확인: 수집기 하나를 `tmux kill-session -t polymarket-tick`로 죽여보고, 1분 내 로그에
-"재생성: polymarket-tick" 뜨고 `tmux ls`에 다시 나타나면 정상.
+확인: 수집기 하나를 `tmux kill-session -t hl-orderflow-tick`로 죽여보고, 1분 내 로그에
+"재생성: hl-orderflow-tick" 뜨고 `tmux ls`에 다시 나타나면 정상.
 
 해제: `launchctl unload ~/Library/LaunchAgents/com.seokminal.collectors.plist`
 

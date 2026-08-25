@@ -13,6 +13,24 @@ import os
 from dataclasses import dataclass
 
 
+def _kill_switch_file_active() -> bool:
+    """File-based kill switch — checked fresh every call, no process restart
+    needed (unlike the env-var TRADING_KILL_SWITCH). Toggle via
+    live_engine.risk_guard.set_kill_switch_file()."""
+    from jarvis.config import state_path
+    return os.path.exists(state_path("KILL_SWITCH"))
+
+
+def set_kill_switch_file(on: bool) -> None:
+    from jarvis.config import state_path
+    path = state_path("KILL_SWITCH")
+    if on:
+        with open(path, "w") as f:
+            f.write("1")
+    elif os.path.exists(path):
+        os.remove(path)
+
+
 class RiskViolation(Exception):
     """Raised when an order would breach a configured risk limit."""
 
@@ -32,14 +50,23 @@ class RiskConfig:
     min_option_dte: int = 0          # block option orders expiring sooner than this (0 = off)
 
     @classmethod
-    def from_env(cls) -> "RiskConfig":
+    def from_env(cls, venue: str | None = None) -> "RiskConfig":
+        """venue="KR"|"HL"이면 통화 인지 한도(MAX_ORDER_NOTIONAL_KR/HL 등)를 먼저
+        찾고, 없으면 기존 통화무관 변수로 폴백(하위호환). venue=None이면 기존 동작
+        그대로(레거시 호출부: options/US 등 아직 venue 분리 안 한 경로)."""
+        suffix = f"_{venue}" if venue else ""
+
+        def _env(name: str, default: str) -> str:
+            return os.environ.get(f"{name}{suffix}", os.environ.get(name, default))
+
         return cls(
-            max_order_qty=int(os.environ.get("MAX_ORDER_QTY", "10000")),
-            max_order_notional=float(os.environ.get("MAX_ORDER_NOTIONAL", "1000000")),
-            max_position_qty=int(os.environ.get("MAX_POSITION_QTY", "50000")),
-            daily_loss_limit=float(os.environ.get("DAILY_LOSS_LIMIT", "100000")),
-            kill_switch=os.environ.get("TRADING_KILL_SWITCH", "false").lower() == "true",
-            min_option_dte=int(os.environ.get("MIN_OPTION_DTE", "0")),
+            max_order_qty=int(_env("MAX_ORDER_QTY", "10000")),
+            max_order_notional=float(_env("MAX_ORDER_NOTIONAL", "1000000")),
+            max_position_qty=int(_env("MAX_POSITION_QTY", "50000")),
+            daily_loss_limit=float(_env("DAILY_LOSS_LIMIT", "100000")),
+            kill_switch=(os.environ.get("TRADING_KILL_SWITCH", "false").lower() == "true"
+                         or _kill_switch_file_active()),
+            min_option_dte=int(_env("MIN_OPTION_DTE", "0")),
         )
 
 

@@ -16,8 +16,31 @@ from jarvis.permissions import Level, PermissionDenied, Principal, require
 from jarvis.registry import Status, StrategyRegistry
 
 _ARM = "microlive_arms.jsonl"
+_AUTO_EXECUTION_APPROVAL = "auto_execution_approval.json"
 MIN_PAPER_MONTHS = 6
 _ARMABLE = {Status.LIVE_CANDIDATE.value, Status.MICRO_LIVE.value}
+
+
+def record_auto_execution_approval(human: Principal, note: str) -> dict:
+    """investment_os.AUTO_EXECUTION_ENABLED=True에 대한 사람 승인 기록. 사람만.
+
+    이 플래그는 Investment OS 어디에도 execute()가 없어 실제로 무엇도 게이트하지
+    않지만(진짜 게이트는 jarvis.config.AUTONOMY_LEVEL), separation.py의 self-test는
+    이 기록 없이는 invariant를 실패로 표시한다 — 사람이 의식적으로 확인했다는
+    감사 흔적을 남기기 위함."""
+    if not human.is_human or human.level < Level.ADMIN_HUMAN_ONLY:
+        raise PermissionDenied("auto_execution 승인은 사람 ADMIN만")
+    row = {"approved_by": human.name, "note": note,
+           "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    with open(state_path(_AUTO_EXECUTION_APPROVAL), "w") as f:
+        json.dump(row, f, ensure_ascii=False)
+    record({"layer": "arm", "action": "record_auto_execution_approval",
+            "approved_by": human.name, "result": "recorded"})
+    return row
+
+
+def auto_execution_approved() -> bool:
+    return os.path.exists(state_path(_AUTO_EXECUTION_APPROVAL))
 
 
 def _arms() -> list[dict]:

@@ -33,3 +33,6 @@ research/data/hl_orderflow_tick/
 research/data/paper_pipeline/
 research/data/options_uoa/*.jsonl
 jarvis/_state/writer_lock.json
+
+# Web Push 구독 저장소 — 브라우저별 FCM 엔드포인트+키(시크릿급), 커밋 금지
+jarvis/_state/push_subscriptions.json

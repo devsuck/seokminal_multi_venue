@@ -5,16 +5,20 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import ssl
 import threading
+import time
+import urllib.error
 import urllib.request
-import json
 
 _log = logging.getLogger(__name__)
 
 _API = "https://api.telegram.org/bot{token}/sendMessage"
+_MAX_RETRIES = 3
+_MAX_BACKOFF_S = 30.0
 
 
 def _ssl_ctx() -> ssl.SSLContext:
@@ -27,8 +31,16 @@ def _ssl_ctx() -> ssl.SSLContext:
 
 # ── 기반 ─────────────────────────────────────────────────────────────────────
 
+def _retry_after(err: urllib.error.HTTPError) -> float:
+    """429 응답 바디의 retry_after(초) 파싱, 실패시 1초 기본값."""
+    try:
+        return float(json.loads(err.read()).get("parameters", {}).get("retry_after", 1))
+    except Exception:
+        return 1.0
+
+
 def _send(text: str) -> None:
-    """실제 HTTP 전송 (스레드 내부에서 호출)."""
+    """실제 HTTP 전송 (스레드 내부에서 호출). 429만 재시도 — 그 외 실패는 조용히 드롭."""
     # 모듈 로드 시점이 아닌 전송 시점에 env 읽기 (uvicorn reload 대응)
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
@@ -41,14 +53,27 @@ def _send(text: str) -> None:
         "text": text,
         "parse_mode": "HTML",
     }).encode()
-    req = urllib.request.Request(url, data=body,
-                                 headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=10, context=_ssl_ctx()) as resp:
-            if resp.status != 200:
-                _log.warning("[Notify] Telegram 응답 %s", resp.status)
-    except Exception as e:
-        _log.warning("[Notify] Telegram 전송 실패: %s", e)
+    ctx = _ssl_ctx()
+    for attempt in range(_MAX_RETRIES):
+        req = urllib.request.Request(url, data=body,
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
+                if resp.status != 200:
+                    _log.warning("[Notify] Telegram 응답 %s", resp.status)
+                return
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < _MAX_RETRIES - 1:
+                wait = min(_retry_after(e), _MAX_BACKOFF_S)
+                _log.warning("[Notify] Telegram 429 — %.1fs 대기 후 재시도(%d/%d)",
+                             wait, attempt + 1, _MAX_RETRIES)
+                time.sleep(wait)
+                continue
+            _log.warning("[Notify] Telegram 전송 실패: %s", e)
+            return
+        except Exception as e:
+            _log.warning("[Notify] Telegram 전송 실패: %s", e)
+            return
 
 
 def send(text: str) -> None:

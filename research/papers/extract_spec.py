@@ -7,9 +7,8 @@ data_requirements)로 검증한다. asset_class는 자산군 무관하게 항상
 from __future__ import annotations
 
 import json
-import re
 
-from research.papers.llm_cli import call_claude
+from research.papers.llm_cli import call_claude, strip_code_fence
 
 _REQUIRED_KEYS = {"asset_class", "signal_description", "direction", "holding_period", "data_requirements"}
 _MAX_CHARS = 40_000
@@ -35,20 +34,11 @@ asset_class는 논문이 실제로 검증한 자산군을 반영하되, 일중(�
 """
 
 
-def _strip_code_fence(text: str) -> str:
-    """LLM이 프롬프트 지시를 무시하고 마크다운 코드펜스로 감싼 응답을 벗겨낸다."""
-    stripped = text.strip()
-    match = re.match(r"^```(?:json)?\s*\n?(.*?)\n?```$", stripped, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    return stripped
-
-
 def extract_spec(paper_text: str) -> dict:
     prompt = _PROMPT_TEMPLATE.format(paper_text=paper_text[:_MAX_CHARS])
     raw = call_claude(prompt)
     try:
-        spec = json.loads(_strip_code_fence(raw))
+        spec = json.loads(strip_code_fence(raw))
     except json.JSONDecodeError as e:
         raise ValueError(f"LLM 응답 JSON 파싱 실패: {e}\n원본: {raw[:500]}") from e
     if not isinstance(spec, dict):

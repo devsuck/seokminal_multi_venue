@@ -81,6 +81,11 @@ def check(code: str) -> tuple[bool, str]:
             return False, "eligible 타입 오류: int가 아닌 원소 포함"
         if any(not (0 <= e < n_expected) for e in eligible):
             return False, f"eligible 인덱스 범위 오류: 0 <= e < {n_expected} 벗어난 원소 포함"
+        # entry=True인 인덱스는 반드시 eligible(opportunity set) 안에 있어야 함 —
+        # 아니면 runner.py의 랜덤베이스라인이 잘못된 기회집합에서 샘플링해 p-value가 왜곡된다.
+        entry_true_idx = {i for i, e in enumerate(entry) if e}
+        if not entry_true_idx.issubset(eligible):
+            return False, "entry=True인 인덱스가 eligible(opportunity set) 밖에 있음"
     except Exception as e:
         return False, f"반환값 검증 실패: {e}"
 

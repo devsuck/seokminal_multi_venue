@@ -94,7 +94,7 @@ def test_main_advances_cursor_to_max_published_among_new_papers():
          patch.object(ingest, "save_cursor") as mock_save:
         result = ingest.main()
     assert mock_process.call_count == 2
-    mock_save.assert_called_once_with("2026-07-12T00:00:00Z")
+    mock_save.assert_called_once_with("2026-07-12T00:00:00Z", ["2"])
     assert result["counts"] == {"accepted": 2}
     assert result["n_fetched"] == 2
     assert result["n_new"] == 2
@@ -109,7 +109,7 @@ def test_main_holds_cursor_at_pdf_error_paper_for_retry_next_cycle():
          patch.object(ingest, "process_paper", side_effect=["accepted", "pdf_error"]), \
          patch.object(ingest, "save_cursor") as mock_save:
         result = ingest.main()
-    mock_save.assert_called_once_with("2026-07-10T00:00:00Z")
+    mock_save.assert_called_once_with("2026-07-10T00:00:00Z", ["1"])
     assert result["counts"] == {"accepted": 1, "pdf_error": 1}
 
 

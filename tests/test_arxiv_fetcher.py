@@ -35,7 +35,7 @@ def test_load_cursor_returns_none_when_file_missing(tmp_path):
 
 def test_save_and_load_cursor_roundtrip(tmp_path):
     path = str(tmp_path / "cursor.json")
-    save_cursor("2026-07-11T00:00:00Z", path)
+    save_cursor("2026-07-11T00:00:00Z", path=path)
     assert load_cursor(path) == "2026-07-11T00:00:00Z"
 
 

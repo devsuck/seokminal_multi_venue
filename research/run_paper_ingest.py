@@ -14,11 +14,12 @@ import re
 from pathlib import Path
 
 from research.papers.arxiv_fetcher import (
-    download_pdf_text, fetch_papers, filter_new_papers, load_cursor, save_cursor,
+    download_pdf_text, fetch_papers, filter_new_papers, load_cursor, load_cursor_ids, save_cursor,
 )
 from research.papers.codegen_signal import generate_signal_code
 from research.papers.coverage_filter import rejection_reason
 from research.papers.extract_spec import extract_spec
+from research.papers.llm_cli import strip_code_fence
 from research.papers.smoke_check import check as smoke_check
 
 _HYPOTHESES_DIR = Path("research/hypotheses/papers")
@@ -38,15 +39,6 @@ def _log_rejected(arxiv_id: str, title: str, stage: str, reason: str) -> None:
 def _slug(title: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
     return s[:40]
-
-
-def _strip_code_fence(text: str) -> str:
-    """LLM이 프롬프트 지시를 무시하고 마크다운 코드펜스(```python 등)로 감싼 응답을 벗겨낸다."""
-    stripped = text.strip()
-    match = re.match(r"^```(?:\w+)?\s*\n?(.*?)\n?```$", stripped, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    return stripped
 
 
 def process_paper(paper: dict) -> str:
@@ -70,7 +62,7 @@ def process_paper(paper: dict) -> str:
         return "coverage_reject"
 
     try:
-        code = _strip_code_fence(generate_signal_code(spec))
+        code = strip_code_fence(generate_signal_code(spec))
     except Exception as e:
         _log_rejected(arxiv_id, title, "codegen", str(e))
         return "codegen_error"
@@ -80,36 +72,48 @@ def process_paper(paper: dict) -> str:
         _log_rejected(arxiv_id, title, "smoke_check", smoke_reason)
         return "smoke_reject"
 
-    hyp_dir = Path(_HYPOTHESES_DIR)
-    hyp_dir.mkdir(parents=True, exist_ok=True)
-    slug = _slug(title)
-    module_path = hyp_dir / f"{arxiv_id.replace('.', '_')}_{slug}.py"
-    header = f'"""{title} (arXiv:{arxiv_id})\n{spec.get("signal_description", "")}\n"""\n'
-    module_path.write_text(header + code)
+    try:
+        hyp_dir = Path(_HYPOTHESES_DIR)
+        slug = _slug(title)
+        module_path = hyp_dir / f"{arxiv_id.replace('.', '_')}_{slug}.py"
+        if module_path.exists():
+            _log_rejected(arxiv_id, title, "write", f"이미 존재(재처리 스킵): {module_path}")
+            return "already_exists"
+        hyp_dir.mkdir(parents=True, exist_ok=True)
+        header = f'"""{title} (arXiv:{arxiv_id})\n{spec.get("signal_description", "")}\n"""\n'
+        module_path.write_text(header + code)
+    except Exception as e:
+        _log_rejected(arxiv_id, title, "write", str(e))
+        return "write_error"
     return "accepted"
 
 
 def main(max_results: int = 50) -> dict:
     last_seen = load_cursor()
+    seen_ids = load_cursor_ids()
     papers = fetch_papers(max_results=max_results)
-    new_papers = filter_new_papers(papers, last_seen)
+    new_papers = filter_new_papers(papers, last_seen, seen_ids)
 
     counts: dict[str, int] = {}
     max_published = last_seen
+    ids_at_max = set(seen_ids) if last_seen is not None else set()
     for paper in new_papers:
         status = process_paper(paper)
         counts[status] = counts.get(status, 0) + 1
-        # pdf_error는 대부분 방금 제출돼 arXiv가 아직 PDF를 생성 못한 경우(타이밍
-        # 문제, 내용 문제 아님) — 커서를 이 논문 너머로 전진시키지 않아 다음
-        # 사이클에 재시도되게 한다. 나머지 상태(accepted/spec_error/coverage_reject/
-        # codegen_error/smoke_reject)는 내용 기반 최종 판정이라 그대로 전진.
-        if status == "pdf_error":
+        # pdf_error/write_error는 내용과 무관한 일시적 문제(arXiv PDF 생성 지연,
+        # 디스크 이슈 등) — 커서를 이 논문 너머로 전진시키지 않아 다음 사이클에
+        # 재시도되게 한다. 나머지 상태(accepted/spec_error/coverage_reject/
+        # codegen_error/smoke_reject/already_exists)는 내용 기반 최종 판정이라 그대로 전진.
+        if status in ("pdf_error", "write_error"):
             continue
         if max_published is None or paper["published"] > max_published:
             max_published = paper["published"]
+            ids_at_max = {paper["id"]}
+        elif paper["published"] == max_published:
+            ids_at_max.add(paper["id"])
 
     if new_papers and max_published is not None:
-        save_cursor(max_published)
+        save_cursor(max_published, sorted(ids_at_max))
 
     return {"n_fetched": len(papers), "n_new": len(new_papers), "counts": counts}
 

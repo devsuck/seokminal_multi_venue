@@ -111,3 +111,70 @@ def test_ofi_candidate_run_returns_none_with_no_data(tmp_path, monkeypatch):
     assert cand.category == "microstructure"
     assert cand.direction == "research"
     assert cand.run() is None
+
+
+from research.hypotheses import cross_venue_skew as cvs
+
+
+def _write_skew_day(dirpath, venue, coin, date, rows):
+    dirpath.mkdir(parents=True, exist_ok=True)
+    path = dirpath / f"{venue}_{coin}_{date}.jsonl"
+    with path.open("w") as f:
+        for r in rows:
+            f.write(_json.dumps(r) + "\n")
+
+
+def test_daily_mid_computes_utc_date_and_mean(tmp_path, monkeypatch):
+    monkeypatch.setattr(em, "_SKEW_DIR", tmp_path)
+    monkeypatch.setattr(cvs, "_DATA_DIR", tmp_path)
+    # ts=1752105600 -> 2025-07-10T00:00:00Z-ish; use two snapshots same UTC date
+    ts0 = 1752105600.0
+    _write_skew_day(tmp_path, "binance", "BTC", "2025-07-10", [
+        {"ts": ts0, "bids": [{"price": 100.0, "size": 1.0}], "asks": [{"price": 102.0, "size": 1.0}]},
+        {"ts": ts0 + 60.0, "bids": [{"price": 104.0, "size": 1.0}], "asks": [{"price": 106.0, "size": 1.0}]},
+    ])
+    mids = em._daily_mid("binance", "BTC")
+    assert set(mids.keys()) == {"2025-07-10"}
+    assert mids["2025-07-10"] == pytest.approx((101.0 + 105.0) / 2.0)
+
+
+def test_basis_signs_outcomes_reversion_direction(tmp_path, monkeypatch):
+    monkeypatch.setattr(em, "_SKEW_DIR", tmp_path)
+    monkeypatch.setattr(cvs, "_DATA_DIR", tmp_path)
+    ts0 = 1752105600.0
+    ts1 = ts0 + 86400.0
+    # day0: binance mid=110, okx mid=100 -> basis=+0.10 (binance rich)
+    _write_skew_day(tmp_path, "binance", "BTC", "2025-07-10", [
+        {"ts": ts0, "bids": [{"price": 109.0, "size": 1.0}], "asks": [{"price": 111.0, "size": 1.0}]}])
+    _write_skew_day(tmp_path, "okx", "BTC", "2025-07-10", [
+        {"ts": ts0, "bids": [{"price": 99.0, "size": 1.0}], "asks": [{"price": 101.0, "size": 1.0}]}])
+    # day1: basis shrinks to +0.02 -> reversion bet (sign=+1) profits
+    _write_skew_day(tmp_path, "binance", "BTC", "2025-07-11", [
+        {"ts": ts1, "bids": [{"price": 101.0, "size": 1.0}], "asks": [{"price": 103.0, "size": 1.0}]}])
+    _write_skew_day(tmp_path, "okx", "BTC", "2025-07-11", [
+        {"ts": ts1, "bids": [{"price": 99.0, "size": 1.0}], "asks": [{"price": 101.0, "size": 1.0}]}])
+    signs, outcomes, n_overlap = em._basis_signs_outcomes("BTC", "binance", "okx")
+    assert n_overlap == 2
+    assert signs == [1.0]
+    assert outcomes[0] > 0  # basis shrank -> sign*outcome positive -> reversion profit
+
+
+def test_select_basis_pairs_filters_by_min_days(tmp_path, monkeypatch):
+    monkeypatch.setattr(em, "_SKEW_DIR", tmp_path)
+    monkeypatch.setattr(cvs, "_DATA_DIR", tmp_path)
+    # no data at all -> every pair has n_overlap=0 < _MIN_DAYS -> empty selection
+    assert em._select_basis_pairs() == []
+
+
+def test_basis_candidates_shape(tmp_path, monkeypatch):
+    monkeypatch.setattr(em, "_SKEW_DIR", tmp_path)
+    monkeypatch.setattr(cvs, "_DATA_DIR", tmp_path)
+    selection = [(35, "BTC", "binance", "okx", [1.0] * 35, [0.001] * 35)]
+    cands = em._basis_candidates(selection, n_variants=4)
+    assert len(cands) == 1
+    assert cands[0].cid == "micro_basis_reversion_BTC_binance_okx"
+    assert cands[0].category == "microstructure"
+    assert cands[0].direction == "research"
+    result = cands[0].run()
+    assert result is not None
+    assert result["n"] == 35

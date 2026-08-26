@@ -502,7 +502,7 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
     lv5_pause = lv5_state.get("pause", False) or dd_pause
 
     if venue == "HL":
-        get_positions, place_order, close_position, set_leverage, get_candles = _hl_funcs()
+        get_positions, _, _, _, get_candles = _hl_funcs()
         # scores
         scores = {}
         for coin in universe:
@@ -527,9 +527,10 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
         # exits: hard TP/SL first, then signal flip/degrade
         tp_pct = float(profile.get("tp_pct", 0.05)); sl_pct = float(profile.get("sl_pct", 0.03))
         exits = daytrade_logic.stop_exits(held, tp_pct, sl_pct) + daytrade_logic.decide_exits(held, scores)
+        from jarvis.execution.broker_bridge import BrokerOrderRejected, route_close, route_order, route_set_leverage
         for ex in {e["symbol"]: e for e in exits}.values():
             try:
-                close_position(coin=ex["symbol"], paper=paper)
+                route_close(venue="HL", symbol=ex["symbol"], paper=paper)
                 actions.append(f"close {ex['symbol']} ({ex['reason']})")
                 q, px = qty_by_symbol.get(ex["symbol"]), scores.get(ex["symbol"], {}).get("price")
                 if q and px:
@@ -557,8 +558,9 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
             size = round(size, 4)
             if size > 0:
                 try:
-                    set_leverage(entry["symbol"], int(leverage), True, paper)
-                    place_order(entry["symbol"], entry["side"] == "buy", size, "market", paper=paper)
+                    route_set_leverage(coin=entry["symbol"], leverage=int(leverage), is_cross=True, paper=paper)
+                    route_order({"venue": "HL", "symbol": entry["symbol"], "side": entry["side"],
+                                 "quantity": size, "order_type": "market", "price": entry["entry"], "paper": paper})
                     fills.append({"symbol": entry["symbol"], "side": entry["side"], "qty": size, "price": entry["entry"]})
                     actions.append(f"{entry['side']} {entry['symbol']} {size} @ {entry['entry']} (x{int(leverage)})")
                 except Exception as e:
@@ -593,7 +595,10 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
             try:
                 qtyh = next((h["qty"] for h in kis.get_holdings() if h["code"] == ex["symbol"]), 0)
                 if qtyh > 0:
-                    kis.place_order(ex["symbol"], "SELL", int(qtyh), "MARKET")
+                    from jarvis.execution.broker_bridge import route_order
+                    px_ex = next((h["current"] for h in held if h["symbol"] == ex["symbol"]), None)
+                    route_order({"venue": "KR", "symbol": ex["symbol"], "side": "SELL", "quantity": int(qtyh),
+                                 "order_type": "MARKET", "price": px_ex, "paper": paper})
                     actions.append(f"청산 {ex['symbol']} ({ex['reason']})")
                     px = next((h["current"] for h in held if h["symbol"] == ex["symbol"]), None)
                     if px:
@@ -618,7 +623,9 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
             qty = int(daytrade_logic.position_size(budget, position_pct, 1.0, entry["entry"] or 0))
             if qty > 0:
                 try:
-                    kis.place_order(entry["symbol"], "BUY", qty, "MARKET")
+                    from jarvis.execution.broker_bridge import route_order
+                    route_order({"venue": "KR", "symbol": entry["symbol"], "side": "BUY", "quantity": qty,
+                                 "order_type": "MARKET", "price": entry["entry"], "paper": paper})
                     fills.append({"symbol": entry["symbol"], "side": "buy", "qty": qty, "price": entry["entry"]})
                     actions.append(f"매수 {entry['symbol']} {qty}주 @ {entry['entry']}")
                 except Exception as e:
@@ -645,9 +652,11 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
                                  "entry": float(p.avg_entry_price), "current": float(p.current_price)})
                     qty_by_symbol[p.symbol] = abs(q)
             exits = daytrade_logic.stop_exits(held, tp_pct, sl_pct) + daytrade_logic.decide_exits(held, scores)
+            from jarvis.execution.broker_bridge import route_close, route_order
             for ex in {e["symbol"]: e for e in exits}.values():
                 try:
-                    client.close_position(ex["symbol"]); actions.append(f"close {ex['symbol']} ({ex['reason']})")
+                    route_close(venue="US_ALPACA", symbol=ex["symbol"], paper=paper)
+                    actions.append(f"close {ex['symbol']} ({ex['reason']})")
                     q, px = qty_by_symbol.get(ex["symbol"]), next((h["current"] for h in held if h["symbol"] == ex["symbol"]), None)
                     if q and px:
                         fills.append({"symbol": ex["symbol"], "side": "sell" if ex["side"] == "long" else "buy",
@@ -672,10 +681,8 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
                 qty = int(daytrade_logic.position_size(budget, position_pct, 1.0, entry["entry"] or 0))
                 if qty > 0:
                     try:
-                        from alpaca.trading.requests import MarketOrderRequest
-                        from alpaca.trading.enums import OrderSide, TimeInForce
-                        client.submit_order(MarketOrderRequest(symbol=entry["symbol"], qty=qty,
-                            side=OrderSide.BUY, time_in_force=TimeInForce.DAY))
+                        route_order({"venue": "US_ALPACA", "symbol": entry["symbol"], "side": "BUY",
+                                     "quantity": qty, "order_type": "market", "price": entry["entry"], "paper": paper})
                         fills.append({"symbol": entry["symbol"], "side": "buy", "qty": qty, "price": entry["entry"]})
                         actions.append(f"buy {entry['symbol']} {qty} @ {entry['entry']}")
                     except Exception as e:
@@ -684,6 +691,7 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
             # Live: IB via TWS (7496). 데이터(5분봉)+실행+실체결가를 한 세션에서
             # → 판단 소스와 체결 브로커 일치(괴리 없음), 실 avg_fill_price로 P&L 정확.
             from backends.ib.order_client import IBOrderClient
+            from jarvis.execution.broker_bridge import route_order_ib
 
             async def _ib_us():
                 ib = IBOrderClient(host=os.environ.get("IB_HOST", "127.0.0.1"), port=7496,
@@ -705,10 +713,12 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
                     for e in {x["symbol"]: x for x in ex_all}.values():
                         pos = next((p for p in raw if p["symbol"] == e["symbol"]), None)
                         if pos:
-                            await ib.place_order(e["symbol"], "SELL" if pos["qty"] > 0 else "BUY",
-                                                 int(abs(pos["qty"])), "MARKET", wait_fill=True)
-                            acts.append(f"close {e['symbol']} ({e['reason']})")
+                            close_side = "SELL" if pos["qty"] > 0 else "BUY"
                             px = next((h["current"] for h in held if h["symbol"] == e["symbol"]), None)
+                            await route_order_ib({"symbol": e["symbol"], "side": close_side,
+                                                   "quantity": int(abs(pos["qty"])), "order_type": "MARKET",
+                                                   "price": px, "paper": False, "wait_fill": True}, ib)
+                            acts.append(f"close {e['symbol']} ({e['reason']})")
                             if px:
                                 fls.append({"symbol": e["symbol"], "side": "sell" if pos["qty"] > 0 else "buy",
                                            "qty": abs(pos["qty"]), "price": px})
@@ -717,7 +727,9 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
                     if en and en["symbol"] not in hs and budget > 0:
                         q = int(daytrade_logic.position_size(budget, position_pct, 1.0, en["entry"] or 0))
                         if q > 0:
-                            r = await ib.place_order(en["symbol"], "BUY", q, "MARKET", wait_fill=True)
+                            r = await route_order_ib({"symbol": en["symbol"], "side": "BUY", "quantity": q,
+                                                       "order_type": "MARKET", "price": en["entry"],
+                                                       "paper": False, "wait_fill": True}, ib)
                             # 실 체결가 우선, 없으면(미체결/지연) 신호가로 폴백 표시
                             px = r.get("avg_fill_price") or en["entry"]
                             tag = "IB" if r.get("avg_fill_price") else "IB est"
@@ -800,6 +812,7 @@ def condition_tick_endpoint(agent_id: str, cycle: int = 0) -> dict:
 
     if action in ("BUY", "SELL"):
         is_kr = instrument_id.endswith(".XKRX")
+        from jarvis.execution.broker_bridge import route_order
         try:
             if is_kr:
                 from backends.kis.order_client import KISOrderClient
@@ -811,7 +824,8 @@ def condition_tick_endpoint(agent_id: str, cycle: int = 0) -> dict:
                 if action == "BUY":
                     qty = int(daytrade_logic.position_size(budget, position_pct, 1.0, result["price"]))
                     if qty > 0 and not dd_pause:
-                        kis.place_order(code, "BUY", qty, "MARKET")
+                        route_order({"venue": "KR", "symbol": code, "side": "BUY", "quantity": qty,
+                                     "order_type": "MARKET", "price": result["price"], "paper": True})
                         fill = {"side": "buy", "qty": qty, "price": result["price"]}
                         note_bits.append(f"매수 {code} {qty}주 @ {result['price']}")
                 else:
@@ -822,19 +836,17 @@ def condition_tick_endpoint(agent_id: str, cycle: int = 0) -> dict:
                     broker_qty = int(next((h["qty"] for h in kis.get_holdings() if h["code"] == code), 0))
                     qtyh = min(own_qty, broker_qty)
                     if qtyh > 0:
-                        kis.place_order(code, "SELL", qtyh, "MARKET")
+                        route_order({"venue": "KR", "symbol": code, "side": "SELL", "quantity": qtyh,
+                                     "order_type": "MARKET", "price": result["price"], "paper": True})
                         fill = {"side": "sell", "qty": qtyh, "price": result["price"]}
                         note_bits.append(f"청산 {code} {qtyh}주 @ {result['price']}")
             else:
-                from alpaca.trading.requests import MarketOrderRequest
-                from alpaca.trading.enums import OrderSide, TimeInForce
                 symbol = instrument_id.split(".")[0]
-                client = shared._trading_client(paper=True)
                 if action == "BUY":
                     qty = int(daytrade_logic.position_size(budget, position_pct, 1.0, result["price"]))
                     if qty > 0 and not dd_pause:
-                        client.submit_order(MarketOrderRequest(symbol=symbol, qty=qty,
-                            side=OrderSide.BUY, time_in_force=TimeInForce.DAY))
+                        route_order({"venue": "US_ALPACA", "symbol": symbol, "side": "BUY", "quantity": qty,
+                                     "order_type": "market", "price": result["price"], "paper": True})
                         fill = {"side": "buy", "qty": qty, "price": result["price"]}
                         note_bits.append(f"buy {symbol} {qty} @ {result['price']}")
                 else:
@@ -843,8 +855,8 @@ def condition_tick_endpoint(agent_id: str, cycle: int = 0) -> dict:
                     own_qty = int(next((p["qty"] for p in _perf.open_positions
                                         if p["symbol"] == instrument_id), 0))
                     if own_qty > 0:
-                        client.submit_order(MarketOrderRequest(symbol=symbol, qty=own_qty,
-                            side=OrderSide.SELL, time_in_force=TimeInForce.DAY))
+                        route_order({"venue": "US_ALPACA", "symbol": symbol, "side": "SELL", "quantity": own_qty,
+                                     "order_type": "market", "price": result["price"], "paper": True})
                         fill = {"side": "sell", "qty": own_qty, "price": result["price"]}
                         note_bits.append(f"close {symbol} {own_qty}")
         except Exception as e:

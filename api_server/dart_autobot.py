@@ -132,7 +132,9 @@ def _buy(code: str, krw: float) -> dict:
     qty = int(krw // px)
     if qty < 1:
         raise ValueError(f"예산 부족 (현재가 ₩{px:,.0f})")
-    r = _kis().place_order(code, "BUY", qty, "MARKET")
+    from jarvis.execution.broker_bridge import route_order
+    r = route_order({"venue": "KR", "symbol": code, "side": "BUY", "quantity": qty,
+                      "order_type": "MARKET", "price": px, "paper": True})
     return {"code": code, "qty": qty, "price": round(px, 0), "order_id": r.get("order_id")}
 
 
@@ -141,7 +143,9 @@ def _place_sl_order(code: str, qty: int, entry_price: float, sl_pct: float) -> d
     실패해도 None 반환 — 호출자는 시세 폴링 방식으로 폴백한다."""
     limit_px = _round_down_tick(round(entry_price * (1 - abs(sl_pct)), 4))  # 부동소수 오차(929.999…) 방지
     try:
-        r = _kis().place_order(code, "SELL", qty, "LIMIT", price=limit_px)
+        from jarvis.execution.broker_bridge import route_order
+        r = route_order({"venue": "KR", "symbol": code, "side": "SELL", "quantity": qty,
+                          "order_type": "LIMIT", "price": limit_px, "paper": True})
         return {"order_id": r.get("order_id"), "limit_px": limit_px}
     except Exception:
         return None
@@ -235,7 +239,9 @@ def _process_exits(cfg: dict) -> int:
         _cancel_sl_order(pos, qty)
 
         try:
-            _kis().place_order(code, "SELL", qty, "MARKET")
+            from jarvis.execution.broker_bridge import route_order
+            route_order({"venue": "KR", "symbol": code, "side": "SELL", "quantity": qty,
+                         "order_type": "MARKET", "price": exit_px, "paper": True})
             cost = qty * entry
             cfg["spent"] = round(max(float(cfg.get("spent", 0.0)) - cost, 0.0), 2)
             _log_event({"kind": "sell", "corp": pos.get("corp", ""), "code": code,

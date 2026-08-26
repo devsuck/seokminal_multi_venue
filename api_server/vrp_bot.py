@@ -6,8 +6,9 @@ IB 계정 마진/포지션별 증거금 조회 API가 없어 무한손실 포지
 정확히 게이트할 수 없기 때문. 콘도어는 진입 시점에 최대손실이 확정되므로
 `risk_guard.validate_defined_risk_spread`로 안전하게 게이트 가능.
 
-dart_autobot.py와 동일한 파일 저장 패턴(JSON 설정 + JSONL 로그). paper 전용
-(IB paper 7497) — 실집행 없음.
+dart_autobot.py와 동일한 파일 저장 패턴(JSON 설정 + JSONL 로그). 진입은
+validate_defined_risk_spread(max_loss)로 이미 게이트됨 — 별도 브릿지 경유 없이도
+test_execution_chokepoint AST 예외 처리 대상(risk_guard 직접 사용).
 """
 from __future__ import annotations
 

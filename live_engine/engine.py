@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass, field
 
 from live_engine.broker_interface import BotStatus, BrokerInterface, OrderResult, Position
+from live_engine.risk_guard import RiskConfig, validate_order
 
 log = logging.getLogger(__name__)
 
@@ -19,6 +20,20 @@ def _ema(prices: list[float], period: int) -> float:
     for p in prices[period:]:
         ema = p * k + ema * (1 - k)
     return ema
+
+
+def _today_realized_pnl(closed_trades: list[dict]) -> float:
+    """Sum today's (UTC) closed-trade pnl for the daily-loss-limit check.
+    exit_ts_ns may be None for malformed/legacy entries — skip those."""
+    import datetime as _dt
+    start_ns = int(
+        _dt.datetime.now(_dt.UTC).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        * 1e9
+    )
+    return sum(
+        t["pnl"] for t in closed_trades
+        if t.get("exit_ts_ns") is not None and t["exit_ts_ns"] >= start_ns
+    )
 
 
 # ── Stop-and-reverse position sizing ──────────────────────────────────────────
@@ -201,6 +216,14 @@ class LiveBotEngine:
                     if order is not None:
                         side, qty = order
                         try:
+                            venue = "KR" if state.instrument_id.endswith(".XKRX") else "US_IB"
+                            cfg = RiskConfig.from_env(venue=venue)
+                            validate_order(
+                                side=side, quantity=qty, price_estimate=tick.price,
+                                current_position_qty=state.position * state.trade_size,
+                                day_realized_pnl=_today_realized_pnl(state.closed_trades),
+                                config=cfg,
+                            )
                             result = await state.broker.place_order(
                                 state.instrument_id, side, qty, "MARKET"
                             )

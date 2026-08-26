@@ -48,6 +48,7 @@ from live_engine.risk_guard import (
     DailyPnLTracker,
     RiskConfig,
     RiskViolation,
+    set_kill_switch_file,
     validate_option_expiry,
     validate_order,
 )
@@ -3074,15 +3075,17 @@ _circuit_breaker_notified_day: str | None = None  # debounce: alert once per bre
 
 def _check_risk(
     *, side: str, quantity: float, price_estimate: float | None,
-    current_position_qty: int = 0, option_expiry: str | None = None,
+    current_position_qty: int = 0, option_expiry: str | None = None, venue: str | None = None,
 ) -> None:
     """Run the pre-trade risk guard; translate a violation into HTTP 422.
 
     Re-reads RiskConfig from env each call so limit changes (incl. the kill
     switch) take effect without a restart. ``option_expiry`` (YYYYMMDD) is
     only passed by the options order path and gates on MIN_OPTION_DTE.
+    ``venue`` ("KR"/"HL") picks currency-aware limits (MAX_ORDER_NOTIONAL_KR
+    etc.) when set; omitted paths (US/options) keep the legacy shared limits.
     """
-    cfg = RiskConfig.from_env()
+    cfg = RiskConfig.from_env(venue=venue)
     try:
         validate_order(
             side=side,
@@ -3144,6 +3147,23 @@ def get_trading_mode() -> dict:
     }
 
 
+class KillSwitchRequest(BaseModel):
+    on: bool
+
+
+@app.get("/admin/kill-switch")
+def get_kill_switch() -> dict:
+    return {"kill_switch": RiskConfig.from_env().kill_switch}
+
+
+@app.post("/admin/kill-switch")
+def post_kill_switch(req: KillSwitchRequest) -> dict:
+    """전체 주문 강제 차단/해제 — 파일 기반, 반영에 프로세스 재시작 불필요.
+    대시보드 버튼 아님(의도적) — CLI/curl로만. 대시보드는 읽기전용으로 유지."""
+    set_kill_switch_file(req.on)
+    return {"kill_switch": RiskConfig.from_env().kill_switch}
+
+
 @app.get("/orders/audit")
 def get_orders_audit(limit: int = 100) -> dict:
     """Return the recent persisted order audit trail (newest last)."""
@@ -3193,7 +3213,7 @@ def place_kr_order(req: KROrderRequest) -> KROrderResponse:
     cached = idempotency.get_cached("KR", req.client_order_id)
     if cached is not None:
         return KROrderResponse(**cached)
-    _check_risk(side=req.side, quantity=req.quantity, price_estimate=req.price)
+    _check_risk(side=req.side, quantity=req.quantity, price_estimate=req.price, venue="KR")
     try:
         order_client = KISOrderClient(app_key, app_secret, cano, acnt_prdt_cd, mock=req.paper)
         result = order_client.place_order(
@@ -3790,7 +3810,6 @@ def push_unsubscribe(endpoint: str = Query(...)) -> None:
 from insider.dart_client import search_company as _dart_search, get_executive_stock_changes as _dart_trades, get_recent_kr_insider_feed as _dart_recent, get_recent_kr_corporate_actions as _dart_corp_actions, action_weight as _dart_weight, get_report_lag_days as _dart_lag
 from insider.congress_client import get_congress_trades as _congress_trades
 from insider.gov_spending_client import get_recent_contracts as _gov_contracts
-from insider.options_uoa_client import get_unusual_options_activity as _options_uoa
 from insider.convergence import compute_convergence as _convergence_compute_raw
 
 # _check_insider_convergence's 30s alert poll and GET /insider/convergence both route
@@ -4076,61 +4095,6 @@ def insider_kr_recent(
     ]
 
 
-class OptionsUOA(BaseModel):
-    ticker: str
-    contract_symbol: str
-    type: str
-    strike: float
-    expiration_date: str
-    dte: int
-    spot: float
-    moneyness_pct: float
-    volume: int
-    open_interest: int
-    vol_oi_ratio: float
-
-
-@app.get("/insider/options-uoa", response_model=list[OptionsUOA])
-def insider_options_uoa(
-    tickers: str | None = Query(None, description="콤마구분 티커. 비우면 최근 Form4·의회매매 공시 티커 자동수집"),
-    days: int = Query(7, ge=1, le=30),
-    max_tickers: int = Query(15, ge=1, le=30),
-    max_dte: int = Query(14, ge=1, le=45),
-    min_otm_pct: float = Query(0.10, ge=0.0, le=1.0),
-    min_vol_oi_ratio: float = Query(3.0, ge=0.1),
-    min_volume: int = Query(50, ge=1),
-) -> list[OptionsUOA]:
-    """만기 짧고 OTM 깊은 옵션 콘트랙트의 거래량/미결제약정 급등 탐지(Alpaca).
-    티커 미지정시 최근 Form4·의회매매 공시 티커를 후보로 자동수집해 그것만 스캔
-    (시장 전체 스캔은 API 예산상 배제 — 다른 insider leg가 이미 플래그한 종목 전용)."""
-    if tickers:
-        candidate_tickers = [t.strip().upper() for t in tickers.split(",") if t.strip()]
-    else:
-        seen: list[str] = []
-        try:
-            from insider.finnhub_client import get_recent_feed as _fh_recent
-            for r in _fh_recent(days=days, max_filings=60):
-                if r.get("ticker") and r["ticker"] not in seen:
-                    seen.append(r["ticker"])
-        except Exception:
-            pass
-        try:
-            for r in _congress_trades(limit=80):
-                if r.get("ticker") and r["ticker"] not in seen:
-                    seen.append(r["ticker"])
-        except Exception:
-            pass
-        candidate_tickers = seen[:max_tickers]
-    if not candidate_tickers:
-        return []
-    try:
-        rows = _options_uoa(candidate_tickers, max_dte=max_dte, min_otm_pct=min_otm_pct,
-                             min_vol_oi_ratio=min_vol_oi_ratio, min_volume=min_volume)
-    except ValueError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Alpaca options error: {exc}") from exc
-    return [OptionsUOA(**r) for r in rows]
 
 
 @app.get("/insider/convergence", response_model=list[ConvergenceSignalOut])
@@ -4208,7 +4172,8 @@ class MirrorRequest(BaseModel):
 
 @app.post("/copytrade/mirror")
 def copytrade_mirror(body: MirrorRequest) -> dict:
-    """페이퍼 계좌에 notional 시장가 매수 (Alpaca paper). 실계좌 아님."""
+    """페이퍼 계좌에 notional 시장가 매수 (Alpaca paper). 실계좌 아님.
+    paper=True 하드코딩, 요청 필드로 못 바꿈 — test_execution_chokepoint AST 예외 처리."""
     key = os.environ.get("ALPACA_API_KEY", "")
     sec = os.environ.get("ALPACA_SECRET_KEY", "")
     if not key or not sec:
@@ -4367,7 +4332,8 @@ def copytrade_positions() -> list[dict]:
 
 @app.post("/copytrade/close/{ticker}")
 def copytrade_close(ticker: str) -> dict:
-    """페이퍼 포지션 전량 시장가 청산."""
+    """페이퍼 포지션 전량 시장가 청산. paper=True 하드코딩+청산 전용 —
+    test_execution_chokepoint AST 예외 처리."""
     key = os.environ.get("ALPACA_API_KEY", "")
     sec = os.environ.get("ALPACA_SECRET_KEY", "")
     if not key or not sec:
@@ -4392,6 +4358,7 @@ def copytrade_auto_exit(body: CopyAutoExitRequest) -> dict:
 
     Alpaca 포지션엔 진입일이 없어 보유기간 규칙은 미지원(수익률 기반만).
     프론트 오토파일럿이 주기적으로 호출해 예산을 회수한다.
+    paper=True 하드코딩+청산 전용 — test_execution_chokepoint AST 예외 처리.
     """
     key = os.environ.get("ALPACA_API_KEY", "")
     sec = os.environ.get("ALPACA_SECRET_KEY", "")
@@ -4738,7 +4705,8 @@ class DartMirrorRequest(BaseModel):
 
 @app.post("/dart/mirror")
 def dart_mirror(body: DartMirrorRequest) -> dict:
-    """KIS 모의 계좌에 시장가 매수 (원화 예산 → 주식수). 실계좌 아님."""
+    """KIS 모의 계좌에 시장가 매수 (원화 예산 → 주식수). 실계좌 아님.
+    KIS_MOCK_* 크레덴셜 + mock=True 하드코딩 — test_execution_chokepoint AST 예외 처리."""
     code = body.code.strip().split(".")[0]
     # 현재가 (yfinance .KS) → 주식수
     try:
@@ -5274,6 +5242,7 @@ def hl_place_order(req: HLOrderRequest) -> dict:
             side="BUY" if req.is_buy else "SELL",
             quantity=req.size,
             price_estimate=req.limit_px,
+            venue="HL",
         )
     try:
         result = place_order(
@@ -5325,14 +5294,18 @@ class HLLeverageRequest(BaseModel):
 
 @app.post("/hl/leverage")
 def hl_set_leverage(req: HLLeverageRequest) -> dict:
-    """Set leverage for a coin before sizing a leveraged day-trade position."""
+    """Set leverage for a coin before sizing a leveraged day-trade position.
+
+    Real-account leverage is hard-blocked in broker_bridge.route_set_leverage()
+    regardless of req.paper — this system never leverages real capital."""
+    from jarvis.execution.broker_bridge import BrokerOrderRejected, route_set_leverage
     try:
-        from hyperliquid.trader import set_leverage
-    except ImportError as e:
-        raise HTTPException(status_code=503, detail=f"HL trader unavailable: {e}") from e
-    try:
-        result = set_leverage(req.coin, req.leverage, req.is_cross, req.paper)
+        result = route_set_leverage(
+            coin=req.coin, leverage=req.leverage, is_cross=req.is_cross, paper=req.paper,
+        )
         return {"status": "ok", "coin": req.coin.upper(), "leverage": req.leverage, "result": result}
+    except BrokerOrderRejected as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"HL set leverage failed: {e}") from e
 
@@ -5437,8 +5410,6 @@ from api_server.graph_api import router as graph_router
 app.include_router(graph_router)
 
 # ── ICT 프리미티브 자유조합 백테스트(탐색용) ──────────────────────────────────────
-from api_server.router_ict import router as ict_router
-app.include_router(ict_router)
 
 from api_server.router_orderflow import router as orderflow_router
 app.include_router(orderflow_router)

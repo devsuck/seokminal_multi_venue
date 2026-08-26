@@ -210,14 +210,16 @@ def _basis_signs_outcomes(coin: str, venue_a: str, venue_b: str) -> tuple:
 
 
 def _select_basis_pairs() -> list:
-    """coin×거래소쌍 전체 계산 -> 실제 겹치는 날짜수 >= _MIN_DAYS인 것만, 많은 순 최대
-    MAX_BASIS_CANDIDATES개 — 데이터 가용성으로 선정(성과로 선정 아님, 사후선택 방지)."""
+    """coin×거래소쌍 전체 계산 -> 실제 usable 페어수(len(signs)) >= _MIN_DAYS인 것만, 많은 순 최대
+    MAX_BASIS_CANDIDATES개 — 데이터 가용성으로 선정(성과로 선정 아님, 사후선택 방지).
+    Note: len(signs) <= n_overlap-1 (consecutive pairs) and further reduced by zero-basis skip;
+    filtering on n_overlap alone would pass boundary cases that fail at _series_evidence()."""
     scored = []
     for coin in BASIS_COINS:
         for venue_a, venue_b in BASIS_VENUE_PAIRS:
             signs, outcomes, n_overlap = _basis_signs_outcomes(coin, venue_a, venue_b)
-            if n_overlap >= _MIN_DAYS:
-                scored.append((n_overlap, coin, venue_a, venue_b, signs, outcomes))
+            if len(signs) >= _MIN_DAYS:
+                scored.append((len(signs), coin, venue_a, venue_b, signs, outcomes))
     scored.sort(key=lambda t: -t[0])
     return scored[:MAX_BASIS_CANDIDATES]
 

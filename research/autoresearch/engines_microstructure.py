@@ -164,3 +164,72 @@ def _ofi_candidate(symbol: str, n_variants: int):
         cid=f"micro_ofi_momentum_{symbol}", category="microstructure",
         thesis=f"{symbol} 일별 order flow imbalance 부호 -> 익일 방향(informed flow persistence, Kyle 1985 계열)",
         direction="research", run=_run, meta={})
+
+
+def _daily_mid(venue: str, coin: str) -> dict:
+    """venue×coin 오더북 스냅샷 -> 날짜별 평균 mid((best_bid+best_ask)/2).
+    UTC 날짜 경계 사용(dt.timezone.utc — Python 3.14 대상, utcfromtimestamp 미사용)."""
+    from research.hypotheses.cross_venue_skew import load_venue_snapshots
+
+    dates = jsonl_dates.list_dates(_SKEW_DIR, glob_prefix=f"{venue}_{coin}_")
+    if not dates:
+        return {}
+    df = load_venue_snapshots(venue, coin, dates)
+    if df.empty:
+        return {}
+    mids: dict[str, list] = {}
+    for _, row in df.iterrows():
+        if not row["bids"] or not row["asks"]:
+            continue
+        best_bid = max(lvl["price"] for lvl in row["bids"])
+        best_ask = min(lvl["price"] for lvl in row["asks"])
+        mid = (best_bid + best_ask) / 2.0
+        date = dt.datetime.fromtimestamp(row["ts"], tz=dt.timezone.utc).strftime("%Y-%m-%d")
+        mids.setdefault(date, []).append(mid)
+    return {d: _st.mean(vs) for d, vs in mids.items()}
+
+
+def _basis_signs_outcomes(coin: str, venue_a: str, venue_b: str) -> tuple:
+    """basis_t = (mid_a-mid_b)/mid_b -> (부호[t], 수렴폭 basis_t-basis_next[t], 겹치는 날짜수).
+    수렴방향 베팅: basis_t>0(A가 비쌈)이면 sign=+1 -> basis가 줄어들수록(outcome>0) 이익."""
+    mid_a = _daily_mid(venue_a, coin)
+    mid_b = _daily_mid(venue_b, coin)
+    dates = sorted(d for d in mid_a if d in mid_b)
+    signs, outcomes = [], []
+    for i in range(len(dates) - 1):
+        d, d_next = dates[i], dates[i + 1]
+        if mid_b[d] <= 0 or mid_b[d_next] <= 0:
+            continue
+        basis_t = (mid_a[d] - mid_b[d]) / mid_b[d]
+        basis_next = (mid_a[d_next] - mid_b[d_next]) / mid_b[d_next]
+        if basis_t == 0.0:
+            continue
+        signs.append(1.0 if basis_t > 0 else -1.0)
+        outcomes.append(basis_t - basis_next)
+    return signs, outcomes, len(dates)
+
+
+def _select_basis_pairs() -> list:
+    """coin×거래소쌍 전체 계산 -> 실제 겹치는 날짜수 >= _MIN_DAYS인 것만, 많은 순 최대
+    MAX_BASIS_CANDIDATES개 — 데이터 가용성으로 선정(성과로 선정 아님, 사후선택 방지)."""
+    scored = []
+    for coin in BASIS_COINS:
+        for venue_a, venue_b in BASIS_VENUE_PAIRS:
+            signs, outcomes, n_overlap = _basis_signs_outcomes(coin, venue_a, venue_b)
+            if n_overlap >= _MIN_DAYS:
+                scored.append((n_overlap, coin, venue_a, venue_b, signs, outcomes))
+    scored.sort(key=lambda t: -t[0])
+    return scored[:MAX_BASIS_CANDIDATES]
+
+
+def _basis_candidates(selection: list, n_variants: int) -> list:
+    from research.autoresearch.engine import Candidate
+    out = []
+    for _, coin, venue_a, venue_b, signs, outcomes in selection:
+        def _run(signs=signs, outcomes=outcomes):
+            return _series_evidence(signs, outcomes, COST_BASE_BPS, COST_STRESS_BPS, n_variants)
+        out.append(Candidate(
+            cid=f"micro_basis_reversion_{coin}_{venue_a}_{venue_b}", category="microstructure",
+            thesis=f"{coin} {venue_a}-{venue_b} 일별 basis 수렴(cash-and-carry 재정거래)",
+            direction="research", run=_run, meta={}))
+    return out

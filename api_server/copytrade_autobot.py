@@ -3,6 +3,7 @@
 브라우저 탭과 무관하게 uvicorn 프로세스 안에서 주기적으로 TP/SL 규칙을 페이퍼
 포지션(Alpaca)에 적용해 청산한다. Alpaca 포지션이 유일한 진실 소스라 로컬
 포지션 상태는 두지 않는다(dart_autobot과 다른 점).
+paper=True 하드코딩+청산 전용 — test_execution_chokepoint AST 예외 처리.
 """
 from __future__ import annotations
 

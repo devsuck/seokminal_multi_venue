@@ -7,8 +7,6 @@ from __future__ import annotations
 import datetime as dt
 
 import httpx
-from alpaca.trading.enums import OrderSide, TimeInForce
-from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest
 from fastapi import APIRouter, HTTPException
 
 from api_server.routers import alpaca_shared as shared
@@ -80,27 +78,16 @@ def get_orders() -> list[dict]:
 def place_order(req: OrderRequest) -> dict:
     if not shared.ALPACA_KEY:
         raise HTTPException(status_code=503, detail="ALPACA_API_KEY not set in .env")
-    from alpaca.trading.client import TradingClient
-    side = OrderSide.BUY if req.side.lower() == "buy" else OrderSide.SELL
-    client = TradingClient(api_key=shared.ALPACA_KEY, secret_key=shared.ALPACA_SECRET, paper=req.paper)
+    from jarvis.execution.broker_bridge import BrokerOrderRejected, route_order
+    order = {
+        "venue": "US_ALPACA", "symbol": req.symbol, "side": req.side,
+        "quantity": req.qty, "order_type": req.type,
+        "price": req.limit_price, "paper": req.paper,
+    }
     try:
-        if req.type == "limit" and req.limit_price:
-            order_req = LimitOrderRequest(
-                symbol=req.symbol.upper(),
-                qty=req.qty,
-                side=side,
-                limit_price=req.limit_price,
-                time_in_force=TimeInForce.GTC,
-            )
-        else:
-            order_req = MarketOrderRequest(
-                symbol=req.symbol.upper(),
-                qty=req.qty,
-                side=side,
-                time_in_force=TimeInForce.DAY,
-            )
-        order = client.submit_order(order_req)
-        return shared._fmt_order(order)
+        return route_order(order)
+    except BrokerOrderRejected as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except HTTPException:
         raise
     except Exception as e:

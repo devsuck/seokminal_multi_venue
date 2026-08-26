@@ -69,10 +69,22 @@ def test_condition_tick_buys_when_gate_true(client, monkeypatch):
         def place_order(self, *args, **kwargs):
             return {"order_id": "1"}
 
-    monkeypatch.setattr("backends.kis.order_client.KISOrderClient", _KIS)
+    # 주문은 이제 route_order() 경유(jarvis/execution/broker_bridge.py) — 그쪽에서
+    # import된 KISOrderClient를 패치해야 함(원본 backends.kis.order_client 패치는
+    # broker_bridge의 이미-바인딩된 참조에 영향 없음). _gate()도 AUTONOMY_LEVEL>=6
+    # 요구하고 _place_kr()는 KIS_MOCK_* env로 크레덴셜을 읽음.
+    monkeypatch.setattr("jarvis.execution.broker_bridge.KISOrderClient", _KIS)
+    monkeypatch.setattr("jarvis.config.AUTONOMY_LEVEL", 6)
+    monkeypatch.setenv("KIS_MOCK_APP_KEY", "test")
+    monkeypatch.setenv("KIS_MOCK_APP_SECRET", "test")
+    monkeypatch.setenv("KIS_MOCK_CANO", "test")
+    monkeypatch.setenv("KIS_ACNT_PRDT_CD", "01")
 
     aid = client.post("/agents", json={
-        "name": "L1", "type": "condition_lv1", "account_alloc": 50000000, "autonomy": 1,
+        # 5천만원이 아니라 2백만원: risk_guard MAX_ORDER_NOTIONAL_KR(.env=500000)를
+        # route_order()가 이제 실제로 강제해서, 너무 크면 주문이 정당하게 거부된다.
+        # 너무 작으면(<~120만원) position_size가 1주 미만으로 내려가 qty=0(BUY 스킵)이 된다.
+        "name": "L1", "type": "condition_lv1", "account_alloc": 2000000, "autonomy": 1,
         "condition": _rule(99), "instrument_id": INSTRUMENT,
     }).json()["id"]
 

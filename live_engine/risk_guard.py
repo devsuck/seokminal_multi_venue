@@ -48,6 +48,10 @@ class RiskConfig:
     daily_loss_limit: float          # absolute value of the worst allowed realized loss
     kill_switch: bool
     min_option_dte: int = 0          # block option orders expiring sooner than this (0 = off)
+    max_leverage: float = 1.0        # 1 = no leverage. Real-money leverage is blocked separately
+                                      # in broker_bridge.route_set_leverage() regardless of this.
+    max_daily_turnover_pct: float = 0.0     # % of account_equity tradeable per day (0 = off)
+    max_single_position_pct: float = 0.0    # % of account_equity in one symbol (0 = off)
 
     @classmethod
     def from_env(cls, venue: str | None = None) -> "RiskConfig":
@@ -67,6 +71,9 @@ class RiskConfig:
             kill_switch=(os.environ.get("TRADING_KILL_SWITCH", "false").lower() == "true"
                          or _kill_switch_file_active()),
             min_option_dte=int(_env("MIN_OPTION_DTE", "0")),
+            max_leverage=float(_env("MAX_LEVERAGE", "1")),
+            max_daily_turnover_pct=float(_env("MAX_DAILY_TURNOVER_PCT", "0")),
+            max_single_position_pct=float(_env("MAX_SINGLE_POSITION_PCT", "0")),
         )
 
 
@@ -78,6 +85,9 @@ def validate_order(
     current_position_qty: float,
     day_realized_pnl: float,
     config: RiskConfig,
+    leverage: float | None = None,
+    account_equity: float | None = None,
+    day_notional_traded: float | None = None,
 ) -> None:
     """Validate one order against the risk limits; raise RiskViolation if blocked.
 
@@ -86,6 +96,10 @@ def validate_order(
     loss). ``price_estimate`` may be None for a MARKET order with no recent
     price; notional is skipped then. Reducing an existing position is always
     allowed past the position cap so a breached book can still be unwound.
+
+    ``leverage``/``account_equity``/``day_notional_traded`` are optional —
+    callers that don't have this data yet simply omit it and the corresponding
+    check is skipped (no invented plumbing forced on every call site).
     """
     if config.kill_switch:
         raise RiskViolation("trading kill switch is engaged — all orders blocked")
@@ -122,6 +136,29 @@ def validate_order(
             f"resulting position {projected} exceeds max position qty "
             f"{config.max_position_qty}"
         )
+
+    if leverage is not None and config.max_leverage > 0 and leverage > config.max_leverage:
+        raise RiskViolation(
+            f"leverage {leverage}x exceeds max leverage {config.max_leverage}x"
+        )
+
+    if (account_equity and config.max_single_position_pct > 0 and price_estimate is not None
+            and increases_exposure):
+        position_pct = abs(projected) * price_estimate / account_equity * 100
+        if position_pct > config.max_single_position_pct:
+            raise RiskViolation(
+                f"resulting position {position_pct:.1f}% of equity exceeds max "
+                f"single-position {config.max_single_position_pct:.1f}%"
+            )
+
+    if (account_equity and config.max_daily_turnover_pct > 0 and price_estimate is not None
+            and day_notional_traded is not None):
+        turnover_pct = (day_notional_traded + quantity * price_estimate) / account_equity * 100
+        if turnover_pct > config.max_daily_turnover_pct:
+            raise RiskViolation(
+                f"daily turnover {turnover_pct:.1f}% of equity exceeds max "
+                f"{config.max_daily_turnover_pct:.1f}%"
+            )
 
 
 def validate_option_expiry(expiry: str, config: RiskConfig, *, today: _dt.date | None = None) -> None:

@@ -109,3 +109,58 @@ def _event_pnl_evidence(pnls, net_stress, pv, n_variants):
     wf1 = _st.mean(pnls[:half])
     wf2 = _st.mean(pnls[half:])
     return _assemble_evidence(net, med, wf1, wf2, pv, net_stress, n, n_variants)
+
+
+def _daily_ofi_and_price(symbol: str) -> tuple[dict, dict]:
+    """hl_orderflow_tick/{symbol}_*.jsonl(.gz) -> (날짜->OFI합, 날짜->그날 마지막 체결가)."""
+    dates = jsonl_dates.list_dates(_ORDERFLOW_DIR, glob_prefix=f"{symbol}_")
+    ofi: dict[str, float] = {}
+    last_px: dict[str, float] = {}
+    last_ts: dict[str, float] = {}
+    for date in dates:
+        f = jsonl_dates.open_stem(_ORDERFLOW_DIR, f"{symbol}_{date}")
+        if f is None:
+            continue
+        with f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                row = json.loads(line)
+                sign = 1.0 if row["side"] == "buy" else -1.0
+                ofi[date] = ofi.get(date, 0.0) + sign * row["size"]
+                if date not in last_ts or row["ts"] > last_ts[date]:
+                    last_ts[date] = row["ts"]
+                    last_px[date] = row["price"]
+    return ofi, last_px
+
+
+def _ofi_signs_outcomes(symbol: str) -> tuple[list, list]:
+    """정렬된 날짜 인접쌍 -> (그날 OFI 부호, 익일 수익률). OFI=0인 날/비양수가는 skip."""
+    ofi, price = _daily_ofi_and_price(symbol)
+    dates = sorted(d for d in ofi if d in price)
+    signs, outcomes = [], []
+    for i in range(len(dates) - 1):
+        d, d_next = dates[i], dates[i + 1]
+        s = ofi[d]
+        if s == 0.0:
+            continue
+        p0, p1 = price[d], price[d_next]
+        if p0 <= 0:
+            continue
+        signs.append(1.0 if s > 0 else -1.0)
+        outcomes.append(p1 / p0 - 1.0)
+    return signs, outcomes
+
+
+def _ofi_candidate(symbol: str, n_variants: int):
+    from research.autoresearch.engine import Candidate
+
+    def _run():
+        signs, outcomes = _ofi_signs_outcomes(symbol)
+        return _series_evidence(signs, outcomes, COST_BASE_BPS, COST_STRESS_BPS, n_variants)
+
+    return Candidate(
+        cid=f"micro_ofi_momentum_{symbol}", category="microstructure",
+        thesis=f"{symbol} 일별 order flow imbalance 부호 -> 익일 방향(informed flow persistence, Kyle 1985 계열)",
+        direction="research", run=_run, meta={})

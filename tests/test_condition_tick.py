@@ -75,6 +75,7 @@ def test_condition_tick_buys_when_gate_true(client, monkeypatch):
     # 요구하고 _place_kr()는 KIS_MOCK_* env로 크레덴셜을 읽음.
     monkeypatch.setattr("jarvis.execution.broker_bridge.KISOrderClient", _KIS)
     monkeypatch.setattr("jarvis.config.AUTONOMY_LEVEL", 6)
+    monkeypatch.setattr("jarvis.execution.deadman.is_expired", lambda: False)
     monkeypatch.setenv("KIS_MOCK_APP_KEY", "test")
     monkeypatch.setenv("KIS_MOCK_APP_SECRET", "test")
     monkeypatch.setenv("KIS_MOCK_CANO", "test")

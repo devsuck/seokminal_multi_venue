@@ -18,6 +18,7 @@ import os
 from backends.kis.order_client import KISOrderClient
 from jarvis.audit import record
 from jarvis.config import AUTONOMY_LEVEL, MIN_LIVE_LEVEL, live_execution_enabled
+from jarvis.execution import deadman
 from live_engine.risk_guard import DailyLossLimitBreached, RiskConfig, RiskViolation, validate_order
 
 
@@ -49,6 +50,12 @@ def _gate(order: dict) -> None:
         record({"layer": "broker_bridge", "action": "route_order", "venue": order.get("venue"),
                 "symbol": order.get("symbol"), "result": "autonomy_blocked", "reason": reason})
         raise BrokerOrderRejected(f"live execution disabled ({reason})")
+
+    if order["side"].upper() == "BUY" and deadman.is_expired():
+        reason = f"deadman switch expired (no heartbeat within {deadman.deadman_days()}d)"
+        record({"layer": "broker_bridge", "action": "route_order", "venue": order.get("venue"),
+                "symbol": order.get("symbol"), "result": "deadman_blocked", "reason": reason})
+        raise BrokerOrderRejected(reason)
 
     cfg = RiskConfig.from_env(venue=order["venue"])
     try:

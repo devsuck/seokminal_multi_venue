@@ -225,3 +225,19 @@ def test_absorption_candidate_shape_and_none_run(tmp_path, monkeypatch):
     assert cand.category == "microstructure"
     assert cand.direction == "research"
     assert cand.run() is None
+
+
+def test_skew_divergence_result_none_with_no_data(tmp_path, monkeypatch):
+    monkeypatch.setattr(em, "_SKEW_DIR", tmp_path)
+    monkeypatch.setattr(cvs, "_DATA_DIR", tmp_path)
+    assert em._skew_divergence_result("BTC") is None
+
+
+def test_skew_candidate_shape_and_none_run(tmp_path, monkeypatch):
+    monkeypatch.setattr(em, "_SKEW_DIR", tmp_path)
+    monkeypatch.setattr(cvs, "_DATA_DIR", tmp_path)
+    cand = em._skew_candidate("BTC", n_variants=4)
+    assert cand.cid == "micro_skew_divergence_momentum_BTC_15s"
+    assert cand.category == "microstructure"
+    assert cand.direction == "research"
+    assert cand.run() is None

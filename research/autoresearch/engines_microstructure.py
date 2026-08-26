@@ -298,3 +298,80 @@ def _absorption_candidate(symbol: str, n_variants: int):
         thesis=(f"{symbol} 1분봉 오더플로우 흡수(매도우세인데 안 밀림=롱, 매수우세인데 "
                 f"안 오름=숏) — research/strategies/orderflow_absorption.py 그대로(어댑터)"),
         direction="research", run=_run, meta={})
+
+
+def _skew_divergence_result(coin: str) -> dict | None:
+    """cross_venue_skew.py 어댑터 — run_cross_venue_skew_validate.run_coin()의 페어링 로직을
+    단일 사전등록 horizon(SKEW_HORIZON_S=15)에 국한해 재현 + wf 분할 신규 추가."""
+    from research.hypotheses.cross_venue_skew import (
+        align_venues, build_imbalance, build_labels_multi_horizon,
+        build_price_series, build_skew_divergence, build_spike_signal, load_venue_snapshots,
+    )
+    from research.validation.metrics import trade_metrics
+    from research.validation.cost_model import hl_effective_cost_bps
+
+    cost_bps = hl_effective_cost_bps("major", taker=True)
+    dates = set()
+    for venue in SKEW_VENUES:
+        dates |= set(jsonl_dates.list_dates(_SKEW_DIR, glob_prefix=f"{venue}_{coin}_"))
+    dates = sorted(dates)
+    if not dates:
+        return None
+
+    raw_by_venue = {v: load_venue_snapshots(v, coin, dates) for v in SKEW_VENUES}
+    raw_by_venue = {v: df for v, df in raw_by_venue.items() if not df.empty}
+    if len(raw_by_venue) < 2:
+        return None
+
+    imbalance_by_venue = {v: build_imbalance(df) for v, df in raw_by_venue.items()}
+    aligned = align_venues(imbalance_by_venue)
+    divergence = build_skew_divergence(aligned)
+    spikes = build_spike_signal(divergence)
+    price = build_price_series(raw_by_venue)
+    labels = build_labels_multi_horizon(price, spikes, horizons_s=[SKEW_HORIZON_S])
+    labels = labels[labels["horizon_s"] == SKEW_HORIZON_S].sort_values("ts")
+    if len(labels) < _MIN_EVENTS:
+        return None
+
+    trade_size = 1.0
+    precomputed = []
+    for _, row in labels.iterrows():
+        entry_px, exit_px, direction = row["entry_price"], row["exit_price"], row["direction"]
+        cost = (abs(entry_px) + abs(exit_px)) * trade_size * cost_bps / 10_000.0
+        precomputed.append((direction, entry_px, exit_px, cost))
+
+    pnls = [d * (ex - en) * trade_size - c for d, en, ex, c in precomputed]
+    strat = trade_metrics([{"pnl": p} for p in pnls])
+
+    stress_cost_bps = cost_bps * _STRESS_MULT
+    stress_pnls = [d * (ex - en) * trade_size - (abs(en) + abs(ex)) * trade_size * stress_cost_bps / 10_000.0
+                   for d, en, ex, _c in precomputed]
+
+    rng = _random.Random(_SEED)
+    perm = []
+    for _ in range(_N_PERMS):
+        total = 0.0
+        for _d, en, ex, c in precomputed:
+            rsign = rng.choice((1.0, -1.0))
+            total += rsign * (ex - en) * trade_size - c
+        perm.append(round(total, 6))
+    pv = empirical_p_value(strat["total_pnl"], perm)
+
+    return {"pnls": pnls, "net_stress": _st.mean(stress_pnls), "pv": pv}
+
+
+def _skew_candidate(coin: str, n_variants: int):
+    from research.autoresearch.engine import Candidate
+
+    def _run():
+        r = _skew_divergence_result(coin)
+        if r is None:
+            return None
+        return _event_pnl_evidence(r["pnls"], r["net_stress"], r["pv"], n_variants)
+
+    return Candidate(
+        cid=f"micro_skew_divergence_momentum_{coin}_{SKEW_HORIZON_S}s", category="microstructure",
+        thesis=(f"{coin} 거래소간(HL/Binance/OKX) 오더북 임밸런스 괴리 스파이크 -> "
+                f"{SKEW_HORIZON_S}초 방향지속 — research/hypotheses/cross_venue_skew.py "
+                f"그대로(어댑터, 단일 사전등록 horizon)"),
+        direction="research", run=_run, meta={})

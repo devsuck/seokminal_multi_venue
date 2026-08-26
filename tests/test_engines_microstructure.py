@@ -166,9 +166,42 @@ def test_select_basis_pairs_filters_by_min_days(tmp_path, monkeypatch):
     assert em._select_basis_pairs() == []
 
 
+def test_select_basis_pairs_real_data_filters_and_truncates(monkeypatch):
+    """_basis_signs_outcomes mocked per (coin, venue_a, venue_b) so the test isolates
+    _select_basis_pairs' filter+truncate logic from date-overlap arithmetic.
+    One pair sits at the exact n_overlap==_MIN_DAYS boundary but len(signs) < _MIN_DAYS
+    (the off-by-one Finding #1 regression case) and must be excluded; the remaining 5
+    pairs qualify, proving both the len(signs) filter and the top-4 truncation."""
+    fixtures = {
+        ("BTC", "binance", "okx"): (29, 30),   # n_overlap=30 (boundary) but signs=29 -> EXCLUDED
+        ("BTC", "binance", "hl"): (37, 37),    # qualifies, rank 3
+        ("BTC", "okx", "hl"): (43, 43),        # qualifies, rank 1 (top)
+        ("ETH", "binance", "okx"): (36, 36),   # qualifies, rank 4
+        ("ETH", "binance", "hl"): (40, 40),    # qualifies, rank 2
+        ("ETH", "okx", "hl"): (32, 32),        # qualifies, rank 5 -> truncated by top-4 cap
+    }
+
+    def fake_signs_outcomes(coin, venue_a, venue_b):
+        n_signs, n_overlap = fixtures[(coin, venue_a, venue_b)]
+        return [1.0] * n_signs, [0.001] * n_signs, n_overlap
+
+    monkeypatch.setattr(em, "_basis_signs_outcomes", fake_signs_outcomes)
+
+    selected = em._select_basis_pairs()
+    assert len(selected) == 4
+    signs_counts = [sel[0] for sel in selected]
+    assert signs_counts == [43, 40, 37, 36]
+    selected_pairs = {(coin, va, vb) for _, coin, va, vb, _, _ in selected}
+    assert ("BTC", "binance", "okx") not in selected_pairs  # boundary exclusion
+    assert ("ETH", "okx", "hl") not in selected_pairs       # truncated (5th-best)
+
+
 def test_basis_candidates_shape(tmp_path, monkeypatch):
     monkeypatch.setattr(em, "_SKEW_DIR", tmp_path)
     monkeypatch.setattr(cvs, "_DATA_DIR", tmp_path)
+    # Use realistic selection output from _select_basis_pairs:
+    # tuple is (len(signs), coin, venue_a, venue_b, signs, outcomes)
+    # where len(signs) is the usable pair count (not n_overlap)
     selection = [(35, "BTC", "binance", "okx", [1.0] * 35, [0.001] * 35)]
     cands = em._basis_candidates(selection, n_variants=4)
     assert len(cands) == 1

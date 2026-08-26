@@ -28,6 +28,13 @@ def _allow_live_execution(monkeypatch):
     monkeypatch.setattr(bb, "live_execution_enabled", lambda: True)
 
 
+@pytest.fixture(autouse=True)
+def _deadman_not_expired(monkeypatch):
+    """데드맨 스위치는 이 파일의 관심사가 아님(tests/test_deadman.py가 전담) — 기본
+    heartbeat 정상으로 고정해 기존 게이트 테스트들이 데드맨 차단으로 오염되지 않게 함."""
+    monkeypatch.setattr(bb.deadman, "is_expired", lambda: False)
+
+
 def _kr_order(**over):
     o = dict(venue="KR", symbol="005930", side="BUY", quantity=1,
              order_type="MARKET", price=70000, paper=True)

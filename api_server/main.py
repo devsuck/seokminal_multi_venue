@@ -5358,6 +5358,10 @@ app.include_router(agents_router)
 from api_server.risk_state import router as risk_router
 app.include_router(risk_router)
 
+# ── 데드맨 스위치 heartbeat ────────────────────────────────────────────────────
+from api_server.routers.steward import router as steward_router
+app.include_router(steward_router)
+
 # ── DART 기업행위 자동매매 봇 (서버측, 브라우저 무관) ──────────────────────────────
 from api_server.dart_autobot import router as dart_bot_router, start_loop as _dart_bot_start
 app.include_router(dart_bot_router)

@@ -123,3 +123,64 @@ def collect_candidates() -> tuple[list[Candidate], dict]:
 - OFI 부호/방향, basis 거래소쌍, 비용 가정, 리밸런스 주기(일별) — 등록 후 변경 금지.
 - 이 스펙 통과 후보만 배치 편입 → BH-FDR/레드팀 통과분만 `paper_candidate`로.
   KR 팩터 3개와 동일하게, live 전환은 여기서 다루지 않음(3~6개월 관찰 후 별도 결정).
+
+## Addendum (2026-08-26, 계획 수립 중 확장 — 유저 승인)
+
+계획(`writing-plans`) 작성 중 발견: `research/strategies/orderflow_absorption.py`
+(흡수/대량체결 방향추종, HL 틱)와 `research/hypotheses/cross_venue_skew.py` +
+`research/run_cross_venue_skew_validate.py`(오더북 임밸런스 벤뉴간 괴리→모멘텀,
+sub-second, 이미 자체 BH-FDR 풀 보유)가 이미 존재 — 둘 다 `collect_candidates()`엔
+미배선인 **DORMANT 모듈**. `orderflow_absorption.py`는 애초 2026-07-10/11 이틀치
+데이터로 "1차 생존 판정용"이라 명시됐던 것인데, 지금은 hl_orderflow_tick/
+cross_venue_skew 둘 다 ~40일치 쌓여 재평가 가능한 상태.
+
+**범위 확장 결정(유저 승인, "둘 다"):** 원안 2개(OFI momentum, basis reversion,
+신규 코드) + 이 dormant 모듈 2개를 evidence-dict 어댑터로 배선 — 총 4개
+사전등록 소스. dormant 모듈 자체 로직/임계값은 수정하지 않는다(각 모듈 docstring이
+이미 "최적화 금지" 명시). BH-FDR 배치가 4개 소스 중 승자를 고른다(유저 선호
+"셋다 해보고 제일 좋은 거 채택" 패턴과 동일).
+
+### 데이터 흐름 정정
+
+최초 스펙의 "`random_same_frequency` 재사용" 서술은 부정확 — 그 함수는
+거래-진입/보유기간 시뮬레이션용이라 날짜-키 신호/결과 페어 구조에 안 맞음.
+정정된 소스별 방법:
+
+- **OFI momentum / basis reversion(신규 코드):** 날짜별 `(sign, outcome)` 페어
+  시계열 구성 → `outcome`만 셔플(500회, `sign` 고정 — 신호·결과 연결을 끊는
+  올바른 순열검정) → `research.validation.baselines.empirical_p_value`만 재사용.
+- **absorption / skew_divergence(기존 dormant 모듈 어댑터):** 각 모듈이 이미
+  자체 random-baseline(500회, `empirical_p_value`)로 낸 p/percentile을 그대로
+  재사용 — 중복 순열 안 돌림. `wf_first`/`wf_second`만 신규로 계산(아래).
+
+### walk-forward 첫/후반 분할(신규 — 최초 스펙 누락분)
+
+`research/scanner/verdict.py::classify()`의 `_robust()`가 `net>0 AND wf_first>0
+AND wf_second>0`를 CANDIDATE 등급 조건으로 요구 — 최초 스펙엔 이 계산이
+빠져 있었음. 소스별 계산법:
+- OFI/basis: 날짜순 정렬된 `(sign×outcome)` 시리즈를 전반/후반으로 반씩 쪼개
+  각각 평균 - 비용.
+- absorption/skew_divergence: 거래(체결)순 pnl 리스트를 전반/후반으로 반씩
+  쪼개 각각 평균.
+
+### 레드팀 `_spec` 확정
+
+`jarvis/redteam/controls.py::required_controls()` 기준, 4개 소스 전부:
+`{"market": "CRYPTO", "family": "microstructure", "n_variants": <이 엔진의 실제
+후보 총수, 런타임에 계산>}`. `market="CRYPTO"`가 `survivorship`을 요구하지만
+BTC/ETH/PAXG는 상시 상장 major만 다뤄 상장폐지 리스크가 없음 →
+`evidence["survivorship"]="na"`(사유 명시, `review_strategy()`는 `"na"`를
+`"passed"`와 동일 취급). `n_variants>1`이라 `multiple_testing` 요구 →
+`evidence["multiple_testing"]="passed"`(배치 BH-FDR이 어차피 전체에 적용됨).
+
+### 심볼/조합 사전등록(확정, 등록 후 변경 금지)
+
+1. OFI momentum: BTC, ETH, PAXG (전부).
+2. Basis reversion: BTC/ETH × (binance,okx)/(binance,hl)/(okx,hl) 중 실제
+   겹치는 날짜수(`_MIN_DAYS=30` 이상)로 최대 4개 — **데이터 가용성으로 선정,
+   성과로 선정 아님**(사후선택 방지).
+3. Absorption momentum: BTC, ETH, PAXG (전부, `orderflow_absorption.py`
+   그대로).
+4. Skew divergence momentum: BTC, ETH × horizon 단일 사전등록(15초 —
+   5s/15s/60s 중 노이즈(5s)와 지연(60s) 사이 균형점으로 사전선택, 사후 최고
+   horizon 고르기 금지).

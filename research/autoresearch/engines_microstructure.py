@@ -235,3 +235,66 @@ def _basis_candidates(selection: list, n_variants: int) -> list:
             thesis=f"{coin} {venue_a}-{venue_b} 일별 basis 수렴(cash-and-carry 재정거래)",
             direction="research", run=_run, meta={}))
     return out
+
+
+def _absorption_result(symbol: str) -> dict | None:
+    """orderflow_absorption.py 어댑터 — run_hypothesis()와 동일 시퀀스를 직접 재현해
+    체결별 pnl 리스트(wf 분할용)를 추가로 확보. 자체 로직/임계값 불변(dormant 모듈)."""
+    from research.strategies.orderflow_absorption import TARGET_NOTIONAL_USD, _median, build_bars_and_signals
+    from research.validation.engine import simulate_long_short
+    from research.validation.baselines import random_same_frequency
+    from research.validation.cost_model import hl_effective_cost_bps
+    from research.validation.metrics import trade_metrics
+
+    dates = jsonl_dates.list_dates(_ORDERFLOW_DIR, glob_prefix=f"{symbol}_")
+    ticks = []
+    for date in dates:
+        f = jsonl_dates.open_stem(_ORDERFLOW_DIR, f"{symbol}_{date}")
+        if f is None:
+            continue
+        with f:
+            ticks.extend(json.loads(line) for line in f if line.strip())
+    if not ticks:
+        return None
+    ticks.sort(key=lambda t: t["ts"])
+
+    data = build_bars_and_signals(ticks)
+    closes, signals, eligible = data["closes"], data["signals"], data["eligible"]
+    if len(closes) < _MIN_EVENTS:
+        return None
+
+    trade_size = TARGET_NOTIONAL_USD / _median(closes)
+    cost_bps = hl_effective_cost_bps("major", taker=True)
+    trades = simulate_long_short(closes, signals, trade_size, cost_bps)
+    if len(trades) < _MIN_EVENTS:
+        return None
+
+    strat = trade_metrics(trades)
+    stress_trades = simulate_long_short(closes, signals, trade_size, cost_bps * _STRESS_MULT)
+    stress_strat = trade_metrics(stress_trades)
+
+    holds = [max(1, t["exit_idx"] - t["entry_idx"]) for t in trades]
+    rnd = random_same_frequency(
+        closes, n_trades=strat["num_trades"], holding_periods=holds,
+        trade_size=trade_size, cost_bps=cost_bps,
+        eligible_indices=eligible, n_runs=_N_PERMS, seed=_SEED)
+    pv = empirical_p_value(strat["total_pnl"], rnd)
+
+    pnls = [t["pnl"] for t in trades]
+    return {"pnls": pnls, "net_stress": stress_strat["total_pnl"] / len(pnls), "pv": pv}
+
+
+def _absorption_candidate(symbol: str, n_variants: int):
+    from research.autoresearch.engine import Candidate
+
+    def _run():
+        r = _absorption_result(symbol)
+        if r is None:
+            return None
+        return _event_pnl_evidence(r["pnls"], r["net_stress"], r["pv"], n_variants)
+
+    return Candidate(
+        cid=f"micro_absorption_momentum_{symbol}", category="microstructure",
+        thesis=(f"{symbol} 1분봉 오더플로우 흡수(매도우세인데 안 밀림=롱, 매수우세인데 "
+                f"안 오름=숏) — research/strategies/orderflow_absorption.py 그대로(어댑터)"),
+        direction="research", run=_run, meta={})

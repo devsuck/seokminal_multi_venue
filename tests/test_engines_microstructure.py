@@ -211,3 +211,17 @@ def test_basis_candidates_shape(tmp_path, monkeypatch):
     result = cands[0].run()
     assert result is not None
     assert result["n"] == 35
+
+
+def test_absorption_result_none_with_no_ticks(tmp_path, monkeypatch):
+    monkeypatch.setattr(em, "_ORDERFLOW_DIR", tmp_path)
+    assert em._absorption_result("BTC") is None
+
+
+def test_absorption_candidate_shape_and_none_run(tmp_path, monkeypatch):
+    monkeypatch.setattr(em, "_ORDERFLOW_DIR", tmp_path)
+    cand = em._absorption_candidate("BTC", n_variants=4)
+    assert cand.cid == "micro_absorption_momentum_BTC"
+    assert cand.category == "microstructure"
+    assert cand.direction == "research"
+    assert cand.run() is None

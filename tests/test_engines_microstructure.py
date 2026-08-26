@@ -1,4 +1,17 @@
+import gzip
+import json as _json
+
+import pytest
+
 from research.autoresearch import engines_microstructure as em
+
+
+def _write_orderflow_day(dirpath, symbol, date, rows):
+    dirpath.mkdir(parents=True, exist_ok=True)
+    path = dirpath / f"{symbol}_{date}.jsonl"
+    with path.open("w") as f:
+        for r in rows:
+            f.write(_json.dumps(r) + "\n")
 
 
 def test_assemble_evidence_contract_shape():
@@ -64,3 +77,37 @@ def test_event_pnl_evidence_splits_chronologically():
     assert ev["wf_first"] == 1.0
     assert ev["wf_second"] == 2.0
     assert ev["net"] == 1.5
+
+
+def test_daily_ofi_and_price_aggregates_signed_size(tmp_path, monkeypatch):
+    monkeypatch.setattr(em, "_ORDERFLOW_DIR", tmp_path)
+    _write_orderflow_day(tmp_path, "BTC", "2026-07-10", [
+        {"ts": 1.0, "side": "buy", "size": 10.0, "price": 100.0},
+        {"ts": 2.0, "side": "sell", "size": 4.0, "price": 101.0},
+        {"ts": 3.0, "side": "buy", "size": 1.0, "price": 102.0},
+    ])
+    ofi, price = em._daily_ofi_and_price("BTC")
+    assert ofi["2026-07-10"] == pytest.approx(7.0)
+    assert price["2026-07-10"] == 102.0
+
+
+def test_ofi_signs_outcomes_next_day_pairing(tmp_path, monkeypatch):
+    monkeypatch.setattr(em, "_ORDERFLOW_DIR", tmp_path)
+    _write_orderflow_day(tmp_path, "BTC", "2026-07-10", [
+        {"ts": 1.0, "side": "buy", "size": 10.0, "price": 100.0},
+    ])
+    _write_orderflow_day(tmp_path, "BTC", "2026-07-11", [
+        {"ts": 1.0, "side": "sell", "size": 5.0, "price": 110.0},
+    ])
+    signs, outcomes = em._ofi_signs_outcomes("BTC")
+    assert signs == [1.0]
+    assert outcomes == [pytest.approx(0.10)]
+
+
+def test_ofi_candidate_run_returns_none_with_no_data(tmp_path, monkeypatch):
+    monkeypatch.setattr(em, "_ORDERFLOW_DIR", tmp_path)
+    cand = em._ofi_candidate("BTC", n_variants=4)
+    assert cand.cid == "micro_ofi_momentum_BTC"
+    assert cand.category == "microstructure"
+    assert cand.direction == "research"
+    assert cand.run() is None

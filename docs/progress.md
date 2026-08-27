@@ -86,6 +86,80 @@ None/0을 반환해 **조용히** 실패한다. 테스트 4,323건이 다 놓친
   → 사용자 호스트(Python 3.14)에서 `pytest tests/ -q` 전체 재확인 필요.
 - **registry 상태 미변경**(위 "다음 할 일" 참고) — 의도적 결정.
 
+### 이어서 (같은 세션) — 조용한 실패 3종 마감: Lv5 권한 축소 + 스키마 드리프트 가드
+
+위 critic 버그를 고치고 나서 사용자가 "수정하고 싶은 거 다 수정해도 좋다"고 위임.
+같은 주제(조용한 실패)의 나머지 지점을 정리했다. **원장 상태(3건 재승격)는 여전히
+손대지 않음** — 아래 "다음 할 일" 참고.
+
+#### 1. Lv5 Claude 호출 권한 축소 (보안)
+
+`lv5_agent._call_claude()`가 `--dangerously-skip-permissions --permission-mode
+bypassPermissions`로 나가고 있었다. 3-Phase 리뷰는 순수 텍스트 분석이라 도구가
+하나도 필요 없는데, 프롬프트에는 시장 컨텍스트·종목명·과거 메모 등 **외부에서
+흘러든 문자열**이 그대로 삽입된다 → 브로커 자격증명을 든 트레이딩 호스트에서
+임의 명령을 실행시키는 주입 경로.
+
+CLI로 직접 실험해서 확인한 것:
+- `--permission-mode manual`만으로는 **못 막는다** — print 모드에서도
+  "Run the bash command 'echo PWNED'" 프롬프트가 실제로 실행됐다.
+- `--disallowed-tools Bash Edit Write Read ...`는 확실히 차단된다("Bash isn't
+  available as a tool in this session" 응답 확인).
+- 가변인자 목록이 프롬프트를 삼키므로 `--`로 끊어야 한다. `--allowed-tools ""`는
+  프롬프트를 먹어버려서 "Input must be provided" 에러가 난다.
+- 잠근 상태에서 텍스트/JSON 응답 정상 동작 확인.
+
+#### 2. 호출·리뷰 실패 관측 가능하게
+
+- `_call_claude`가 returncode를 안 봤다 → CLI가 죽어도 부분 stdout이 정상 응답처럼
+  흘러갔다. rc≠0이면 stderr 로깅 후 빈 문자열.
+- `_run_review`는 데몬 스레드라 예외가 로그에서 끝났다(progress.md 07월 기록의
+  "리뷰 파이프라인이 조용히 스킵되는 별개 버그" 해소). 결과를 캐시에 남겨
+  `apply_cached_strategy` 노트와 `get_review_status`로 노출.
+
+#### 3. 스키마 드리프트 가드 (`api_server/schema_guard.py` 신규)
+
+세우는 불변식: **파싱 근거가 충분히 쌓였는데 추출 0건이면 콜드스타트가 아니라
+스키마 드리프트다.**
+
+관건은 "근거" 정의다. "사이클 많은데 결과 0"으로 잡으면 조용한 에이전트(임계값이
+높아 안 사는 중)를 오탐하고, 오탐이 쌓이면 감시가 무시당한다 — 그게 원래 버그가
+6주 버틴 방식. 그래서 호출자가 **파서와 독립적인** 증거를 센다:
+
+| 배선 지점 | 근거 | 판정 |
+|---|---|---|
+| `agent_perf.compute_performance` | 체결 페이로드를 든 사이클 수(`fills`·`fill` 양쪽) | 페이로드 5건+ 인데 trade 0건 |
+| `lv5_learner.compute_lv5_params` | 청산 액션을 든 사이클 수(`action`·`actions` 양쪽) | 청산 5건+ 인데 outcome 0건 |
+
+lv5는 드리프트 시 노트가 `[Lv5 학습중] 데이터 0/5건` → `[Lv5 경보] 청산 N건이
+기록됐는데 학습 데이터 0건`으로 바뀐다. 이 노트는 기존 배선상
+`routers/agents.py`가 사이클 action 문자열에 실어주므로 **대시보드에 자동으로 뜬다**
+(추가 배선 불필요). `compute_lv5_params` 반환 dict의 `schema_drift` 키는 분기와
+무관하게 항상 존재하게 맞췄다 — 분기마다 키가 달라지는 게 다음 키 버그의 형태라서.
+
+`agent_perf`는 대시보드 요청마다 10만 사이클을 도는 핫패스라 근거 카운팅을 별도
+순회 대신 기존 루프에 얹었다(`has_fill_payload` 사이클 단위 술어).
+
+#### 변경된 파일
+- `api_server/schema_guard.py`(신규), `api_server/agent_perf.py`,
+  `api_server/lv5_learner.py`, `api_server/lv5_agent.py`
+- `tests/test_schema_guard.py`(신규 13건), `tests/test_lv5_agent_hardening.py`(신규 9건)
+- 커밋 `895005c`(권한/관측), `3f20601`(드리프트 가드)
+
+검증: 격리 환경에서 337건 통과(jarvis 298 + lv5/agent_perf/schema_guard 기존·신규).
+기존 `test_lv5_learner.py`/`test_agent_perf.py` 회귀 없음. import 사이클 없음 확인.
+
+#### 다음 할 일 (이 세션분)
+- **`pytest tests/ -q` 전체 재확인** — 위 세션 로그의 컨테이너 환경 제약 동일.
+  특히 `test_agent_performance_api.py`는 `api_server.main`을 타서 여기서 못 돌렸다.
+  `compute_performance`의 반환값 자체는 안 바뀌었지만(드리프트 체크만 추가) 확인 권장.
+- **드리프트 경고 노출 지점 추가 검토** — `schema_guard.recent_drifts()`가 프로세스
+  수명 한정 deque(maxlen=50)에 쌓이는데 아직 읽는 엔드포인트가 없다. lv5는 노트로
+  자동 노출되지만 `agent_perf` 쪽은 로그(ERROR)에만 남는다. 워치독/헬스 엔드포인트에
+  물릴지 결정 필요.
+- **나머지 경계**: 이번에 판 건 lv5_learner·agent_perf·critic 세 곳. `routers/agents.py`
+  ↔ 사이클 페이로드, `lv5_dsl`, `lv5_context` 등 다른 경계는 그대로다.
+
 ## 세션 로그 (2026-08-25) — 모바일 대시보드 "마켓 퀄리티(PWA급)" 4서브시스템 중 백엔드 Web Push 인프라 (사용자 자리비움, 위임 판단으로 진행)
 
 배경: 사용자가 "모바일 플랫폼 마켓 올라가도 될 정도로 다 해줘"(PWA급 완성도로 확정) 위임. 4서브시스템(PWA 설치/오프라인, 터치/제스처, 푸시알림, QA) 중 이 리포 담당분(푸시알림 백엔드) 작업. 프론트 쪽 세부는 `seokminal-dashboard/docs/progress.md` 참고.

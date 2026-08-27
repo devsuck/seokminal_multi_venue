@@ -1,6 +1,6 @@
 # Seokminal Multi-Venue — Roadmap
 
-**마지막 업데이트:** 2026-08-16 (전체 플랫폼 헬스체크 + whale_tick 백오프 대응 완료)
+**마지막 업데이트:** 2026-08-27 (critic 지표 키 미스매치 수정 — 실데이터 전략 전건 오탈락 해소)
 **스택:** Python 3.14, FastAPI, NautilusTrader, pytest(`asyncio_mode=auto`, `@pytest.mark.asyncio` 금지)
 
 > 프론트엔드 로드맵은 별도: `seokminal-dashboard/docs/roadmap.md`
@@ -34,6 +34,7 @@
 | — | **미커밋 백로그(08-05~08-15, 150+파일) 전수검토·분리커밋** — gz 압축데이터 무음누락 버그, options_uoa 하트비트/사후수익률 라벨링, convergence_legs 4소스 상시수집기, sharp_wallet maker/taker 체결시뮬, polymarket_bot 다각화 무엣지 사후검증, 지식그래프 스코어 이력 API, `grand_total_realized_pnl` ₩/$ 혼합 제거, 재부팅시 에이전트 자동복구, 워치독 데스크톱 알림 — 13개 논리커밋으로 분리(상세: `docs/progress.md` 2026-08-16 이어서) | 다수(커밋별 명시) | 08-16 |
 | — | **디스크 위기 대응 + 데이터 수명주기 크론 배선** — 시스템 디스크 97% 도달, `research/data` 12G→6.0G 수동압축. `compress_old_data.sh` 대기기간 2일→0일 단축, `prune_old_data.py`(90일 삭제, 기존 미배선) wrapper 신규+크론 등록(05:00) | `scripts/compress_old_data.sh`, `scripts/prune_old_data.sh` | 08-16 |
 | — | **전체 플랫폼 라이브 헬스체크 + 장애대응 5건** — 좀비 tmux 제거, Lv5 ZeroDivisionError 수정, agent `e19bf348` 드라이버 미기동 발견+기동, whale_tick sleep-wake 크래시(워치독이 세션존재만 보고 내부프로세스 생사는 안 봄 — 알려진 갭) 대응+지수백오프 이식, `prune_old_data` 크론/launchd 중복 정리, `polymarket_sharp_wallet_bot`(누적 -$2025, 순수비용잠식) 비활성화 | `api_server/lv5_agent.py`, `research/run_polymarket_whale_collect.py` | 08-16 |
+| — | **critic 지표 키 미스매치 수정** — `backtest.py`가 실험원장을 `net_pnl`/`random_pct`로 읽었으나 현행 스키마 키는 `net`/`percentile`(원장에 42종 스키마 혼재). 두 필드 None → critic 검사가 전부 `is not None` 가드라 **플래그 0개인데 rejected** = 실데이터 전략 전건 오탈락. autoresearch가 6주간 찾은 유일한 후보 3건(`auto_fac_kr_size_smb`/`amihud_illiq`/`turnover_neglect`, p=0.0033·BH생존·레드팀CLEARED·WF후반≥전반)이 07-13에 폐기됐고 루프는 이후 224회 더 CANDIDATE 재생산. 별칭 조회 + `metrics_incomplete` 플래그 + 층간 불일치 감시 신규 | `jarvis/agents/backtest.py`, `critic.py`, `research/check_pipeline_consistency.py` | 08-27 |
 
 ---
 
@@ -58,7 +59,10 @@
 
 ## 다음 세션 최우선
 
-1. **골드 데이터소스 최종 결정** — 평일 마켓시간에 `probe_ib_gold4.py`(GC vs 1OZ, COMEX 선물) + `probe_ib_spotgold.py`(XAUUSD/XAGUSD, CMDTY 스팟) 재실행해서 에러이벤트로 무료구독 범위 확정. 참고: `xyz:GOLD`(HL)는 이미 07-08 세션에 데이터 파이프라인 검증 완료(parquet 캐시, PAXG 대비 유동성 10배) — IB 쪽이 막히면 바로 대체 가능한 상태
+1. **오탈락 3건 재승격 실행** — critic 버그로 폐기된 `auto_fac_kr_size_smb`(net 4.23%)/`auto_fac_kr_amihud_illiq`(1.64%)/`auto_fac_kr_turnover_neglect`(1.20%)를 파이프라인 재실행으로 registry에 재전이. 에이전트가 원장을 임의로 밀어넣지 않고 남겨둔 항목(append-only 프로덕션 상태 + forward 자동배선 이어짐). 사후 `PYTHONPATH=. python3 research/check_pipeline_consistency.py`가 0건이어야 정상. **주의**: 셋 다 학계에 잘 알려진 팩터(SMB·Amihud·거래대금 소외)라 캐파·혼잡 리스크 별도 검토 필요
+2. **`pytest tests/ -q` 전체 재확인** — 08-27 변경은 conftest 없는 격리 환경에서 jarvis 298건 + 신규 16건만 통과 확인. 컨테이너가 Python 3.11이라 unpinned `nautilus_trader`가 1.221.0으로 잡히며 `MaxDrawdown` import가 깨져 전체 스위트 실행 불가(기존 이슈, 이번 변경과 무관). Python 3.14 호스트에서 재확인 필요
+3. **GENERATOR 스케줄 기동** — `jarvis/GENERATOR.md` 하단 "스케줄 설정(별도 opt-in)"이 안 켜져 있음. 신규 가설 최초등장이 07-08에서 멈췄고(19종 이후 0종) 이후 5주간 같은 18개를 224회 재검증만 함 — 자율 탐색이 아니라 고정 리스트 재검증 크론 상태
+4. **골드 데이터소스 최종 결정** — 평일 마켓시간에 `probe_ib_gold4.py`(GC vs 1OZ, COMEX 선물) + `probe_ib_spotgold.py`(XAUUSD/XAGUSD, CMDTY 스팟) 재실행해서 에러이벤트로 무료구독 범위 확정. 참고: `xyz:GOLD`(HL)는 이미 07-08 세션에 데이터 파이프라인 검증 완료(parquet 캐시, PAXG 대비 유동성 10배) — IB 쪽이 막히면 바로 대체 가능한 상태
 2. **오더플로우 트랙 결론 반영** — BTC/ETH(원시+컨텍스트게이트) 전부 REJECT 확정. 같은 신호군 파라미터 튜닝 재시도 금지(여러 세션째 확인된 원칙). 재시도하려면 근본적으로 다른 방향: 선물 NQ/MNQ 원시틱 이식(현재 미저장이라 별도 결정 필요), POC/value area 필터, 또는 완전히 다른 마켓구조 가설
 3. IB Client Portal `CME Real-Time (NP,L2)` 구독 여전히 미완(사용자 직접 신청 필요) — NQ/MNQ/GC/ES 계열 라이브 오더플로우 전부 이 구독 없이는 tick 수신 불가(contract resolve까지만 됨)
 4. **CB/BW 발행 negative-drift 리스크필터 배선** — 공시 후 하위5% 확인됨(07-초 검증)이나 아직 미배선. buyback v1은 동결이라 붙이려면 새 v3 shadow로 등록 필요(설계 미착수)
@@ -72,6 +76,8 @@
 
 ## 알려진 블로커
 
+- **경계 스키마 계약 부재 (같은 버그 클래스 3회)**: `actions`vs`action`(lv5_learner, 자기학습 6주 사망) · `fill`vs`fills`(agent_perf, -94.64% 오기록) · `net_pnl`vs`net`(backtest, 실데이터 전건 오탈락 5주+). 전부 타입 없는 dict를 모듈 경계로 넘기며 예외 대신 None을 반환해 **조용히** 실패한다. 테스트 4,323건이 다 놓친 건 픽스처가 버그 스키마를 그대로 흉내내서. 08-27에 critic 경계 1곳만 막았고 나머지는 그대로 — dataclass/TypedDict + 필수 키 검증으로 4번째 재발 차단 필요
+- **`lv5_agent.py:66` 권한 과다**: 트레이딩 호스트에서 `claude --dangerously-skip-permissions --permission-mode bypassPermissions`로 서브프로세스 기동. 페이퍼 단계라 현재는 허용이나 live 전 필수 축소
 - **CME/COMEX 계열(GC/ES/NQ) 실시간 tick**: "No market data permissions" — 유료구독(`CME Real-Time (NP,L2)`, ~$12.10/월) 필요, 사용자 미신청
 - ~~**Lv5 리뷰 라벨링 버그 (agent 491d9679, HL)**~~ ✅ **08-16 해소.** 실제 원인은 추정과 달랐음 — HYPE 포지션 반전 문제가 아니라 (1) `extract_trade_outcomes()`가 `actions`(존재한 적 없는 키)를 읽던 파싱버그, (2) exit 4개 venue 전부 구조화 `fill` 미기록. `fills` 리스트 스키마로 수정, `491d9679`는 `e19bf348`로 클린 리셋. 상세: `docs/progress.md` 2026-08-16.
 - **IB XAUUSD(Forex 타입)**: `Forex('XAUUSD')` qualify 자체 실패(Error 200, no security definition) — CMDTY 타입(`XAUUSD`/`XAGUSD`, conId 확보완료)으로 대체 경로 발견(07-12), 평일 라이브검증 대기

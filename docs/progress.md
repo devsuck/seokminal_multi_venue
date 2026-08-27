@@ -3,6 +3,89 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-08-27) — 에이전틱 트랙 평가 중 critic 지표 키 미스매치 발견·수정 (실데이터 전략 전건 오탈락)
+
+배경: 사용자가 "에이전틱 트레이딩 쪽 평가"를 요청 → autoresearch 루프 산출물을 실측 대조하다가
+`research/autoresearch/results.jsonl`(CANDIDATE)과 `jarvis/_state/registry.jsonl`(rejected)이
+같은 전략에 정반대 판정을 들고 있는 걸 발견. 추적 결과 코드 버그였음.
+
+### 발견한 버그
+
+`jarvis/agents/backtest.py`의 experiment_registry 리플레이 경로가 지표를 `net_pnl`/`random_pct`로
+읽고 있었으나, 현행 실험원장 스키마의 실제 키는 `net`/`percentile`. (experiment_registry.jsonl은
+작성 시점별로 **42종 스키마**가 섞여 있고, 구형 6행짜리 스키마만 `net_pnl`을 쓴다 — 코드가 그
+구형에 맞춰져 있었고 포맷 변경 때 안 따라감.)
+
+두 필드가 항상 None → `critic.py`의 검사는 전부 `is not None` 가드라 **플래그 0개**, 그런데
+`passes`/`weak`는 non-None을 요구하므로 **결과만 rejected**. 즉 "이유 없는 탈락"이 합성이 아닌
+**실데이터 전략 전건**에 발생.
+
+실제 피해 — autoresearch 루프가 6주간(07-03~08-25, 256런, 누적 3,965건 검정) 찾아낸 **유일한
+후보 3건**이 2026-07-13에 전부 폐기:
+
+| cid | n | net | pct | p | wf_first | wf_second | redteam |
+|---|---|---|---|---|---|---|---|
+| `auto_fac_kr_size_smb` | 82 | 4.23% | 100.0 | 0.0033 | 4.32% | 4.14% | CLEARED |
+| `auto_fac_kr_amihud_illiq` | 82 | 1.64% | 100.0 | 0.0033 | 1.57% | **1.70%** | CLEARED |
+| `auto_fac_kr_turnover_neglect` | 82 | 1.20% | 100.0 | 0.0033 | 0.79% | **1.62%** | CLEARED |
+
+셋 다 BH 생존·레드팀 통과·PIT survivorship-free·**WF 후반이 전반 이상**(tom의 16배 감쇠와 정반대).
+루프는 폐기 이후에도 224회 더 CANDIDATE를 재생산하며 5주간 모순 상태로 공존했다.
+
+### 수정
+- `jarvis/agents/backtest.py`: `_METRIC_ALIASES` + `_metrics_from_experiment_row()`로 러너별 키
+  별칭을 순서대로 조회. 구형 `net_pnl`/`random_pct`, `mean_return`/`net_base`도 하위호환 유지.
+- `jarvis/agents/critic.py`: 지표 누락 시 `metrics_incomplete:<빠진필드>` 명시 신고 →
+  **플래그 0개 + rejected 조합이 구조적으로 불가능**해짐.
+- `research/check_pipeline_consistency.py`(신규): 층간 판정 불일치 감시.
+  `verdict_conflict`(실험원장 candidate ↔ registry rejected) / `reasonless_rejection` /
+  `stale_candidate` 3종. 종료코드 1로 크론·CI 알람 연결 가능.
+  **오탐 억제가 설계 핵심** — `seed:` 계열 전이는 reason 문자열이 사유를 담으므로 제외.
+  현 원장 기준 정상 rejected 57건에 오탐 0, 실제 피해 3건만 검출.
+- 테스트 신규 2파일 16건(`tests/test_jarvis_critic_metrics.py`, `tests/test_pipeline_consistency_check.py`).
+
+검증: 실제 원장 3건 리플레이 → `rejected` → `paper_candidate` 정정 확인. 승격 기준은 그대로
+(WF 붕괴 → watchlist 강등, random 열위·p 비유의 → 여전히 rejected). jarvis 테스트 298건 회귀 없음.
+
+### 같은 버그 클래스 3회 — 이게 진짜 문제
+
+| # | 위치 | 미스매치 | 결과 | 잠복 |
+|---|---|---|---|---|
+| 1 | `lv5_learner.py` | `actions` vs `action` | 자기학습 영구 사망 | 6주 |
+| 2 | `agent_perf.py` | `fill` vs `fills` | PnL 오기록(-94.64%) | 6주 |
+| 3 | `backtest.py:44` | `net_pnl`/`random_pct` vs `net`/`percentile` | 실데이터 전략 전건 오탈락 | 5주+ |
+
+전부 모듈 경계를 **타입 없는 dict**로 넘기면서 스키마 계약이 없어 생겼고, 전부 예외 대신
+None/0을 반환해 **조용히** 실패한다. 테스트 4,323건이 다 놓친 이유도 픽스처가 버그 스키마를
+그대로 흉내내고 있어서(#1에서 이미 확인된 패턴).
+
+### 다음 할 일
+- **3건 재승격 실행 (사용자 호스트에서)** — 이번 세션에선 원장을 건드리지 않았다. registry는
+  append-only 프로덕션 상태고, 재승격은 forward 배선(`paper_active`)까지 자동으로 이어지므로
+  에이전트가 임의로 상태를 밀어넣는 건 부적절하다고 판단. 사용자가 파이프라인 재실행해서
+  전이를 남길 것. 사후 `PYTHONPATH=. python3 research/check_pipeline_consistency.py`가
+  0건을 반환해야 정상.
+- **경계 스키마 계약 도입** — dataclass/TypedDict + 필수 키 검증으로 4번째 재발 차단. 이번엔
+  critic 경계 1곳만 막았고 나머지 경계는 그대로.
+- **GENERATOR 스케줄 미기동 확인** — `jarvis/GENERATOR.md` 하단 "스케줄 설정(별도 opt-in)"이
+  안 켜져 있음. 신규 가설 최초등장이 07-08에서 멈췄고(19종 이후 0종), 이후 5주간 같은 18개를
+  224회 재검증만 했다. 자율 탐색이 아니라 고정 리스트 재검증 크론 상태.
+- **에이전틱 표면 실측** — LLM을 실제 호출하는 파일은 `api_server/` 4개뿐(`lv5_agent.py` 등).
+  `jarvis/` 59개 디렉터리는 LLM 호출 0건(설계 의도대로 결정적). 명명이 실제보다 커 보이는 점 인지.
+- **보안**: `lv5_agent.py:66`이 트레이딩 호스트에서 `claude --dangerously-skip-permissions
+  --permission-mode bypassPermissions`로 서브프로세스 기동. 페이퍼 단계라 지금은 허용이지만
+  live 전에 반드시 권한 축소.
+
+### 막힌 부분/결정사항
+- **테스트를 전체 스위트로 못 돌림** — 이 컨테이너는 Python 3.11이고 `pyproject.toml`의
+  `nautilus_trader`가 unpinned라 1.221.0이 설치되는데, 거기선 `MaxDrawdown`이
+  `nautilus_trader.analysis`에서 빠져 `backtest_runner/runner.py` import가 깨진다
+  (Python 3.11 상한이 1.221.0이라 하위 버전 회피 불가). **이번 변경과 무관한 기존 환경 이슈**.
+  `tests/conftest.py`의 autouse 픽스처가 `api_server.main`을 끌어와서 tests/ 전체가 영향을 받음.
+  대신 conftest 없는 격리 디렉터리에서 jarvis 관련 298건 + 신규 16건을 돌려 통과 확인.
+  → 사용자 호스트(Python 3.14)에서 `pytest tests/ -q` 전체 재확인 필요.
+- **registry 상태 미변경**(위 "다음 할 일" 참고) — 의도적 결정.
+
 ## 세션 로그 (2026-08-25) — 모바일 대시보드 "마켓 퀄리티(PWA급)" 4서브시스템 중 백엔드 Web Push 인프라 (사용자 자리비움, 위임 판단으로 진행)
 
 배경: 사용자가 "모바일 플랫폼 마켓 올라가도 될 정도로 다 해줘"(PWA급 완성도로 확정) 위임. 4서브시스템(PWA 설치/오프라인, 터치/제스처, 푸시알림, QA) 중 이 리포 담당분(푸시알림 백엔드) 작업. 프론트 쪽 세부는 `seokminal-dashboard/docs/progress.md` 참고.

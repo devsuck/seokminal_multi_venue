@@ -16,6 +16,39 @@ from jarvis.permissions import require
 from jarvis.registry import Status, StrategyRegistry, config_hash
 
 
+# ── experiment_registry row → critic metrics ─────────────────────────────────
+# experiment_registry.jsonl은 한 스키마가 아니다(작성 시점별로 42종). 통계 필드가
+# 러너마다 다른 이름으로 들어와서, 단일 키로 읽으면 조용히 None이 되고 critic이
+# 플래그 0개짜리 "이유 없는 rejected"를 낸다(2026-07-13 auto_fac_* 3건이 이 경로로
+# 오탈락). 그래서 별칭을 순서대로 훑고, 그래도 없으면 metrics에 None을 남겨
+# critic이 metrics_incomplete로 명시 신고하게 한다.
+_METRIC_ALIASES: dict[str, tuple[str, ...]] = {
+    "net": ("net", "net_pnl", "net_base", "mean_return"),
+    "random_percentile": ("percentile", "random_pct", "random_percentile"),
+    "empirical_p": ("p", "empirical_p", "p_value"),
+    "wf_first": ("wf_first",),
+    "wf_second": ("wf_second",),
+    "sharpe": ("sharpe",),
+    "ann_return": ("ann_return",),
+}
+
+
+def _first_present(row: dict, names: tuple[str, ...]):
+    """별칭 후보를 순서대로 조회 → 첫 non-None 반환. 전부 없으면 None."""
+    for name in names:
+        value = row.get(name)
+        if value is not None:
+            return value
+    return None
+
+
+def _metrics_from_experiment_row(row: dict) -> dict:
+    """experiment_registry 행을 critic이 읽는 metrics 스키마로 정규화."""
+    metrics = {key: _first_present(row, names) for key, names in _METRIC_ALIASES.items()}
+    metrics["powered"] = True
+    return metrics
+
+
 def run(strategy_id: str, spec: dict | None = None, commit: bool = True) -> dict:
     """spec 있으면 합성 하네스, 없으면 기존 experiment_registry 결과 리플레이(불변)."""
     require(BACKTEST_AGENT, "run_backtest", strategy_id)
@@ -41,10 +74,7 @@ def run(strategy_id: str, spec: dict | None = None, commit: bool = True) -> dict
         from research.agents.experiment_registry import already_tested
         rows = already_tested(strategy_id)
         e = rows[-1] if rows else {}
-        metrics = {"net": e.get("net_pnl"), "random_percentile": e.get("random_pct"),
-                   "empirical_p": e.get("p"), "wf_first": e.get("wf_first"),
-                   "wf_second": e.get("wf_second"), "powered": True,
-                   "sharpe": e.get("sharpe"), "ann_return": e.get("ann_return")}
+        metrics = _metrics_from_experiment_row(e)
         data_version = str(e.get("data_quality", "unknown"))
 
     result = {

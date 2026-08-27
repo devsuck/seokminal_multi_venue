@@ -2,6 +2,7 @@
 
 결정적 휴리스틱으로 편향/약점 플래그 + 권고(reject/watchlist/paper_candidate).
 승격 기준(스펙): net>0 · random>95pct · p<0.05 · WF 양쪽+ · not underpowered.
+지표 누락은 `metrics_incomplete:<빠진필드>` 플래그로 명시한다 — 플래그 0개 rejected 금지.
 """
 from __future__ import annotations
 
@@ -22,6 +23,15 @@ def review(strategy_id: str, metrics: dict) -> dict:
     powered = metrics.get("powered", True)
 
     flags = []
+    # 판정에 필요한 지표가 아예 안 들어온 경우를 먼저 명시 신고한다. 아래 검사는
+    # 전부 `is not None` 가드라 지표가 비면 플래그가 하나도 안 뜨는데, passes/weak는
+    # non-None을 요구하므로 결과만 rejected가 된다 — 즉 "이유 없는 탈락"이 생긴다.
+    # (2026-07-13 auto_fac_* 3건이 정확히 이 경로로 오탈락했다.)
+    missing = [name for name, value in (("net", net), ("random_percentile", pct),
+                                        ("empirical_p", p), ("wf_first", wf1),
+                                        ("wf_second", wf2)) if value is None]
+    if missing:
+        flags.append("metrics_incomplete:" + ",".join(missing))
     if net is not None and net <= 0:
         flags.append("net_non_positive")
     if pct is not None and pct < 95:

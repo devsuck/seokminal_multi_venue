@@ -59,18 +59,39 @@ def _claude_bin() -> str | None:
     )
 
 
+# 3-Phase 리뷰는 순수 텍스트 분석이다 — 도구가 하나도 필요 없다. 그런데 프롬프트에는
+# 시장 컨텍스트·종목명·과거 메모처럼 **외부에서 흘러든 문자열**이 그대로 삽입된다.
+# 여기에 도구 권한을 열어두면(과거: `--dangerously-skip-permissions
+# --permission-mode bypassPermissions`) 그 문자열이 브로커 자격증명을 들고 있는
+# 트레이딩 호스트에서 임의 명령을 실행시키는 주입 경로가 된다.
+# `--permission-mode`만으로는 못 막는다(print 모드에서도 Bash가 실제 실행됨).
+# 확실한 차단은 도구 자체를 빼는 `--disallowed-tools`다.
+_DISALLOWED_TOOLS = (
+    "Bash", "Edit", "Write", "Read", "Glob", "Grep",
+    "WebFetch", "WebSearch", "NotebookEdit", "Task", "TodoWrite",
+)
+
+
 def _call_claude(claude_path: str, prompt: str, timeout: int = 90) -> str:
-    """Claude CLI 호출 → stdout 반환. 실패 시 빈 문자열."""
+    """Claude CLI 호출 → stdout 반환. 실패 시 빈 문자열.
+
+    `--`로 도구 목록을 끊어야 가변인자가 프롬프트를 삼키지 않는다.
+    """
     try:
         proc = subprocess.run(
-            [claude_path, "--dangerously-skip-permissions",
-             "--permission-mode", "bypassPermissions", "--print", prompt],
+            [claude_path, "--print", "--disallowed-tools", *_DISALLOWED_TOOLS,
+             "--", prompt],
             capture_output=True, text=True, timeout=timeout,
         )
-        return proc.stdout.strip()
     except Exception as e:
         _log.warning("[Lv5] Claude 호출 실패: %s", e)
         return ""
+    if proc.returncode != 0:
+        # 종료코드를 안 보면 CLI가 죽어도 빈 문자열이 "빈 응답"과 구분이 안 된다.
+        _log.warning("[Lv5] Claude 비정상 종료(rc=%s): %s",
+                     proc.returncode, (proc.stderr or "").strip()[:300])
+        return ""
+    return proc.stdout.strip()
 
 
 # ── Prompt builders ───────────────────────────────────────────────────────────
@@ -388,8 +409,17 @@ def _run_review(
         except Exception:
             pass  # 알림 실패는 조용히
 
+        _set_cache(agent_id, {"last_review_ok": True, "last_review_error": None})
+
     except Exception as e:
+        # 리뷰는 데몬 스레드라 예외가 여기서 끝난다 — 로그만 남기면 대시보드엔
+        # "리뷰가 돈 적 없음"과 "리뷰가 매번 터짐"이 똑같이 보인다(2026-08 Lv5
+        # ZeroDivisionError가 이 방식으로 조용히 스킵됐다). 캐시에 남겨 노출한다.
         _log.error("[Lv5:%s] 리뷰 실패: %s", agent_id, e, exc_info=True)
+        _set_cache(agent_id, {
+            "last_review_ok": False,
+            "last_review_error": f"{type(e).__name__}: {e}"[:300],
+        })
     finally:
         _set_cache(agent_id, {"reviewing": False})
 
@@ -455,6 +485,9 @@ def apply_cached_strategy(
     status = f"[Lv5 에이전트] {note}"
     if reviewing:
         status += " (3-Phase 리뷰 진행 중...)"
+    elif cached.get("last_review_ok") is False:
+        # 실패를 노출 안 하면 "리뷰가 돈 적 없음"과 구분이 안 된다.
+        status += f" (⚠ 직전 리뷰 실패: {cached.get('last_review_error')})"
     elif review_ts:
         status += f" (리뷰: {review_ts})"
 
@@ -474,4 +507,6 @@ def get_review_status(agent_id: str) -> dict:
         "universe_add": cached.get("universe_add", []),
         "universe_remove": cached.get("universe_remove", []),
         "pause_next": cached.get("pause_next", False),
+        "last_review_ok": cached.get("last_review_ok"),
+        "last_review_error": cached.get("last_review_error"),
     }

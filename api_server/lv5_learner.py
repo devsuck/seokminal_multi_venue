@@ -16,6 +16,8 @@ import math
 import re
 from typing import Any
 
+from api_server import schema_guard
+
 # 왕복 거래비용 (수수료+슬리피지 보수 추정, fraction). 기대값은 항상 이 비용 차감 후.
 COST_PCT = 0.001
 
@@ -171,14 +173,30 @@ def compute_lv5_params(
     n = len(recent)
 
     if n < min_data:
+        # 콜드스타트와 파서 사망을 구분한다. 청산이 기록됐는데 outcome이 0건이면
+        # "아직 데이터가 없다"가 아니라 파싱이 깨진 것이다 — 2026-08 `actions` vs
+        # `action` 사고 때 이 자리의 "학습중 0/5건" 문구가 6주간 위장막 노릇을 했다.
+        drift = schema_guard.detect_drift(
+            "lv5_learner.extract_trade_outcomes",
+            n_evidence=schema_guard.count_close_actions(cycles),
+            n_extracted=len(outcomes),
+            hint="청산 액션은 기록됐는데 outcome이 0건 — action 문자열 포맷/키 확인",
+        )
+        note = (
+            f"[Lv5 경보] 청산 {drift['n_evidence']}건이 기록됐는데 학습 데이터 0건 — "
+            "파싱이 깨졌을 가능성. 자가학습 정지 상태로 간주하고 기본 파라미터 사용"
+            if drift else
+            f"[Lv5 학습중] 데이터 {n}/{min_data}건 — 기본 파라미터 사용"
+        )
         return {
             "threshold": base_threshold,
             "position_pct": base_position_pct,
             "pause": False,
             "win_rate": None,
             "n_trades": n,
-            "lv5_note": f"[Lv5 학습중] 데이터 {n}/{min_data}건 — 기본 파라미터 사용",
+            "lv5_note": note,
             "model_confidence": None,
+            "schema_drift": bool(drift),
         }
 
     wins = sum(1 for o in recent if o["win"])
@@ -248,6 +266,9 @@ def compute_lv5_params(
         "n_trades": n,
         "lv5_note": note,
         "model_confidence": model_confidence,
+        # 분기마다 키가 달라지면 소비자가 .get()으로 뭉개다가 다음 키 버그를 만든다.
+        # 여기까지 왔다는 건 outcome이 min_data 이상 파싱됐다는 뜻이라 항상 False.
+        "schema_drift": False,
     }
 
 

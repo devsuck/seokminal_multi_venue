@@ -15,6 +15,8 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 
+from api_server import schema_guard
+
 
 @dataclass
 class _Lot:
@@ -70,8 +72,12 @@ def compute_performance(cycles: list[dict]) -> Performance:
     lots: dict[str, deque[_Lot]] = {}
     perf = Performance()
 
+    n_fill_bearing = 0
+
     for cycle in cycles:
         reason = cycle.get("note") or cycle.get("next_trigger") or ""
+        if schema_guard.has_fill_payload(cycle):
+            n_fill_bearing += 1
         for fill in _extract_fills(cycle):
             symbol, side, qty, price = fill["symbol"], fill["side"], fill["qty"], fill["price"]
             trade = {
@@ -103,6 +109,15 @@ def compute_performance(cycles: list[dict]) -> Performance:
                 trade["realized_pnl"] = round(realized, 4)
 
             perf.trades.append(trade)
+
+    # 체결 페이로드는 쌓였는데 한 건도 매칭 안 됐으면 스키마 드리프트다.
+    # (2026-08 `fill` vs `fills` 사고가 이 조합으로 -94.64%를 만들었다.)
+    schema_guard.detect_drift(
+        "agent_perf.compute_performance",
+        n_evidence=n_fill_bearing,
+        n_extracted=len(perf.trades),
+        hint="사이클에 fills/fill 페이로드가 있는데 _extract_fills가 전부 버렸다 — 체결 스키마 확인",
+    )
 
     # Snapshot open positions from remaining lots.
     for symbol, book in lots.items():

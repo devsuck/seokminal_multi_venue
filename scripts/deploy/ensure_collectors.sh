@@ -23,7 +23,6 @@ cd "$REPO_ROOT" || { echo "repo root 없음: $REPO_ROOT" >&2; exit 1; }
 ENSURE=(
   "hl-orderflow-tick|research.run_hl_orderflow_tick_collect"
   "cross-venue-skew-tick|research.run_cross_venue_skew_collect"
-  "options-uoa|research.run_options_uoa_collect"
   "convergence-legs|research.run_convergence_signal_collect"
 )
 

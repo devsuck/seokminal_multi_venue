@@ -34,6 +34,15 @@ RUNNER_REGISTRY: dict[str, dict] = {
                                       "rules": {"cadence": "monthly", "hold_days": 4,
                                                 "envelope": "backtest_envelope",
                                                 "compare": ["cohort_mean", "win_rate"]}},
+    "fac_kr_size_smb_v1": {"runner": "research.paper.factor_forward:generate_kr_size_smb",
+                           "rules": {"cadence": "monthly", "envelope": "backtest_envelope",
+                                     "compare": ["monthly_mean", "monthly_std"]}},
+    "fac_kr_amihud_illiq_v1": {"runner": "research.paper.factor_forward:generate_kr_amihud_illiq",
+                               "rules": {"cadence": "monthly", "envelope": "backtest_envelope",
+                                         "compare": ["monthly_mean", "monthly_std"]}},
+    "fac_kr_turnover_neglect_v1": {"runner": "research.paper.factor_forward:generate_kr_turnover_neglect",
+                                   "rules": {"cadence": "monthly", "envelope": "backtest_envelope",
+                                             "compare": ["monthly_mean", "monthly_std"]}},
 }
 _GENERIC = {"runner": "generic", "rules": {"cadence": "manual", "ledger": "internal"}}
 

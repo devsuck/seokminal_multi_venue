@@ -8,6 +8,8 @@ import os
 
 import pytest
 
+from tests.jarvis_state_isolation import isolate_jarvis_state
+
 from jarvis.paper.deploy import auto_deploy_all, deploy, deployment_of, run_forward
 from jarvis.paper.monitor import monitor
 from jarvis.registry import Status, StrategyRegistry
@@ -15,18 +17,7 @@ from jarvis.registry import Status, StrategyRegistry
 
 @pytest.fixture(autouse=True)
 def _isolate_state(tmp_path, monkeypatch):
-    def sp(name):
-        return os.path.join(tmp_path, name)
-    import jarvis.audit.log as al
-    import jarvis.registry.lifecycle as rl
-    import jarvis.memory.store as ms
-    import jarvis.paper.ledger as pl
-    import jarvis.paper.deploy as dp
-    monkeypatch.setattr(al, "state_path", sp)
-    monkeypatch.setattr(rl, "state_path", sp)
-    monkeypatch.setattr(ms, "state_path", sp)
-    monkeypatch.setattr(pl, "state_path", sp)
-    monkeypatch.setattr(dp, "state_path", sp)
+    isolate_jarvis_state(monkeypatch, tmp_path)
     return tmp_path
 
 

@@ -7,13 +7,12 @@
 from __future__ import annotations
 
 import json
-import os
 
 import pytest
 
-import jarvis.registry.lifecycle as rl
 import research.check_pipeline_consistency as cpc
 from jarvis.registry import Status, StrategyRegistry
+from tests.jarvis_state_isolation import isolate_jarvis_state
 
 QUALIFIED = {"hypothesis_id": "auto_fac_demo", "status": "candidate", "n": 82,
              "net": 0.042, "percentile": 100.0, "p": 0.0033,
@@ -22,8 +21,8 @@ QUALIFIED = {"hypothesis_id": "auto_fac_demo", "status": "candidate", "n": 82,
 
 @pytest.fixture
 def _isolate(tmp_path, monkeypatch):
-    monkeypatch.setattr(rl, "state_path", lambda name: os.path.join(tmp_path, name))
-    return tmp_path
+    """registry만 돌리면 `require()`가 실제 감사원장에 쓴다 — 전면 격리."""
+    return isolate_jarvis_state(monkeypatch, tmp_path)
 
 
 def _stub_experiments(monkeypatch, rows):

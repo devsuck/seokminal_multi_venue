@@ -8,6 +8,8 @@ import os
 
 import pytest
 
+from tests.jarvis_state_isolation import isolate_jarvis_state
+
 import jarvis
 from jarvis.agents import BACKTEST_AGENT, HUMAN_ADMIN, RESEARCH_AGENT
 from jarvis.agents import datagate
@@ -20,16 +22,7 @@ from jarvis.risk import RiskGovernor, RiskLimits
 @pytest.fixture(autouse=True)
 def _isolate_state(tmp_path, monkeypatch):
     """모든 상태파일을 tmp로 격리(실 _state 오염 방지)."""
-    def sp(name):
-        return os.path.join(tmp_path, name)
-    import jarvis.audit.log as al
-    import jarvis.registry.lifecycle as rl
-    import jarvis.memory.store as ms
-    import jarvis.paper.ledger as pl
-    monkeypatch.setattr(al, "state_path", sp)
-    monkeypatch.setattr(rl, "state_path", sp)
-    monkeypatch.setattr(ms, "state_path", sp)
-    monkeypatch.setattr(pl, "state_path", sp)
+    isolate_jarvis_state(monkeypatch, tmp_path)
     return tmp_path
 
 

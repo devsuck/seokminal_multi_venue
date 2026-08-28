@@ -5,18 +5,15 @@ import os
 
 import pytest
 
+from tests.jarvis_state_isolation import isolate_jarvis_state
+
 from jarvis.fusion.types import FusionSignal, StrategySignal
 from jarvis.portfolio.signal_overlay import compute_overlay
 
 
 @pytest.fixture(autouse=True)
 def _isolate_state(tmp_path, monkeypatch):
-    def sp(name):
-        return os.path.join(tmp_path, name)
-    import jarvis.audit.log as al
-    import jarvis.fusion.ledger as fl
-    monkeypatch.setattr(al, "state_path", sp)
-    monkeypatch.setattr(fl, "state_path", sp)
+    isolate_jarvis_state(monkeypatch, tmp_path)
     return tmp_path
 
 

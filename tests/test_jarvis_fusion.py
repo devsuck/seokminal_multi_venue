@@ -8,6 +8,8 @@ import os
 
 import pytest
 
+from tests.jarvis_state_isolation import isolate_jarvis_state
+
 from jarvis.fusion.fusion import FusionEngine
 from jarvis.fusion.performance import perf_from_returns, risk_adjusted_score
 from jarvis.fusion.types import StrategySignal
@@ -17,14 +19,7 @@ from jarvis.fusion.weighting import RiskAdjustedVoting, get_scheme
 
 @pytest.fixture(autouse=True)
 def _isolate_state(tmp_path, monkeypatch):
-    def sp(name):
-        return os.path.join(tmp_path, name)
-    import jarvis.audit.log as al
-    import jarvis.fusion.ledger as fl
-    import jarvis.fusion.performance as pf
-    monkeypatch.setattr(al, "state_path", sp)
-    monkeypatch.setattr(fl, "state_path", sp)
-    monkeypatch.setattr(pf, "state_path", sp)
+    isolate_jarvis_state(monkeypatch, tmp_path)
     return tmp_path
 
 

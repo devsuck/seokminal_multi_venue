@@ -13,6 +13,13 @@ import pytest
 
 from jarvis.agents.backtest import _metrics_from_experiment_row
 from jarvis.agents.critic import review
+from tests.jarvis_state_isolation import isolate_jarvis_state
+
+
+@pytest.fixture(autouse=True)
+def _isolate(tmp_path, monkeypatch):
+    """`review()`는 `require()`를 타고 감사원장에 쓴다 — 실제 원장 오염 방지."""
+    return isolate_jarvis_state(monkeypatch, tmp_path)
 
 # autoresearch 러너가 쓰는 현행 스키마(experiment_registry.jsonl 4415/4520행).
 CURRENT_ROW = {

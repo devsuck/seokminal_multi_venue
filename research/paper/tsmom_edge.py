@@ -29,7 +29,8 @@ def _compute(need_months: int) -> dict:
         status = "confirmed"
     return {"status": status, "in_sample_months": env.get("n_months", 0),
             "envelope": {"p10": env.get("monthly_p10"), "avg": env.get("monthly_mean"), "p90": env.get("monthly_p90")},
-            "oos_months": n_oos, "oos_in_envelope": n_in, "need_months": need_months, "oos": oos}
+            "oos_months": n_oos, "oos_in_envelope": n_in, "need_months": need_months, "oos": oos,
+            "trend_regime": r.get("trend_regime")}
 
 
 def edge_status(need_months: int | None = None, force: bool = False, read_only: bool = False) -> dict:

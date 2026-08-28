@@ -117,8 +117,10 @@ def test_seed_lifecycle_transitions_paper_candidate(registry):
 
     state = registry.state("hyp_paper")
     assert state is not None
-    # Paper candidate should end up in PAPER_CANDIDATE status
-    assert state["status"] == Status.PAPER_CANDIDATE.value
+    # 지표가 없는 행은 재판정 불가 → watchlist 보류(2026-08-27 시드 게이트).
+    # paper_candidate는 forward 자동배선으로 바로 이어지므로, 검증 못 한 건 안 올린다.
+    assert state["status"] == Status.WATCHLIST.value
+    assert "재판정 미통과" in state["last_reason"]
 
 
 def test_seed_lifecycle_transitions_rejected(registry):
@@ -178,7 +180,30 @@ def test_seed_lifecycle_transitions_candidate(registry):
 
     state = registry.state("hyp_candidate")
     assert state is not None
-    # Candidate should end up in PAPER_CANDIDATE status
+    # p만 있고 net·walk-forward·redteam·bh_survivor가 없으면 판정 불가 → 보류.
+    assert state["status"] == Status.WATCHLIST.value
+
+
+def test_seed_promotes_candidate_with_full_metrics(registry):
+    """지표가 전부 갖춰지고 재판정을 통과하면 예전처럼 paper_candidate까지 간다.
+
+    게이트가 길을 막은 게 아니라, 근거 없는 승격만 막는다는 걸 못박는다.
+    """
+    data = [
+        {
+            "hypothesis_id": "hyp_qualified",
+            "verdict": "auto-research CANDIDATE",
+            "status": "candidate",
+            "data_quality": "KRX PIT survivorship-free",
+            "net": 0.042, "percentile": 100.0, "p": 0.0033,
+            "wf_first": 0.043, "wf_second": 0.041,
+            "redteam": "CLEARED", "bh_survivor": True,
+        }
+    ]
+    with patch("research.agents.experiment_registry.load_all", return_value=data):
+        assert seed_from_experiment_registry(registry) == 1
+
+    state = registry.state("hyp_qualified")
     assert state["status"] == Status.PAPER_CANDIDATE.value
 
 

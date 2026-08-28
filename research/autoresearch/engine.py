@@ -141,6 +141,10 @@ def run_batch() -> dict:
             "status": "candidate" if status == "candidate" else ("watchlist" if status == "watchlist" else "rejected"),
             "n": res.get("n"), "net": res.get("net"), "percentile": res.get("percentile"), "p": res.get("p"),
             "wf_first": res.get("wf_first"), "wf_second": res.get("wf_second"),
+            # bh_survivor를 빼먹으면 원장 행만 보고는 판정을 재현할 수 없다. 하위
+            # 소비자(registry 시드 등)가 classify()를 다시 돌릴 때 bh_survivor=None →
+            # pending_bh로 떨어져서, 멀쩡한 CANDIDATE가 승격 못 하는 일이 생긴다.
+            "bh_survivor": bh_survivor, "bh_threshold": bh["threshold"],
             "redteam": rt["verdict"], "direction": c.direction, "data_quality": "KRX PIT survivorship-free",
             "verdict": f"auto-research {verdict}", "note": c.thesis, "batch_bh_alpha": BATCH_ALPHA,
         })

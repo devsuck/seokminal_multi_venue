@@ -204,6 +204,38 @@ class StrategyRegistry:
                 "from": frm, "to": to, "reason": reason, "result": "denied"})
 
 
+def _seed_evidence(row: dict) -> dict:
+    """시드 전이에 남길 근거. 키는 원장 실제 스키마(`percentile`)를 따른다 —
+    예전 코드는 `random_pct`를 읽어서 근거가 전부 null로 기록됐다."""
+    return {
+        "net": row.get("net"), "percentile": row.get("percentile"), "p": row.get("p"),
+        "wf_first": row.get("wf_first"), "wf_second": row.get("wf_second"),
+        "redteam": row.get("redteam"), "bh_survivor": row.get("bh_survivor"),
+        "source_status": row.get("status"),
+    }
+
+
+def _seed_metrics_pass(row: dict) -> bool:
+    """행의 지표만으로 `classify()`를 다시 돌려 candidate가 나오는가.
+
+    지표가 없거나 스키마가 달라 판정 불가면 False(보수적). 저장된 status 문자열은
+    보지 않는다 — 그 문자열을 믿는 게 정확히 이 함수가 막으려는 문제다.
+    """
+    try:
+        from research.scanner.verdict import classify
+    except Exception:
+        return False
+    try:
+        status, _ = classify(
+            net=row.get("net"), percentile=row.get("percentile"), p=row.get("p"),
+            wf_first=row.get("wf_first"), wf_second=row.get("wf_second"),
+            redteam_verdict=str(row.get("redteam", "")),
+            bh_survivor=row.get("bh_survivor"))
+    except Exception:
+        return False
+    return status == "candidate"
+
+
 def seed_from_experiment_registry(reg: StrategyRegistry | None = None) -> int:
     """기존 research registry에서 초기 시드(idempotent per hypothesis_id). 반환=추가 수."""
     reg = reg or StrategyRegistry()
@@ -247,8 +279,22 @@ def seed_from_experiment_registry(reg: StrategyRegistry | None = None) -> int:
         elif st.startswith("paper_candidate") or st == "candidate":
             reg.transition(hid, Status.DATA_AUDIT_PASSED, "seed")
             reg.transition(hid, Status.BACKTESTED, "seed")
-            reg.transition(hid, Status.WATCHLIST, "seed")
-            reg.transition(hid, Status.PAPER_CANDIDATE, f"seed: {e.get('verdict','')[:60]}",
-                           evidence={"random_pct": e.get("random_pct"), "p": e.get("p")})
+            # 저장된 status 문자열을 그대로 믿지 않는다. 이 원장에는 작성 시점별로
+            # 42종 스키마가 섞여 있고, `classify()`가 "유일한 진실원"이 되기 전에
+            # 쓰인 행들은 통계가 전부 실패인데도 "candidate" 도장을 달고 있다
+            # (예: scan_turn_to_profit — net −0.9%, walk-forward 양쪽 음수, p=1.0).
+            # paper_candidate는 forward 자동배선(paper_active)으로 바로 이어지므로,
+            # 행 자체의 지표로 재판정해서 확실히 통과할 때만 올린다.
+            # 지표를 못 읽는 스키마(다른 러너 출력 등)도 여기서 걸린다 — 검증 못 한 걸
+            # 자동 배선하지 않는 게 안전측이고, watchlist에 남으니 사람이 올릴 수 있다.
+            verdict_txt = str(e.get("verdict", ""))[:60]
+            if _seed_metrics_pass(e):
+                reg.transition(hid, Status.WATCHLIST, "seed")
+                reg.transition(hid, Status.PAPER_CANDIDATE, f"seed: {verdict_txt}",
+                               evidence=_seed_evidence(e))
+            else:
+                reg.transition(hid, Status.WATCHLIST,
+                               f"seed: 지표 재판정 미통과 — watchlist 보류 ({verdict_txt})",
+                               evidence=_seed_evidence(e))
         added += 1
     return added

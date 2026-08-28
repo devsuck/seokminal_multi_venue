@@ -104,6 +104,46 @@ def test_ofi_signs_outcomes_next_day_pairing(tmp_path, monkeypatch):
     assert outcomes == [pytest.approx(0.10)]
 
 
+def test_daily_ofi_and_price_skips_malformed_line(tmp_path, monkeypatch):
+    # simulates a live collector appending a torn/partial last line to today's file
+    monkeypatch.setattr(em, "_ORDERFLOW_DIR", tmp_path)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    path = tmp_path / "BTC_2026-07-10.jsonl"
+    with path.open("w") as f:
+        f.write(_json.dumps({"ts": 1.0, "side": "buy", "size": 10.0, "price": 100.0}) + "\n")
+        f.write('{"ts": 2.0, "side": "buy", "size": 5.0, "pri')  # torn last line, no trailing newline
+    ofi, price = em._daily_ofi_and_price("BTC")  # must not raise
+    assert ofi["2026-07-10"] == pytest.approx(10.0)
+    assert price["2026-07-10"] == 100.0
+
+
+def test_daily_ofi_and_price_skips_line_with_missing_field(tmp_path, monkeypatch):
+    monkeypatch.setattr(em, "_ORDERFLOW_DIR", tmp_path)
+    _write_orderflow_day(tmp_path, "BTC", "2026-07-10", [
+        {"ts": 1.0, "side": "buy", "size": 10.0, "price": 100.0},
+        {"ts": 2.0, "side": "buy", "size": 5.0},  # missing "price" -> KeyError, skip
+    ])
+    ofi, price = em._daily_ofi_and_price("BTC")  # must not raise
+    assert ofi["2026-07-10"] == pytest.approx(10.0)
+    assert price["2026-07-10"] == 100.0
+
+
+def test_select_basis_pairs_skips_pair_that_raises(monkeypatch):
+    # _basis_signs_outcomes raising for one coin×venue-pair (e.g. torn snapshot files via
+    # load_venue_snapshots) must not abort selection for the remaining pairs.
+    def fake_signs_outcomes(coin, venue_a, venue_b):
+        if (coin, venue_a, venue_b) == ("BTC", "binance", "okx"):
+            raise ValueError("torn snapshot file")
+        return [1.0] * 35, [0.001] * 35, 35
+
+    monkeypatch.setattr(em, "_basis_signs_outcomes", fake_signs_outcomes)
+    selected = em._select_basis_pairs()  # must not raise
+    selected_pairs = {(coin, va, vb) for _, coin, va, vb, _, _ in selected}
+    assert ("BTC", "binance", "okx") not in selected_pairs
+    # 6 total coin×venue-pair combos minus the 1 that raised = 5 qualify, capped at MAX_BASIS_CANDIDATES
+    assert len(selected) == em.MAX_BASIS_CANDIDATES
+
+
 def test_ofi_candidate_run_returns_none_with_no_data(tmp_path, monkeypatch):
     monkeypatch.setattr(em, "_ORDERFLOW_DIR", tmp_path)
     cand = em._ofi_candidate("BTC", n_variants=4)
@@ -241,3 +281,39 @@ def test_skew_candidate_shape_and_none_run(tmp_path, monkeypatch):
     assert cand.category == "microstructure"
     assert cand.direction == "research"
     assert cand.run() is None
+
+
+def test_microstructure_candidates_assembles_all_four_sources_shape(tmp_path, monkeypatch):
+    monkeypatch.setattr(em, "_ORDERFLOW_DIR", tmp_path)
+    monkeypatch.setattr(em, "_SKEW_DIR", tmp_path)
+    monkeypatch.setattr(cvs, "_DATA_DIR", tmp_path)
+    cands = em.microstructure_candidates()
+    # no data anywhere -> basis selection empty, but OFI(3)+absorption(3)+skew(2) still present
+    cids = {c.cid for c in cands}
+    assert cids == {
+        "micro_ofi_momentum_BTC", "micro_ofi_momentum_ETH", "micro_ofi_momentum_PAXG",
+        "micro_absorption_momentum_BTC", "micro_absorption_momentum_ETH", "micro_absorption_momentum_PAXG",
+        "micro_skew_divergence_momentum_BTC_15s", "micro_skew_divergence_momentum_ETH_15s",
+    }
+    for c in cands:
+        assert c.category == "microstructure"
+        assert c.direction == "research"
+        assert c.run() is None  # no data in tmp_path
+
+
+def test_microstructure_candidates_n_variants_uses_actual_basis_count(monkeypatch):
+    # n_variants must reflect the REAL selected basis-pair count, not MAX_BASIS_CANDIDATES
+    monkeypatch.setattr(em, "_select_basis_pairs", lambda: [
+        (35, "BTC", "binance", "okx", [1.0] * 35, [0.001] * 35),
+    ])
+    captured = {}
+    orig = em._ofi_candidate
+
+    def _spy(symbol, n_variants):
+        captured["n_variants"] = n_variants
+        return orig(symbol, n_variants)
+
+    monkeypatch.setattr(em, "_ofi_candidate", _spy)
+    em.microstructure_candidates()
+    # 3 OFI + 1 basis(selected) + 3 absorption + 2 skew = 9, NOT 3+4(cap)+3+2=12
+    assert captured["n_variants"] == 9

@@ -87,6 +87,8 @@ def collect_candidates() -> tuple[list[Candidate], dict]:
     from research.autoresearch.engines_factor import factor_candidates, load_fundamentals
     fund = load_fundamentals(list(series.keys()))
     cands += factor_candidates(series, fund=fund)  # KR 횡단면 팩터(사전등록 7: size·amihud·turnover·PER·PBR·ROIC·F-Score)
+    from research.autoresearch.engines_microstructure import microstructure_candidates
+    cands += microstructure_candidates()
     return cands, series
 
 

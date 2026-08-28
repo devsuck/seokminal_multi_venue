@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import random as _random
 import statistics as _st
 from pathlib import Path
@@ -126,12 +127,17 @@ def _daily_ofi_and_price(symbol: str) -> tuple[dict, dict]:
                 line = line.strip()
                 if not line:
                     continue
-                row = json.loads(line)
-                sign = 1.0 if row["side"] == "buy" else -1.0
-                ofi[date] = ofi.get(date, 0.0) + sign * row["size"]
-                if date not in last_ts or row["ts"] > last_ts[date]:
-                    last_ts[date] = row["ts"]
-                    last_px[date] = row["price"]
+                try:
+                    row = json.loads(line)
+                    side, size, ts, price = row["side"], row["size"], row["ts"], row["price"]
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    logging.warning("malformed orderflow line skipped: %s_%s", symbol, date)
+                    continue
+                sign = 1.0 if side == "buy" else -1.0
+                ofi[date] = ofi.get(date, 0.0) + sign * size
+                if date not in last_ts or ts > last_ts[date]:
+                    last_ts[date] = ts
+                    last_px[date] = price
     return ofi, last_px
 
 
@@ -217,7 +223,13 @@ def _select_basis_pairs() -> list:
     scored = []
     for coin in BASIS_COINS:
         for venue_a, venue_b in BASIS_VENUE_PAIRS:
-            signs, outcomes, n_overlap = _basis_signs_outcomes(coin, venue_a, venue_b)
+            try:
+                signs, outcomes, n_overlap = _basis_signs_outcomes(coin, venue_a, venue_b)
+            except Exception:
+                logging.warning(
+                    "basis pair skipped, snapshot load failed: %s %s-%s",
+                    coin, venue_a, venue_b, exc_info=True)
+                continue
             if len(signs) >= _MIN_DAYS:
                 scored.append((len(signs), coin, venue_a, venue_b, signs, outcomes))
     scored.sort(key=lambda t: -t[0])
@@ -375,3 +387,18 @@ def _skew_candidate(coin: str, n_variants: int):
                 f"{SKEW_HORIZON_S}초 방향지속 — research/hypotheses/cross_venue_skew.py "
                 f"그대로(어댑터, 단일 사전등록 horizon)"),
         direction="research", run=_run, meta={})
+
+
+def microstructure_candidates() -> list:
+    """4개 사전등록 소스 조립 — n_variants(레드팀 multiple_testing 판단용)는
+    실제 등록 후보 총수. basis는 데이터가용성 기준 선정을 먼저 끝내고 나서
+    그 실제 선정 개수로 n_variants를 계산(이론상 최대치 MAX_BASIS_CANDIDATES를
+    쓰면 실제보다 부풀려질 수 있어 오류)."""
+    basis_selection = _select_basis_pairs()
+    n_variants = len(OFI_SYMBOLS) + len(basis_selection) + len(ABSORPTION_SYMBOLS) + len(SKEW_COINS)
+    out = []
+    out += [_ofi_candidate(s, n_variants) for s in OFI_SYMBOLS]
+    out += _basis_candidates(basis_selection, n_variants)
+    out += [_absorption_candidate(s, n_variants) for s in ABSORPTION_SYMBOLS]
+    out += [_skew_candidate(c, n_variants) for c in SKEW_COINS]
+    return out

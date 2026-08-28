@@ -9,11 +9,21 @@
 """
 from __future__ import annotations
 
+import os as _os
+
+from jarvis.config import state_path as _state_path
 from jarvis.investment_os import (
     AUTO_EXECUTION_ENABLED,
     EXECUTION_RUNGS,
     HUMAN_APPROVAL_MANDATORY,
 )
+
+
+def _auto_execution_approved() -> bool:
+    """승인 아티팩트 존재 확인. jarvis.execution import는 _BROKER_PREFIX가
+    investment_os/*.py에서 금지 — 파일 존재만 직접 확인(기록은
+    jarvis.execution.arm.record_auto_execution_approval()이 담당)."""
+    return _os.path.exists(_state_path("auto_execution_approval.json"))
 
 # 사다리에서 사람 승인 없이는 전진 불가. AUTO_EXECUTION 은 추가로 영구 비활성.
 _TERMINAL_DISABLED = "AUTO_EXECUTION"
@@ -52,10 +62,10 @@ class ExecutionLadder:
         gates = _safe(lambda: __import__("jarvis.investment_os.gates",
                                          fromlist=["evaluate_gates"]).evaluate_gates(portfolio),
                       {"passed": False, "failed_gates": ["unknown"]})
-        # 1) AUTO_EXECUTION 영구 비활성 — 승인·게이트와 무관하게 차단
-        if nxt == _TERMINAL_DISABLED and not AUTO_EXECUTION_ENABLED:
-            return {"advanced": False, "rung": self.rung, "blocked_reason": "AUTO_EXECUTION permanently disabled",
-                    "auto_execution_enabled": False, "requires_human_review": True, "is_decision": False}
+        # 1) AUTO_EXECUTION — 플래그 True여도 승인 아티팩트 없으면 차단(승인·게이트와 무관하게)
+        if nxt == _TERMINAL_DISABLED and not (AUTO_EXECUTION_ENABLED and _auto_execution_approved()):
+            return {"advanced": False, "rung": self.rung, "blocked_reason": "AUTO_EXECUTION not human-approved",
+                    "auto_execution_enabled": AUTO_EXECUTION_ENABLED, "requires_human_review": True, "is_decision": False}
         # 2) 사람 승인 필수
         if HUMAN_APPROVAL_MANDATORY and not human_approved:
             return {"advanced": False, "rung": self.rung, "blocked_reason": "human approval required",

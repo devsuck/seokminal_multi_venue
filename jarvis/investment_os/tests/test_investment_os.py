@@ -86,11 +86,15 @@ def test_ladder_requires_human_approval():
     assert r["advanced"] is True and r["rung"] == "SHADOW"
 
 
-def test_auto_execution_permanently_disabled():
+def test_auto_execution_blocked_without_human_approval_artifact():
+    # 2026-08-25: AUTO_EXECUTION_ENABLED는 사용자 요청으로 True 전환했으나, 이 플래그는
+    # Investment OS에 execute()가 없어 실질 게이트가 아님 — 진짜 게이트는
+    # jarvis.config.AUTONOMY_LEVEL/MIN_LIVE_LEVEL(둘 다 그대로 잠김). 이 사다리는
+    # 추가로 승인 아티팩트가 없으면 여전히 차단(자동 self-approve 금지).
     p, _ = _portfolio()
     r = ios.advance_rung("PRODUCTION_CANDIDATE", p, human_approved=True)
-    assert r["advanced"] is False and "permanently disabled" in r["blocked_reason"]
-    assert ios.AUTO_EXECUTION_ENABLED is False
+    assert r["advanced"] is False and "not human-approved" in r["blocked_reason"]
+    assert ios.AUTO_EXECUTION_ENABLED is True
 
 
 def test_kill_switch_present():
@@ -108,14 +112,20 @@ def test_plan_and_simulate_no_real_orders():
 
 # ── 아키텍처 분리 검증: 6 불변식 ──
 def test_architectural_separation():
+    # 2026-08-25: AUTO_EXECUTION_ENABLED=True 지만 승인 아티팩트 미기록 상태 —
+    # separated=False가 정직한 신호(코드 위반은 0, invariant 하나만 미충족). 이게 의도된 동작:
+    # 사람이 record_auto_execution_approval() 호출 전까지 "완전 분리 아님"으로 계속 경고해야 함.
     v = ios.validate_separation()
-    assert v["separated"] is True, v["violations"]
-    assert v["auto_execution_enabled"] is False
-    names = {i["check"] for i in v["invariants"]}
-    for c in ("auto_execution_permanently_disabled", "human_approval_mandatory",
-              "research_never_imports_investment", "investment_never_writes_research",
-              "no_execution_defs_or_brokers", "four_mandatory_gates"):
-        assert c in names, c
+    assert v["violations"] == []
+    assert v["auto_execution_enabled"] is True
+    assert v["auto_execution_approved"] is False  # 승인 아티팩트 미기록 — 의도된 기본
+    assert v["separated"] is False  # 승인 기록되면 True로 전환됨
+    invariants = {i["check"]: i["ok"] for i in v["invariants"]}
+    assert invariants["auto_execution_disabled_or_human_approved"] is False
+    for c in ("human_approval_mandatory", "research_never_imports_investment",
+              "investment_never_writes_research", "no_execution_defs_or_brokers",
+              "four_mandatory_gates"):
+        assert invariants[c] is True, c
 
 
 # ── Investment OS 는 실행 def 를 정의하지 않는다(직접 AST 스캔) ──

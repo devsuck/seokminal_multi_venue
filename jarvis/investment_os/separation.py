@@ -5,7 +5,8 @@
   ② Investment OS 는 Research OS 원장에 쓰지 않는다(읽기전용 소비만 — Research 무변경).
   ③ Research OS 는 거래를 실행하지 않는다(실행 def/브로커 import 없음).
   ④ Investment OS 도 실제 주문을 라우팅하지 않는다(execute/place_order/trade def 없음).
-  ⑤ AUTO_EXECUTION 영구 비활성 · 사람 승인 필수 · 4 게이트 우회 불가.
+  ⑤ AUTO_EXECUTION은 승인 아티팩트 없이는 False로 취급(존재해도 사람 승인 기록
+     없으면 invariant 실패) · 사람 승인 필수 · 4 게이트 우회 불가.
 """
 from __future__ import annotations
 
@@ -88,9 +89,16 @@ def validate_separation() -> dict:
                 violations.append(f"investment::{p.name} imports broker '{m}'")
 
     # ⑤ 실행 불변식
+    import os as _os
+    from jarvis.config import state_path as _state_path
     from jarvis.investment_os import AUTO_EXECUTION_ENABLED, HUMAN_APPROVAL_MANDATORY, MANDATORY_GATES
+    # 승인 아티팩트 존재 여부만 확인(파일 존재 체크) — jarvis.execution import는
+    # _BROKER_PREFIX가 investment_os/*.py에서 금지하므로 여기선 절대 안 쓴다.
+    # 기록은 jarvis.execution.arm.record_auto_execution_approval()(사람 ADMIN 전용)만 한다.
+    _auto_exec_approved = _os.path.exists(_state_path("auto_execution_approval.json"))
     invariants = [
-        {"check": "auto_execution_permanently_disabled", "ok": AUTO_EXECUTION_ENABLED is False},
+        {"check": "auto_execution_disabled_or_human_approved",
+         "ok": AUTO_EXECUTION_ENABLED is False or _auto_exec_approved},
         {"check": "human_approval_mandatory", "ok": HUMAN_APPROVAL_MANDATORY is True},
         {"check": "four_mandatory_gates", "ok": set(MANDATORY_GATES) == {"risk", "compliance", "portfolio", "kill_switch"}},
         {"check": "research_never_imports_investment",
@@ -104,7 +112,10 @@ def validate_separation() -> dict:
     return {"separated": separated, "violations": violations, "invariants": invariants,
             "layers": ["Research OS (지식 생산)", "Investment OS (지식 소비·추천)", "Execution (영구 비활성)"],
             "auto_execution_enabled": AUTO_EXECUTION_ENABLED,
+            "auto_execution_approved": _auto_exec_approved,
             "investment_files_scanned": len(ios_files),
             "requires_human_review": True, "is_advisory": True, "is_decision": False,
             "note": ("Architectural Separation(읽기전용) — Research/Investment/Execution 완전 분리. "
-                     "연구는 투자를 모름, 투자는 연구를 안 바꿈, 둘 다 실행 안 함. AUTO_EXECUTION 영구 비활성.")}
+                     "연구는 투자를 모름, 투자는 연구를 안 바꿈, 둘 다 실행 안 함. "
+                     "Investment OS엔 execute() 자체가 없어 AUTO_EXECUTION_ENABLED는 실질 게이트 아님 — "
+                     "진짜 실행 게이트는 jarvis.config.AUTONOMY_LEVEL/MIN_LIVE_LEVEL.")}

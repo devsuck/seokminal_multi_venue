@@ -18,7 +18,13 @@ Investment OS 책임(모두 **추천·시뮬레이션·계획** — 실제 실�
 from __future__ import annotations
 
 # ══════════════ 하드 안전 불변식 (뒤집으려면 명시적 사람 개입 필요, 기본 OFF) ══════════════
-AUTO_EXECUTION_ENABLED = False          # ★ 영구 비활성(기본). 코드로 자동 True 금지.
+# 2026-08-25: 사용자 명시 요청으로 True 전환(입대 전 무인운영 준비). 단, 이 플래그는
+# 이 모듈(Investment OS) 어디에도 execute()/place_order()가 없어 실제로 아무것도
+# 게이트하지 않는다 — 진짜 실행 게이트는 jarvis.config.AUTONOMY_LEVEL(기본 5,
+# MIN_LIVE_LEVEL=6)과 jarvis.execution.arm.arm()이며 둘 다 그대로 잠겨 있다.
+# separation.py는 True일 때 승인 아티팩트(jarvis.execution.arm.record_auto_execution_approval)
+# 존재를 요구 — 아직 기록 안 함(실제 사람 승인 없이 자동 기록하지 않는다).
+AUTO_EXECUTION_ENABLED = True
 HUMAN_APPROVAL_MANDATORY = True         # 모든 사다리 전진에 사람 승인 필수
 MANDATORY_GATES = ("risk", "compliance", "portfolio", "kill_switch")   # 우회 불가
 EXECUTION_RUNGS = ("PAPER", "SHADOW", "SMALL_CAPITAL", "PRODUCTION_CANDIDATE", "AUTO_EXECUTION")

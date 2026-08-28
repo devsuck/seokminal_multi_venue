@@ -10,6 +10,7 @@ import glob
 import os
 import random as _random
 import statistics as _st
+import time
 
 from research.validation.baselines import empirical_p_value
 
@@ -19,17 +20,19 @@ COST_STRESS = 100.0
 N_RUNS = 500
 SEED = 42
 
-_series_cache = {"s": None}
+_series_cache: dict = {"s": None, "ts": 0.0}
+_SERIES_TTL = 86400.0  # 서버 장기 생존 시 KRX 신규 pull 반영 위해 24h마다 재로드
 
 
 def load_series():
-    if _series_cache["s"] is not None:
+    if _series_cache["s"] is not None and time.time() - _series_cache["ts"] < _SERIES_TTL:
         return _series_cache["s"]
     from research.data.krx_api import build_series, market_dir
     s = build_series("KOSDAQ", min_bars=30)
     if glob.glob(os.path.join(market_dir("KOSPI"), "*.parquet")):
         s.update(build_series("KOSPI", min_bars=30))
     _series_cache["s"] = s
+    _series_cache["ts"] = time.time()
     return s
 
 

@@ -55,6 +55,9 @@ class ResearchService:
         self.last_execution_check: str | None = None
         self.execution_routed_total = 0
         self.last_execution_result: dict | None = None
+        self._last_krx_pull_ts = 0.0
+        self.last_krx_pull: str | None = None
+        self.krx_pull_saved_total = 0
 
     def _load(self) -> dict:
         p = state_path(_CFG)
@@ -116,6 +119,27 @@ class ResearchService:
         try:
             from jarvis.paper.buyback_analysis import refresh
             refresh()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _pull_krx_daily(self) -> None:
+        """24시간 스로틀 KRX 일별 스냅샷 pull — 이게 없으면 factor/buyback 등 KR 전략
+        전체가 build_series()로 만드는 과거 스냅샷에 고착되어 forward 데이터가 절대
+        안 쌓인다(2026-08-26 발견: 07-15 이후 6주간 무갱신 상태였음). 10일 lookback은
+        재개 버퍼(이미 있는 날짜는 pull_range가 스킵 — 멱등)."""
+        if time.time() - self._last_krx_pull_ts < 86400:
+            return
+        self._last_krx_pull_ts = time.time()
+        try:
+            import datetime as _dt
+            from research.data.krx_api import pull_range
+            start = (_dt.date.today() - _dt.timedelta(days=10)).isoformat()
+            end = _dt.date.today().isoformat()
+            saved = 0
+            for mkt in ("KOSPI", "KOSDAQ"):
+                saved += pull_range(mkt, start, end, log=lambda *_: None) or 0
+            self.last_krx_pull = _now()
+            self.krx_pull_saved_total += saved
         except Exception:  # noqa: BLE001
             pass
 
@@ -249,6 +273,7 @@ class ResearchService:
 
     def _tick(self) -> None:
         self.ticks += 1
+        self._pull_krx_daily()
         self._refresh_buyback()
         self._autoresearch_batch()
         self._warm_edge()
@@ -286,6 +311,7 @@ class ResearchService:
             "interval_sec": cfg.get("interval_sec", 180),
             "last_run": self.last_run, "last_result": self.last_result,
             "processed_total": self.processed_total, "ticks": self.ticks,
+            "last_krx_pull": self.last_krx_pull, "krx_pull_saved_total": self.krx_pull_saved_total,
             "last_buyback_refresh": self.last_refresh, "buyback_added_total": self.refresh_added_total,
             "last_autoresearch": self.last_autoresearch, "autoresearch_candidates": self.autoresearch_candidates,
             "autoresearch_reconciled": self.autoresearch_reconciled,

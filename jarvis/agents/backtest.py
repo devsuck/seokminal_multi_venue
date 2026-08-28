@@ -41,7 +41,11 @@ def run(strategy_id: str, spec: dict | None = None, commit: bool = True) -> dict
         from research.agents.experiment_registry import already_tested
         rows = already_tested(strategy_id)
         e = rows[-1] if rows else {}
-        metrics = {"net": e.get("net_pnl"), "random_percentile": e.get("random_pct"),
+        # net_pnl/random_pct는 소수(2건) legacy 필드명 — 실제 다수(4500+건) 컨벤션은
+        # net/percentile(research/autoresearch/engine.py log_experiment 기준). 다수 쪽을
+        # 우선하고 legacy로 폴백(2026-08-26: 이 순서가 뒤바뀌어 있어 net이 항상 None으로
+        # 리플레이되고 critic이 자동 rejected 처리하던 버그).
+        metrics = {"net": e.get("net", e.get("net_pnl")), "random_percentile": e.get("percentile", e.get("random_pct")),
                    "empirical_p": e.get("p"), "wf_first": e.get("wf_first"),
                    "wf_second": e.get("wf_second"), "powered": True,
                    "sharpe": e.get("sharpe"), "ann_return": e.get("ann_return")}

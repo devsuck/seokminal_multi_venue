@@ -1,6 +1,6 @@
 # Seokminal Multi-Venue — Roadmap
 
-**마지막 업데이트:** 2026-08-27 (critic 키 미스매치 수정 + Lv5 권한 축소 + 스키마 드리프트 가드)
+**마지막 업데이트:** 2026-08-27 (critic 키 미스매치 + Lv5 권한 + 드리프트 가드 + 시드 경로 게이트)
 **스택:** Python 3.14, FastAPI, NautilusTrader, pytest(`asyncio_mode=auto`, `@pytest.mark.asyncio` 금지)
 
 > 프론트엔드 로드맵은 별도: `seokminal-dashboard/docs/roadmap.md`
@@ -36,6 +36,7 @@
 | — | **전체 플랫폼 라이브 헬스체크 + 장애대응 5건** — 좀비 tmux 제거, Lv5 ZeroDivisionError 수정, agent `e19bf348` 드라이버 미기동 발견+기동, whale_tick sleep-wake 크래시(워치독이 세션존재만 보고 내부프로세스 생사는 안 봄 — 알려진 갭) 대응+지수백오프 이식, `prune_old_data` 크론/launchd 중복 정리, `polymarket_sharp_wallet_bot`(누적 -$2025, 순수비용잠식) 비활성화 | `api_server/lv5_agent.py`, `research/run_polymarket_whale_collect.py` | 08-16 |
 | — | **critic 지표 키 미스매치 수정** — `backtest.py`가 실험원장을 `net_pnl`/`random_pct`로 읽었으나 현행 스키마 키는 `net`/`percentile`(원장에 42종 스키마 혼재). 두 필드 None → critic 검사가 전부 `is not None` 가드라 **플래그 0개인데 rejected** = 실데이터 전략 전건 오탈락. autoresearch가 6주간 찾은 유일한 후보 3건(`auto_fac_kr_size_smb`/`amihud_illiq`/`turnover_neglect`, p=0.0033·BH생존·레드팀CLEARED·WF후반≥전반)이 07-13에 폐기됐고 루프는 이후 224회 더 CANDIDATE 재생산. 별칭 조회 + `metrics_incomplete` 플래그 + 층간 불일치 감시 신규 | `jarvis/agents/backtest.py`, `critic.py`, `research/check_pipeline_consistency.py` | 08-27 |
 | — | **Lv5 권한 축소 + 스키마 드리프트 가드** — `_call_claude`의 `--dangerously-skip-permissions`/`bypassPermissions` 제거→`--disallowed-tools`(프롬프트에 외부 문자열이 삽입되는 주입 경로 차단). `_call_claude` returncode 확인, `_run_review` 데몬스레드 예외를 캐시/API로 노출. `schema_guard.py` 신규 — "근거는 쌓였는데 추출 0건"을 콜드스타트와 구분해 신고, `agent_perf`·`lv5_learner` 배선(오탐 방지 위해 파서 독립적 근거 사용) | `api_server/schema_guard.py`, `lv5_agent.py`, `lv5_learner.py`, `agent_perf.py` | 08-27 |
+| — | **시드 경로 게이트 + 테스트 격리** — `boot()`의 시드가 `status` 문자열만 보고 `paper_active`까지 자동승격(정문 3중게이트 우회). 현 paper_active 10건 전부 이 경로이고 `scan_*` 3건은 net·WF 전부 음수인데 candidate 도장. 행 지표로 `classify()` 재판정 후에만 승격, 아니면 watchlist 보류. 근거 키 `random_pct`→`percentile`(키 미스매치 4번째). autoresearch가 `bh_survivor`를 원장에 안 남기던 것도 수정. 테스트가 실제 `_state`에 쓰던 격리 결함도 해소(`sys.modules` 스캔 헬퍼) | `jarvis/registry/lifecycle.py`, `research/autoresearch/engine.py`, `tests/jarvis_state_isolation.py` | 08-27 |
 
 ---
 
@@ -60,10 +61,11 @@
 
 ## 다음 세션 최우선
 
-1. **오탈락 3건 재승격 실행** — critic 버그로 폐기된 `auto_fac_kr_size_smb`(net 4.23%)/`auto_fac_kr_amihud_illiq`(1.64%)/`auto_fac_kr_turnover_neglect`(1.20%)를 파이프라인 재실행으로 registry에 재전이. 에이전트가 원장을 임의로 밀어넣지 않고 남겨둔 항목(append-only 프로덕션 상태 + forward 자동배선 이어짐). 사후 `PYTHONPATH=. python3 research/check_pipeline_consistency.py`가 0건이어야 정상. **주의**: 셋 다 학계에 잘 알려진 팩터(SMB·Amihud·거래대금 소외)라 캐파·혼잡 리스크 별도 검토 필요
-2. **`pytest tests/ -q` 전체 재확인** — 08-27 변경은 conftest 없는 격리 환경에서 jarvis 298건 + 신규 16건만 통과 확인. 컨테이너가 Python 3.11이라 unpinned `nautilus_trader`가 1.221.0으로 잡히며 `MaxDrawdown` import가 깨져 전체 스위트 실행 불가(기존 이슈, 이번 변경과 무관). Python 3.14 호스트에서 재확인 필요
-3. **GENERATOR 스케줄 기동** — `jarvis/GENERATOR.md` 하단 "스케줄 설정(별도 opt-in)"이 안 켜져 있음. 신규 가설 최초등장이 07-08에서 멈췄고(19종 이후 0종) 이후 5주간 같은 18개를 224회 재검증만 함 — 자율 탐색이 아니라 고정 리스트 재검증 크론 상태
-4. **골드 데이터소스 최종 결정** — 평일 마켓시간에 `probe_ib_gold4.py`(GC vs 1OZ, COMEX 선물) + `probe_ib_spotgold.py`(XAUUSD/XAGUSD, CMDTY 스팟) 재실행해서 에러이벤트로 무료구독 범위 확정. 참고: `xyz:GOLD`(HL)는 이미 07-08 세션에 데이터 파이프라인 검증 완료(parquet 캐시, PAXG 대비 유동성 10배) — IB 쪽이 막히면 바로 대체 가능한 상태
+1. **`scan_*` 3건 처분 결정** — `scan_turn_to_profit`(net −0.90%, WF −1.44%/−0.36%, p=1.0) · `scan_treasury_disposal`(−1.91%, −2.43%/−1.38%, p=1.0) · `scan_asset_transfer`(−3.78%, −6.47%/−1.17%, p=0.978)이 **통계 전부 실패인데 paper_active**. classify() 통합 이전 행이라 도장만 candidate였고, 08-27 시드 게이트는 신규만 막을 뿐 기존 등록건은 idempotent라 그대로다. 유지/kill/재검증 판단 필요 — 연구 판단이라 에이전트가 안 건드림
+2. **오탈락 3건 재승격 실행** — critic 버그로 폐기된 `auto_fac_kr_size_smb`(net 4.23%)/`auto_fac_kr_amihud_illiq`(1.64%)/`auto_fac_kr_turnover_neglect`(1.20%)를 파이프라인 재실행으로 registry에 재전이. 에이전트가 원장을 임의로 밀어넣지 않고 남겨둔 항목(append-only 프로덕션 상태 + forward 자동배선 이어짐). 사후 `PYTHONPATH=. python3 research/check_pipeline_consistency.py`가 0건이어야 정상. **주의**: 셋 다 학계에 잘 알려진 팩터(SMB·Amihud·거래대금 소외)라 캐파·혼잡 리스크 별도 검토 필요
+3. **`pytest tests/ -q` 전체 재확인** — 08-27 변경은 conftest 없는 격리 환경에서 jarvis 298건 + 신규 16건만 통과 확인. 컨테이너가 Python 3.11이라 unpinned `nautilus_trader`가 1.221.0으로 잡히며 `MaxDrawdown` import가 깨져 전체 스위트 실행 불가(기존 이슈, 이번 변경과 무관). Python 3.14 호스트에서 재확인 필요
+4. **GENERATOR 스케줄 기동** — 08-27 안전성 확인 완료(정문 3중게이트 + 옆문 차단 + live 불가). 켜도 됨. — `jarvis/GENERATOR.md` 하단 "스케줄 설정(별도 opt-in)"이 안 켜져 있음. 신규 가설 최초등장이 07-08에서 멈췄고(19종 이후 0종) 이후 5주간 같은 18개를 224회 재검증만 함 — 자율 탐색이 아니라 고정 리스트 재검증 크론 상태
+5. **골드 데이터소스 최종 결정** — 평일 마켓시간에 `probe_ib_gold4.py`(GC vs 1OZ, COMEX 선물) + `probe_ib_spotgold.py`(XAUUSD/XAGUSD, CMDTY 스팟) 재실행해서 에러이벤트로 무료구독 범위 확정. 참고: `xyz:GOLD`(HL)는 이미 07-08 세션에 데이터 파이프라인 검증 완료(parquet 캐시, PAXG 대비 유동성 10배) — IB 쪽이 막히면 바로 대체 가능한 상태
 2. **오더플로우 트랙 결론 반영** — BTC/ETH(원시+컨텍스트게이트) 전부 REJECT 확정. 같은 신호군 파라미터 튜닝 재시도 금지(여러 세션째 확인된 원칙). 재시도하려면 근본적으로 다른 방향: 선물 NQ/MNQ 원시틱 이식(현재 미저장이라 별도 결정 필요), POC/value area 필터, 또는 완전히 다른 마켓구조 가설
 3. IB Client Portal `CME Real-Time (NP,L2)` 구독 여전히 미완(사용자 직접 신청 필요) — NQ/MNQ/GC/ES 계열 라이브 오더플로우 전부 이 구독 없이는 tick 수신 불가(contract resolve까지만 됨)
 4. **CB/BW 발행 negative-drift 리스크필터 배선** — 공시 후 하위5% 확인됨(07-초 검증)이나 아직 미배선. buyback v1은 동결이라 붙이려면 새 v3 shadow로 등록 필요(설계 미착수)
@@ -77,6 +79,7 @@
 
 ## 알려진 블로커
 
+- **테스트가 실제 `_state` 원장을 오염시킴(부분 해소)**: 08-27에 `tests/jarvis_state_isolation.py`로 주요 파일은 막았으나 픽스처 9종은 손으로 나열한 방식 그대로다(헬퍼 일괄 적용 시 planner/portfolio_decision 3건이 깨져 보류). `pytest tests/ -q` 후 `git status jarvis/_state/`가 클린인지 확인할 것 — 뜨면 테스트 찌꺼기이므로 커밋 말고 `git checkout --`
 - **경계 스키마 계약 부재 (같은 버그 클래스 3회)**: `actions`vs`action`(lv5_learner, 자기학습 6주 사망) · `fill`vs`fills`(agent_perf, -94.64% 오기록) · `net_pnl`vs`net`(backtest, 실데이터 전건 오탈락 5주+). 전부 타입 없는 dict를 모듈 경계로 넘기며 예외 대신 None을 반환해 **조용히** 실패한다. 테스트 4,323건이 다 놓친 건 픽스처가 버그 스키마를 그대로 흉내내서. 08-27에 세 경계(critic·lv5_learner·agent_perf)에 가드를 세웠다 — `api_server/schema_guard.py`가 "근거는 쌓였는데 추출 0건"을 드리프트로 신고한다. 다만 이건 **탐지**지 계약이 아니다. `routers/agents.py`↔사이클 페이로드, `lv5_dsl`, `lv5_context` 등 나머지 경계는 그대로고, dataclass/TypedDict + 필수 키 검증으로 구조적 차단은 아직 미착수
 - ~~**`lv5_agent.py:66` 권한 과다**~~ ✅ **08-27 해소.** `--disallowed-tools`로 도구 전부 차단 (`--permission-mode`만으론 print 모드에서도 Bash가 실행되는 걸 CLI로 확인). 커밋 `895005c`
 - **CME/COMEX 계열(GC/ES/NQ) 실시간 tick**: "No market data permissions" — 유료구독(`CME Real-Time (NP,L2)`, ~$12.10/월) 필요, 사용자 미신청

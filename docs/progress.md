@@ -160,6 +160,80 @@ lv5는 드리프트 시 노트가 `[Lv5 학습중] 데이터 0/5건` → `[Lv5 �
 - **나머지 경계**: 이번에 판 건 lv5_learner·agent_perf·critic 세 곳. `routers/agents.py`
   ↔ 사이클 페이로드, `lv5_dsl`, `lv5_context` 등 다른 경계는 그대로다.
 
+### 이어서 (같은 세션) — 시드 경로 게이트 + 테스트 격리 결함
+
+사용자가 "제너레이터 켜도 안전하냐"고 물어 실제 경로를 확인하다가 두 가지를 더 발견.
+
+#### 1. 테스트가 실제 `_state` 원장에 쓰고 있었다
+
+`pytest` 실행이 `jarvis/_state/audit.jsonl`·`forward_deployments.jsonl`을 오염시켰다
+(오늘 날짜 가짜 배포 12건, 픽스처 이름 `empty_v1`/`inv_v1` 감사 항목). 원인은 열거의
+취약함 — `from jarvis.config import state_path`로 자기 바인딩을 든 모듈이 **71개**인데
+픽스처가 4개만 패치한다. `test_jarvis.py`는 독스트링에 "모든 상태파일을 tmp로 격리"라고
+써놓고 `jarvis.paper.deploy`를 빠뜨려서 `boot()`의 `auto_deploy_all()`이 실제 배포
+원장에 썼다.
+
+`tests/jarvis_state_isolation.py` 신규 — `sys.modules`를 훑어 `state_path`를 가진 jarvis
+모듈을 전부 patch(열거 안 함). 5개 파일의 나열 블록을 교체하고, 격리가 없던
+`test_jarvis_critic_metrics.py`와 audit이 열려 있던 `test_pipeline_consistency_check.py`에
+적용. 나머지 픽스처 9종은 오염을 안 내는 데다 헬퍼를 일괄 적용해보니 planner/
+portfolio_decision 3건이 깨져서(그 테스트들이 실제로 읽어야 하는 경로가 있음) 그대로 뒀다.
+
+**→ 사용자 호스트에서도 `pytest tests/ -q` 후 `git status jarvis/_state/` 확인 권장.**
+그동안 매 실행마다 오염됐을 가능성이 높다. 뜨면 커밋하지 말고 `git checkout --`.
+
+#### 2. 시드 경로가 게이트를 통째로 우회하고 있었다
+
+`boot()` → `seed_from_experiment_registry()` → `auto_deploy_all()`이 실험원장의
+`status` 문자열만 보고 `paper_candidate`→`paper_active`까지 올린다. 정문(`run_batch`)의
+critic→BH-FDR→레드팀 3중 게이트를 안 거친다.
+
+현재 `paper_active` 10건이 **전부 이 문으로** 들어왔다(전이 사유가 `seed:`). 그중 셋:
+
+| id | net | pct | p | WF 전/후 |
+|---|---|---|---|---|
+| `scan_turn_to_profit` | −0.90% | 0.0 | 1.00 | −1.44% / −0.36% |
+| `scan_treasury_disposal` | −1.91% | 0.0 | 1.00 | −2.43% / −1.38% |
+| `scan_asset_transfer` | −3.78% | 2.2 | 0.978 | −6.47% / −1.17% |
+
+`research/scanner/verdict.classify()`("유일한 진실원", candidate = bh_survivor AND
+레드팀 CLEARED AND net>0 AND WF 양쪽 양수)로는 **나올 수 없는 조합**이다. `verdict`가
+"스캐너 CLEARED"인 걸 보면 classify() 통합 이전(07-03~04)에 쓰인 행들.
+
+수정:
+- 시드가 status 문자열 대신 **행의 지표로 classify()를 재실행**. candidate가 나올 때만
+  paper_candidate, 아니면 watchlist 보류. 지표를 못 읽는 스키마(polymarket 등 다른 러너
+  출력)도 보류 — 검증 못 한 걸 자동 배선 안 하는 게 안전측이고 watchlist에 남으니
+  사람이 올릴 수 있다.
+- 시드 근거를 실제 키(`percentile`)로 기록. 기존엔 `random_pct`를 읽어 근거가 전부
+  null이었다 — **같은 키 미스매치의 네 번째 인스턴스.** 보류 전이에도 근거를 남긴다.
+- `research/autoresearch/engine.py`가 `bh_survivor`를 계산해놓고 원장 기록에서 빠뜨려
+  멀쩡한 `auto_fac_*`이 재판정 시 `pending_bh`로 떨어졌다. 기록에 추가.
+
+기존 10건은 시드가 idempotent라 영향 없음. **셋의 처분은 연구 판단이라 안 건드림.**
+
+`test_jarvis_registry_lifecycle.py` 시드 테스트 2건이 정확히 고치려던 옛 동작을
+못박고 있어 갱신 + "지표 갖추면 예전처럼 승격" 통과 케이스 추가.
+
+#### 제너레이터 안전성 결론
+
+돈은 못 움직인다 — `AUTONOMY_LEVEL=5 < MIN_LIVE_LEVEL=6`, 배포 기록에 `capital: "paper"`/
+`live: "disabled"` 하드코딩, `PIPELINE` principal이 `BACKTEST_ONLY`. 정문은 3중 게이트.
+옆문(시드)도 이번에 막았으므로 **켜도 된다**. 크론 등록은 사용자 호스트에서.
+
+#### 변경된 파일
+- `tests/jarvis_state_isolation.py`(신규), `tests/test_jarvis_seed_gate.py`(신규 13건)
+- `jarvis/registry/lifecycle.py`, `research/autoresearch/engine.py`
+- 테스트 격리 적용 7개 파일, `test_jarvis_registry_lifecycle.py` 갱신
+- 커밋 `e5641c2`(격리), `fdbcc6f`(시드 게이트)
+
+검증: 격리 환경 352건 통과, 실행 후 원장 클린.
+
+#### 다음 할 일 (이 세션분)
+- **`scan_*` 3건 처분 결정** — 통계가 전부 실패인데 paper_active. 유지/kill/재검증 판단 필요.
+- **`pytest tests/ -q` 전체 재확인** — 컨테이너 제약 동일(Python 3.11 + unpinned nautilus).
+- **제너레이터 크론 등록** — `jarvis/GENERATOR.md` 5단계 절차, 일/주 단위.
+
 ## 세션 로그 (2026-08-25) — 모바일 대시보드 "마켓 퀄리티(PWA급)" 4서브시스템 중 백엔드 Web Push 인프라 (사용자 자리비움, 위임 판단으로 진행)
 
 배경: 사용자가 "모바일 플랫폼 마켓 올라가도 될 정도로 다 해줘"(PWA급 완성도로 확정) 위임. 4서브시스템(PWA 설치/오프라인, 터치/제스처, 푸시알림, QA) 중 이 리포 담당분(푸시알림 백엔드) 작업. 프론트 쪽 세부는 `seokminal-dashboard/docs/progress.md` 참고.

@@ -20,10 +20,14 @@ cd "$REPO_ROOT" || { echo "repo root 없음: $REPO_ROOT" >&2; exit 1; }
 
 # 상시 유지할 수집기(세션명  모듈). 안 돌릴 것은 줄 삭제/주석 처리 — 이게 desired state.
 # (launchd가 매분 이 목록대로 죽은 것만 되살림)
+# 2026-09-03: 3개 다 비활성화 — 실거래 3전략(buyback/tsmom/tom, live_router/arm_criteria/
+# edge_providers)는 이 데이터를 안 씀, autoresearch 가설발굴(engines_microstructure)용
+# 원료일 뿐. api_server 무인운영 중 메모리 경합(스왑 스래싱→헬스체크 타임아웃) 완화 위해
+# 정리(docs/progress.md 2026-09-02~03 항목 참고). 다시 켜려면 아래 주석 해제.
 ENSURE=(
-  "hl-orderflow-tick|research.run_hl_orderflow_tick_collect"
-  "cross-venue-skew-tick|research.run_cross_venue_skew_collect"
-  "convergence-legs|research.run_convergence_signal_collect"
+  # "hl-orderflow-tick|research.run_hl_orderflow_tick_collect"
+  # "cross-venue-skew-tick|research.run_cross_venue_skew_collect"
+  # "convergence-legs|research.run_convergence_signal_collect"
 )
 
 for entry in "${ENSURE[@]}"; do

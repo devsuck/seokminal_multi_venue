@@ -14,7 +14,7 @@ lsof -ti:$PORT | xargs kill -9 2>/dev/null || true
 sleep 1
 
 echo "[restart_api] $(date '+%F %T') 재기동 (no --reload)"
-nohup "$PY" -m uvicorn api_server.main:app --timeout-graceful-shutdown 10 \
+nohup "$PY" -m uvicorn api_server.main:app --host 0.0.0.0 --timeout-graceful-shutdown 10 \
   >> logs/api_server.log 2>&1 &
 disown
 echo "[restart_api] 완료 PID $!"

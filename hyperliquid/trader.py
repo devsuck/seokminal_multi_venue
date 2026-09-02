@@ -129,7 +129,9 @@ def _wallet(paper: bool = False):
 def get_positions(paper: bool = False) -> dict[str, Any]:
     Exchange, Info = _sdk_imports()
     url = _api_url(paper)
-    info = Info(url, skip_ws=True)
+    # ponytail: SDK 기본 timeout=None → 네트워크 hiccup 시 무한 대기, threadpool 워커
+    # 누수로 서버 전체 무응답(/health 포함) 유발. 10s로 고정.
+    info = Info(url, skip_ws=True, timeout=10)
     account = _account_address(paper)
     state = info.user_state(account)
     open_orders = info.open_orders(account)
@@ -229,7 +231,7 @@ def get_candles(coin: str, interval: str = "5m", lookback_min: int = 1440,
     import datetime as _dt
 
     _, Info = _sdk_imports()
-    info = Info(_api_url(paper), skip_ws=True, perp_dexs=_perp_dexs(coin))
+    info = Info(_api_url(paper), skip_ws=True, perp_dexs=_perp_dexs(coin), timeout=10)
     name = coin if ":" in coin else coin.upper()
     now_ms = int(_dt.datetime.now(_dt.timezone.utc).timestamp() * 1000)
     start_ms = now_ms - lookback_min * 60 * 1000

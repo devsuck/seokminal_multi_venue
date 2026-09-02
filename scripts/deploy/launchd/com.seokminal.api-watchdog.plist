@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  api_server /health 워치독 — 이벤트루프 행(hang) 감지, launchd KeepAlive가
+  못 잡는 "프로세스는 살아있는데 응답 없음" 케이스 커버. ops/api_watchdog.py 참고.
+  설치: cp → ~/Library/LaunchAgents/ , launchctl load.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.seokminal.api-watchdog</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Library/Frameworks/Python.framework/Versions/3.14/bin/python3</string>
+        <string>-m</string>
+        <string>ops.api_watchdog</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/seokhun/seokminal/seokminal-multi-venue</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/seokhun/seokminal/seokminal-multi-venue/logs/api_watchdog.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/seokhun/seokminal/seokminal-multi-venue/logs/api_watchdog.log</string>
+</dict>
+</plist>

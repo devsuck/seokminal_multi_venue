@@ -16,17 +16,17 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string><PYTHON></string>
+        <string>/Library/Frameworks/Python.framework/Versions/3.14/bin/python3</string>
         <string>-m</string>
         <string>uvicorn</string>
         <string>api_server.main:app</string>
-        <string>--host</string><string>127.0.0.1</string>
+        <string>--host</string><string>0.0.0.0</string>
         <string>--port</string><string>8000</string>
         <string>--timeout-graceful-shutdown</string><string>10</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string><REPO></string>
+    <string>/Users/seokhun/seokminal/seokminal-multi-venue</string>
 
     <key>RunAtLoad</key>
     <true/>
@@ -34,8 +34,8 @@
     <true/>
 
     <key>StandardOutPath</key>
-    <string><REPO>/logs/api.log</string>
+    <string>/Users/seokhun/seokminal/seokminal-multi-venue/logs/api.log</string>
     <key>StandardErrorPath</key>
-    <string><REPO>/logs/api.log</string>
+    <string>/Users/seokhun/seokminal/seokminal-multi-venue/logs/api.log</string>
 </dict>
 </plist>

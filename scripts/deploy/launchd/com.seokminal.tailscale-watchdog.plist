@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Tailscale 자체 장애 워치독 — 로컬은 살아있는데 tailscale IP로 접근 안 되면
+  Tailscale.app 재시작+텔레그램 알림. ops/tailscale_watchdog.py 참고.
+  설치: cp → ~/Library/LaunchAgents/ , launchctl load.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.seokminal.tailscale-watchdog</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Library/Frameworks/Python.framework/Versions/3.14/bin/python3</string>
+        <string>-m</string>
+        <string>ops.tailscale_watchdog</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/seokhun/seokminal/seokminal-multi-venue</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/seokhun/seokminal/seokminal-multi-venue/logs/tailscale_watchdog.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/seokhun/seokminal/seokminal-multi-venue/logs/tailscale_watchdog.log</string>
+</dict>
+</plist>

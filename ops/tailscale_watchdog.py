@@ -12,11 +12,18 @@ launchd 로그인 아이템(GUI 앱)이라 killall 후 `open -a`로 재기동 �
 from __future__ import annotations
 
 import logging
+import os
 import re
 import subprocess
 import time
 import urllib.error
 import urllib.request
+
+from dotenv import load_dotenv
+
+# launchd job이 .env를 안 읽어 TELEGRAM_BOT_TOKEN/MOBILE_API_KEY 둘 다 비어있던 문제
+# (api_watchdog.py와 동일, 2026-09-03 발견) — 여기서도 직접 로드.
+load_dotenv()
 
 LOCAL_URL = "http://127.0.0.1:8000/health"
 POLL_INTERVAL_S = 300.0
@@ -33,8 +40,13 @@ def _own_tailscale_ip() -> str | None:
 
 
 def _url_ok(url: str, timeout: float = 5.0) -> bool:
+    """tailscale IP는 모바일 인증 미들웨어(127.0.0.1 외 호스트는 X-Api-Key 강제,
+    api_server/main.py `_require_key_for_remote`)를 거치므로 헤더 없인 /health도 401남
+    (2026-09-03 실측 — 헤더 없이 붙였다가 오탐 재시작 루프 걸릴 뻔함)."""
+    key = os.environ.get("MOBILE_API_KEY", "")
+    req = urllib.request.Request(url, headers={"X-Api-Key": key} if key else {})
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as r:  # noqa: S310
+        with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
             return r.status == 200
     except Exception:
         return False

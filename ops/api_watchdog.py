@@ -22,6 +22,12 @@ import urllib.error
 import urllib.request
 
 import psutil
+from dotenv import load_dotenv
+
+# launchd job은 최소 환경변수만 물려받음(PATH 등, .env 안 읽힘 — 2026-09-03 `launchctl print`로
+# 확인: TELEGRAM_BOT_TOKEN 자체가 없어 텔레그램 알림이 조용히 no-op이었음, lv6_notify._send가
+# 토큰 없으면 debug 로그만 남기고 드롭해서 안 보였음). 여기서 직접 로드해 os.environ에 채운다.
+load_dotenv()
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 POLL_INTERVAL_S = 300.0

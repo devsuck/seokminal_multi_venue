@@ -3656,6 +3656,12 @@ _CONVERGENCE_SOURCE_LABEL = {
 def _check_insider_convergence() -> None:
     """compute_convergence(kr/us)를 매 폴링마다 재계산해 score>=2 신호를 합성 alert로 편입.
     순수 재계산이라 신규-여부 커서 없이 _recently_triggered()의 300s dedup에 그대로 태운다.
+
+    _convergence_compute 자체(네트워크 I/O, 최악 수 분)는 _alert_lock 밖에서 돈다 — 이걸
+    락 안에서 돌리면 alert_push_loop이 30초마다 새 스레드로 같은 락을 기다리며 쌓여
+    스레드풀을 고갈시킨다(2026-09-03 근본원인 조사). _convergence_compute는 자체
+    TTL+per-key 락이 있어 여기서 직렬화 안 해도 중복호출 안 남 — _alert_lock은
+    _triggered_alerts 리스트 mutation만 보호하면 충분.
     """
     now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
     for market in ("kr", "us"):
@@ -3665,24 +3671,25 @@ def _check_insider_convergence() -> None:
             continue
         for sig in signals:
             rule_id = f"insider-convergence:{market}:{sig['ticker']}:{sig['direction']}"
-            if _recently_triggered(rule_id):
-                continue
             dir_label = "상승" if sig["direction"] == "BULLISH" else "하락"
             leg_labels = dict.fromkeys(
                 _CONVERGENCE_SOURCE_LABEL.get(l["source"], l["source"]) for l in sig["legs"]
             )
             rule_label = f"컨버전스 {dir_label}: {sig['ticker']}"
             detail = f"{sig['ticker']} · 점수 {sig['score']} · 신호: {', '.join(leg_labels)}"
-            _triggered_alerts.append(TriggeredAlertOut(
-                rule_id=rule_id,
-                rule_label=rule_label,
-                condition_type="insider_convergence",
-                bot_id="insider-convergence",
-                detail=detail,
-                triggered_at=now_iso,
-            ))
-            if len(_triggered_alerts) > _MAX_TRIGGERED:
-                _triggered_alerts.pop(0)
+            with _alert_lock:
+                if _recently_triggered(rule_id):
+                    continue
+                _triggered_alerts.append(TriggeredAlertOut(
+                    rule_id=rule_id,
+                    rule_label=rule_label,
+                    condition_type="insider_convergence",
+                    bot_id="insider-convergence",
+                    detail=detail,
+                    triggered_at=now_iso,
+                ))
+                if len(_triggered_alerts) > _MAX_TRIGGERED:
+                    _triggered_alerts.pop(0)
             push_notify.send(rule_label, detail)
 
 
@@ -3792,8 +3799,8 @@ def delete_alert_rule(rule_id: str) -> None:
 def get_triggered_alerts() -> TriggeredAlertsResponse:
     statuses = live_engine.get_all_statuses()
     now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
+    _check_insider_convergence()  # 자체적으로 _alert_lock을 짧게만 쥠 — 위 docstring 참고
     with _alert_lock:
-        _check_insider_convergence()
         for rule in list(_alert_rules.values()):
             triggered, detail = _evaluate_alert_condition(rule, statuses)
             if triggered and not _recently_triggered(rule.id):

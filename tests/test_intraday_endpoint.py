@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from api_server.routers import alpaca_shared as shared
 from api_server.main import app
 
-client = TestClient(app)
+client = TestClient(app, client=("127.0.0.1", 1))
 
 
 def _synth_long_bars():

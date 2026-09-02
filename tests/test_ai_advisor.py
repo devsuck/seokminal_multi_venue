@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from ai_strategy.advisor import recommend_strategy
 from api_server.main import app
 
-client = TestClient(app)
+client = TestClient(app, client=("127.0.0.1", 1))
 
 
 def _fake_bars(n=50):

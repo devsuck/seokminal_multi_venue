@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from api_server.routers import terminal
 from api_server.main import app
 
-client = TestClient(app)
+client = TestClient(app, client=("127.0.0.1", 1))
 
 
 def test_status_reports_done_when_no_tmux_session(monkeypatch):

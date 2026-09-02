@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 from api_server.main import app
 
-client = TestClient(app)
+client = TestClient(app, client=("127.0.0.1", 1))
 
 # 풀링된 IB 클라이언트/멱등성 캐시 리셋은 conftest.py의 전역 autouse 픽스처가 처리.
 

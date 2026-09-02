@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from live_engine.engine import LiveBotEngine, _BotRunState
 from api_server.main import app, _compute_unrealized_pnl
 
-client = TestClient(app)
+client = TestClient(app, client=("127.0.0.1", 1))
 
 
 def _make_state(**kwargs) -> _BotRunState:

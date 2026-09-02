@@ -3,7 +3,7 @@ from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 from api_server.main import app
 
-client = TestClient(app)
+client = TestClient(app, client=("127.0.0.1", 1))
 
 
 def _fake_simple_backtest(bars, strategy, params):

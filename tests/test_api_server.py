@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from api_server.main import app
 
-client = TestClient(app)
+client = TestClient(app, client=("127.0.0.1", 1))
 
 
 def test_bars_happy_path_returns_known_instrument_data():

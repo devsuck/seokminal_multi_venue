@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 from api_server.main import app
 
-client = TestClient(app)
+client = TestClient(app, client=("127.0.0.1", 1))
 
 
 def test_us_order_zero_quantity_rejected_by_schema():

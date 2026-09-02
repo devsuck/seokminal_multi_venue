@@ -6,7 +6,7 @@ from api_server.main import app
 
 def test_heartbeat_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setattr("jarvis.config.STATE_DIR", str(tmp_path))
-    client = TestClient(app)
+    client = TestClient(app, client=("127.0.0.1", 1))
 
     before = client.get("/steward/heartbeat").json()
     assert before["last_heartbeat"] is None

@@ -19,7 +19,7 @@ def client(tmp_path, monkeypatch):
         def close_position(self, s): pass
         def submit_order(self, r): pass
     monkeypatch.setattr(shared, "_trading_client", lambda *a, **k: _Cli())
-    return TestClient(app)
+    return TestClient(app, client=("127.0.0.1", 1))
 
 
 def test_daytrade_tick_us_no_crash(client):

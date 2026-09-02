@@ -10,7 +10,7 @@ def client(tmp_path, monkeypatch):
     # agent_store._db_path() reads AGENT_DB_PATH at call time, so pointing the
     # env at a temp file fully isolates the test — no module reload needed.
     monkeypatch.setenv("AGENT_DB_PATH", str(tmp_path / "agents.db"))
-    return TestClient(app)
+    return TestClient(app, client=("127.0.0.1", 1))
 
 
 def test_create_and_list_agent(client):

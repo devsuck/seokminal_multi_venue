@@ -3,7 +3,7 @@ import pytest
 from fastapi.testclient import TestClient
 from api_server.main import app
 
-client = TestClient(app)
+client = TestClient(app, client=("127.0.0.1", 1))
 
 # ── /spawner/validate ──────────────────────────────────────────────────────────
 

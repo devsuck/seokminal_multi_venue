@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from api_server.main import app
 
-client = TestClient(app)
+client = TestClient(app, client=("127.0.0.1", 1))
 
 
 def _make_mock_bars(n: int = 100, trend: float = 0.3) -> list:

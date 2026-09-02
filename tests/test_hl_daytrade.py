@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from api_server.main import app
 from api_server.agent_store import AGENT_PROFILES
 
-client = TestClient(app)
+client = TestClient(app, client=("127.0.0.1", 1))
 
 
 def test_hl_daytrade_profile_registered():

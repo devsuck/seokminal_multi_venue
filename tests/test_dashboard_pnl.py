@@ -10,7 +10,7 @@ from api_server.main import app
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENT_DB_PATH", str(tmp_path / "agents.db"))
-    return TestClient(app)
+    return TestClient(app, client=("127.0.0.1", 1))
 
 
 def test_dashboard_pnl_all_sums_agents_and_bots(client):

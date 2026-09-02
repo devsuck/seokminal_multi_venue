@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 import api_server.main as main_module
 from api_server.main import app
 
-client = TestClient(app)
+client = TestClient(app, client=("127.0.0.1", 1))
 client.headers["x-api-key"] = main_module._MOBILE_API_KEY  # noqa: SLF001 — 미들웨어가 원격 호스트 취급 시 요구
 
 

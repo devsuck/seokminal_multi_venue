@@ -30,7 +30,7 @@ def _rule(rsi_threshold: float) -> dict:
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENT_DB_PATH", str(tmp_path / "agents.db"))
-    return TestClient(app)
+    return TestClient(app, client=("127.0.0.1", 1))
 
 
 def test_condition_tick_rejects_non_lv1_agent(client):

@@ -46,3 +46,17 @@ def test_stays_down_only_alerts_once(monkeypatch):
     watchdog.run_once()
     watchdog.run_once()
     assert len(sent) == 1
+
+
+def test_rss_over_limit_restarts_even_when_healthy(monkeypatch):
+    watchdog._DOWN = False
+    sent = []
+    killed = []
+    monkeypatch.setattr("api_server.lv6_notify.send", lambda text: sent.append(text))
+    monkeypatch.setattr(watchdog, "_kill_port", lambda: killed.append(True))
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: _FakeResp(200))
+    monkeypatch.setattr(watchdog, "_rss_mb_over_limit", lambda: 4200.0)
+
+    assert watchdog.run_once() is False
+    assert killed == [True]
+    assert "메모리" in sent[0]

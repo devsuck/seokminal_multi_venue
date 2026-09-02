@@ -51,9 +51,14 @@ def run_once(base_url: str = DEFAULT_BASE_URL) -> bool:
     return healthy
 
 
+STARTUP_GRACE_S = 30.0  # launchd가 api/watchdog 둘 다 RunAtLoad로 동시에 띄워서, uvicorn
+                         # import(수천줄 FastAPI 앱)가 끝나기 전에 워치독이 먼저 찔러 오탐하는 것 방지
+
+
 def run_forever(base_url: str = DEFAULT_BASE_URL, poll_interval_s: float = POLL_INTERVAL_S) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     logging.info("api watchdog 시작: %s (interval=%ss)", base_url, poll_interval_s)
+    time.sleep(STARTUP_GRACE_S)
     while True:
         try:
             run_once(base_url)

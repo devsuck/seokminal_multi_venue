@@ -2280,3 +2280,31 @@ Alpaca가 한 번이라도 응답 없이 멈추면: 그 스레드가 `_alert_loc
 - collector 정리 효과 측정이 confound였던 건 재측정 불가(과거 시점 얘기라 그냥 앞으로 며칠 관찰로 대체).
 
 **다음 할 일**: 며칠 관찰해서 ~10분 주기 헬스실패 패턴이 실제로 멎는지 확인 필요(이전 collector 정리 효과 측정이 confound였던 것과 별개로, 이번엔 진짜 근본원인 수정이라 재발 안 할 것으로 예상하지만 미검증). 유저 부재중이라 원격 확인 어려우니, 다음 세션 시작시 `logs/api_watchdog.log`에서 최근 실패 빈도 먼저 확인할 것.
+
+### 추가: 남은 설계 갭 3개 전부 처리 (`b0752b1`, `b630335`, `bd83f78`, 같은 세션)
+유저: "그 세 개도 지금 다 처리해줘".
+
+**갭1 (WS 재연결 미검증) — 취소, 실체 없는 걱정이었음**: `ios-remote/Seokminal/ContentView.swift` 실제로 읽어보니 WebSocket 자체가 없음(`grep WebSocket` 0건). `RefreshingList`가 10초 폴링(`while !Task.isCancelled { fetch(); sleep }`)으로 매 사이클 독립 요청 — 워치독이 서버 죽였다 살려도 다음 폴링에서 그냥 다시 붙음, 재연결 로직이라는 게 애초에 존재할 필요가 없는 구조였음. 코드 변경 없음.
+
+**갭2 (Tailscale 자체 장애 대체경로) — `ops/tailscale_watchdog.py` 신규**: `api_watchdog.py`와 같은 패턴. 같은 머신에서 `127.0.0.1:8000/health` vs 자기 tailscale IP(`ifconfig`에서 `inet 100\.x -->` 파싱, CGNAT)로 같은 헬스체크 비교 — 로컬은 되는데 tailscale IP만 안 되면 tailscale 문제로 특정해 `killall Tailscale IPNExtension` + `open -a Tailscale` 재기동 + 텔레그램 알림. 로컬까지 죽은 경우는 api_watchdog 소관으로 남겨 안 건드림. 테스트 4개(`tests/test_tailscale_watchdog.py`) 전부 통과. launchd plist(`com.seokminal.tailscale-watchdog.plist`)도 만듦 — `launchctl load`는 이번에도 auto mode classifier가 차단해서 유저가 `!`로 직접 실행해야 함:
+```
+!cp scripts/deploy/launchd/com.seokminal.tailscale-watchdog.plist ~/Library/LaunchAgents/ && launchctl load ~/Library/LaunchAgents/com.seokminal.tailscale-watchdog.plist
+```
+
+**실측 중 버그 2개 추가 발견+수정** (갭2 작업하다 우연히 걸림, 둘 다 무인운영 핵심에 직결이라 그 자리에서 고침):
+1. `restart_api.sh`가 `com.seokminal.api.plist`(KeepAlive=true, 이번 세션 초반에 등록됨)와 재기동 경합. kill 후 자기가 직접 nohup으로 새 프로세스 띄우려는데 launchd도 동시에 자동재기동 걸어서 포트 bind 경합 — 실제로 01:13경 `327183b`(`_alert_lock` 축소) 배포 시도가 이걸로 실패해서, 그 수정이 반영 안 된 구버전 프로세스가 9분 더 떠있다가 01:22:59에 워치독 헬스실패로 강제종료될 때까지 계속 낡은 코드로 서빙되고 있었음(그 사이 실패한 헬스체크 1건이 실제로 이 미반영 상태 때문). `restart_api.sh` 수정: 직접 재기동 안 하고 kill만 하고 launchd 자동재기동을 폴링대기(최대 20초)하는 걸로 단순화 — 경합 원천 제거.
+2. `launchctl print`로 확인: launchd job 환경변수가 `PATH`/`SSH_AUTH_SOCK` 등 최소셋뿐, `.env` 전혀 안 읽힘. `api_watchdog.py`/`tailscale_watchdog.py` 둘 다 `lv6_notify`만 import하고 `load_dotenv()`는 안 불러서(`api_server.main`이 자체적으로 하는 것과 달리) `TELEGRAM_BOT_TOKEN`이 `os.environ`에 없었음 — `lv6_notify._send()`가 토큰 없으면 debug 로그만 남기고 조용히 드롭해서 텔레그램 알림이 launchd 경로에서는 계속 무효였을 가능성 높음(육안으로 안 보이는 실패라 지금까지 미발견). 두 파일 상단에 `load_dotenv()` 추가로 수정. `tailscale_watchdog`의 tailscale-IP 헬스체크도 이 버그 때문에 `MOBILE_API_KEY`가 빈 값이라 모바일 인증 미들웨어에 401 걸려 정상 상태를 장애로 오판할 뻔한 것도 같이 확인+수정(`X-Api-Key` 헤더 추가). 두 워치독 다 `kill -9`로 재기동시켜 반영 확인.
+
+**갭3 (collector 정리 효과 측정 confound) — 별도 로깅 인프라 안 만듦, 관찰로 종결**: 과거 시점 얘기라 소급 재측정은 물리적으로 불가 맞음. 근데 실제로 궁금했던 건 "메모리 스래싱이 지금 재발하는가"였고 이건 그냥 지금 찍어보면 답 나옴(별도 인프라 불필요, YAGNI) — 확인 결과 `vm.swapusage: used=3.7GB/5GB`, free page ~523184(≈8.5GB). 스왑은 여전히 어느정도 쓰고 있지만 위험 임계는 아님. 어차피 이번 세션에서 ~10분 주기 행의 진짜 근본원인(Alpaca timeout+lock 범위)이 따로 잡혔으므로, collector 정리 자체의 순수 기여도를 정밀 분리할 실익이 없어짐(원인이 이미 다른 데서 해소됨) — 판단만 내리고 코드/로깅 추가 안 함.
+
+### 변경된 파일 (이 추가 섹션)
+- 신규: `ops/tailscale_watchdog.py`, `tests/test_tailscale_watchdog.py`, `scripts/deploy/launchd/com.seokminal.tailscale-watchdog.plist`
+- 수정: `scripts/restart_api.sh`(launchd 경합 제거), `ops/api_watchdog.py`+`ops/tailscale_watchdog.py`(`load_dotenv()` 추가)
+
+### 다음 할 일
+- 유저가 `!`로 tailscale-watchdog launchd job 직접 로드 필요(위 명령).
+- 텔레그램 알림이 이제부터는 실제로 도착하는지 다음 실제 장애/재기동 사이클에서 확인(이전엔 무효였을 가능성 있었으므로).
+- `_alert_lock` 축소 수정이 이번엔 경합 없이 제대로 배포됨(PID 14895, 01:27:45~) — 이 프로세스 기준으로 ~10분 주기 헬스실패 재발 여부 관찰.
+
+### 막힌 부분/결정사항
+- `launchctl load`는 이 세션에서 또 막힘 — auto mode classifier가 blanket 허가와 무관하게 매번 차단. 패턴 확정, 앞으로도 유저 직접 실행 전제.

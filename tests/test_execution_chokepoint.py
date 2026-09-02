@@ -56,6 +56,11 @@ ALLOWLIST = {
                                                 # (insider 전략은 애초에 live 집행에 안 붙음)
     "jarvis/execution/live_router.py",         # 주문은 broker_bridge.route_order() 경유(line ~129).
                                                 # KISOrderClient는 get_holdings()로 중복매매 방지 조회만
+    "jarvis/broker_readonly/live_providers.py",  # 포트폴리오 뷰용 계좌 조회 전용. KISOrderClient/
+                                                  # hyperliquid.trader는 get_balance/get_holdings/
+                                                  # get_positions만 호출 — place_order 미사용
+                                                  # (tests/test_broker_readonly.py::test_no_execution_import
+                                                  # 도 이 파일이 아닌 adapters.py만 별도로 스캔함)
 }
 
 # tests/**, __pycache__ 등은 전부 스캔에서 제외

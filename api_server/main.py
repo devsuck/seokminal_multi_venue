@@ -81,6 +81,22 @@ from api_server import push_notify
 CATALOG_PATH = "./catalog"
 BOTS_FILE = Path("./bots.json")
 
+# ponytail: 다음번 전체 먹통 때 `kill -USR1 <pid>` 로 모든 스레드 스택을
+# logs/api_server.log 에 즉시 덤프 — 어느 라인에서 영구 대기 중인지 특정용.
+import faulthandler
+import signal as _signal
+faulthandler.register(_signal.SIGUSR1, all_threads=True)
+
+# ponytail: HL SDK에 이어 Alpaca SDK(alpaca.common.rest.RESTClient)도
+# requests.Session에 timeout 인자 자체를 안 넘김 → TCP connect에서 무한 대기,
+# to_thread로 격리한 스레드가 매 폴링 tick마다 하나씩 영구 누수(2026-09-02
+# SIGUSR1 덤프로 확인: insider/options_uoa_client.py → get_option_contracts).
+# 한 SDK씩 땜질하는 대신 프로세스 전역 소켓 기본 타임아웃을 걸어 explicit
+# timeout 없는 모든 소켓 호출(발견 안 된 SDK 포함)에 상한선을 건다. 이미
+# timeout 명시한 호출(httpx, requests timeout=N)엔 영향 없음.
+import socket as _socket
+_socket.setdefaulttimeout(15.0)
+
 app = FastAPI(title="Seokminal Dashboard API")
 
 app.add_middleware(
@@ -92,6 +108,36 @@ app.add_middleware(
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
+
+# 로컬(127.0.0.1)은 그대로 무인증 — 대시보드 dev 흐름 안 건드림. 0.0.0.0 바인딩으로
+# LAN/Tailscale에서 오는 요청만 X-Api-Key 요구 (주문 라우트까지 열려있어서 실거래 리스크 있음).
+# ponytail: 단일 정적 키. 앱/기기 여러 개로 늘어나면 per-device 키로 승격.
+_MOBILE_API_KEY = os.environ.get("MOBILE_API_KEY", "")
+
+
+@app.middleware("http")
+async def _require_key_for_remote(request, call_next):
+    if request.client and request.client.host not in ("127.0.0.1", "::1"):
+        if not _MOBILE_API_KEY or request.headers.get("x-api-key") != _MOBILE_API_KEY:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=401, content={"detail": "missing/invalid X-Api-Key"})
+    return await call_next(request)
+
+
+# ponytail: 이 레포에 timeout 없이 외부(HL/IB/KIS) 호출하는 sync 라우트가 여럿이라
+# 하나가 무한 대기하면 그 threadpool 워커를 영구 점유 — 누적되면 /health까지 포함
+# 전체 서버 먹통(2026-09-02 실측). 근본 원인(어느 호출인지)은 재발 시 SIGUSR1
+# 덤프로 특정. 일단 요청당 상한선을 걸어 조용한 먹통을 빠른 504로 바꿔 피해 차단.
+_REQUEST_TIMEOUT_SEC = 20.0
+
+
+@app.middleware("http")
+async def _timeout_guard(request, call_next):
+    try:
+        return await asyncio.wait_for(call_next(request), timeout=_REQUEST_TIMEOUT_SEC)
+    except asyncio.TimeoutError:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=504, content={"detail": "request timed out server-side"})
 
 
 @app.get("/health")
@@ -3772,10 +3818,18 @@ _ALERT_PUSH_POLL_SEC = 30
 
 async def alert_push_loop() -> None:
     """프론트 폴링이 안 열려있어도(앱 종료/백그라운드) 알럿을 감지해 푸시하도록
-    get_triggered_alerts()와 동일 평가 로직을 서버 자체 주기로도 돌림."""
+    get_triggered_alerts()와 동일 평가 로직을 서버 자체 주기로도 돌림.
+
+    ponytail: get_triggered_alerts()는 sync 함수라 여기서 직접 부르면 메인
+    이벤트루프에서 그대로 실행됨 — 그 안의 EDGAR Form4 조회(insider/edgar_client.py)가
+    requests timeout=10을 걸어놨어도 응답을 trickle로 흘리면(개별 recv는 10s 안 넘기지만
+    전체는 무한정) 통째로 안 끝나서 서버 전체(/health 포함) 30초마다 도는 이 루프에
+    영원히 먹힘(2026-09-02 SIGUSR1 덤프로 확인). to_thread로 빼서 최악의 경우도
+    스레드 하나만 물리게 격리.
+    """
     while True:
         try:
-            get_triggered_alerts()
+            await asyncio.to_thread(get_triggered_alerts)
         except Exception:
             pass
         await asyncio.sleep(_ALERT_PUSH_POLL_SEC)
@@ -5439,6 +5493,40 @@ def _revive_agents() -> None:
         pass
 
 
+# ── Portfolio (멀티브로커 계좌 뷰, P8) ────────────────────────────────────────
+@app.get("/portfolio/summary")
+async def portfolio_summary(mode: Literal["live", "paper"] = "live") -> dict:
+    from jarvis.broker_readonly.aggregator import PortfolioAggregator
+    return await PortfolioAggregator(mode).summary()
+
+
+@app.get("/portfolio/history")
+def portfolio_history(mode: Literal["live", "paper"] = "live", days: int = 30) -> dict:
+    path = Path("data/portfolio_snapshots.jsonl")
+    if not path.exists():
+        return {"mode": mode, "points": []}
+    cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)
+    points = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            row = json.loads(line)
+            if row.get("mode") != mode:
+                continue
+            if dt.datetime.fromisoformat(row["ts"]) >= cutoff:
+                points.append(row)
+    return {"mode": mode, "points": points}
+
+
+@app.get("/portfolio/trades")
+def portfolio_trades(mode: Literal["live", "paper"] = "live",
+                      account: Literal["hl", "kis"] | None = None) -> dict:
+    from jarvis.broker_readonly.aggregator import PortfolioAggregator
+    return {"trades": PortfolioAggregator(mode).trades(account=account)}
+
+
 @app.on_event("startup")
 async def _start_dart_bot() -> None:
     _revive_agents()
@@ -5485,7 +5573,7 @@ async def _start_dart_bot() -> None:
                 if not skip_weekend:
                     key = _os.environ.get("FINNHUB_API_KEY", "")
                     if key:
-                        run_ai_update(key)
+                        await asyncio.to_thread(run_ai_update, key)
             except Exception:  # noqa: BLE001
                 pass
             await asyncio.sleep(6 * 3600)  # 6시간 주기
@@ -5495,6 +5583,8 @@ async def _start_dart_bot() -> None:
     from orderflow.hl_funding import funding_poll_loop
     asyncio.create_task(funding_poll_loop())
     asyncio.create_task(alert_push_loop())
+    from jarvis.broker_readonly.snapshot_job import snapshot_loop
+    asyncio.create_task(snapshot_loop())
 
 
 # ── Market Overview ───────────────────────────────────────────────────────────

@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import functools
 import os
 
 from alpaca.data.historical import StockHistoricalDataClient
@@ -23,6 +24,7 @@ from alpaca.trading.requests import GetOptionContractsRequest
 
 _KEY = os.getenv("ALPACA_API_KEY", "")
 _SECRET = os.getenv("ALPACA_SECRET_KEY", "")
+_TIMEOUT = 12
 
 
 def _require_key() -> None:
@@ -30,8 +32,18 @@ def _require_key() -> None:
         raise ValueError("ALPACA_API_KEY not set in .env")
 
 
+def _capped(client):
+    """alpaca-py 0.43.4는 timeout 인자를 constructor/call 어디에도 안 받음(rest.py:
+    self._session.request(method, url, **opts) — opts에 timeout 키 자체가 없음, 확인함).
+    라이브러리 버그라 우회 불가 — 내부 requests.Session에 직접 기본 timeout 박음.
+    ponytail: private _session 속성 의존, SDK 업그레이드시 재검증 필요.
+    """
+    client._session.request = functools.partial(client._session.request, timeout=_TIMEOUT)
+    return client
+
+
 def _spot_price(ticker: str) -> float | None:
-    client = StockHistoricalDataClient(api_key=_KEY, secret_key=_SECRET)
+    client = _capped(StockHistoricalDataClient(api_key=_KEY, secret_key=_SECRET))
     trades = client.get_stock_latest_trade(StockLatestTradeRequest(symbol_or_symbols=ticker))
     t = trades.get(ticker)
     return float(t.price) if t else None
@@ -45,7 +57,7 @@ def _scan_ticker(
         return []
 
     today = _dt.date.today()
-    trading = TradingClient(api_key=_KEY, secret_key=_SECRET, paper=True)
+    trading = _capped(TradingClient(api_key=_KEY, secret_key=_SECRET, paper=True))
     contracts = trading.get_option_contracts(GetOptionContractsRequest(
         underlying_symbols=[ticker],
         status=AssetStatus.ACTIVE,
@@ -63,7 +75,7 @@ def _scan_ticker(
     if not candidates:
         return []
 
-    data = OptionHistoricalDataClient(api_key=_KEY, secret_key=_SECRET)
+    data = _capped(OptionHistoricalDataClient(api_key=_KEY, secret_key=_SECRET))
     bars = data.get_option_bars(OptionBarsRequest(
         symbol_or_symbols=list(candidates.keys()),
         timeframe=TimeFrame.Day,

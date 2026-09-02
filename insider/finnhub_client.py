@@ -78,12 +78,19 @@ def get_recent_feed(days: int = 7, max_filings: int = 40,
     """유니버스 종목들의 최근 P/S 거래 통합 피드 (거래일 최신순)."""
     universe = tickers or FEED_UNIVERSE
     results: list[dict] = []
-    with ThreadPoolExecutor(max_workers=8) as pool:
+    pool = ThreadPoolExecutor(max_workers=8)
+    try:
         futures = {pool.submit(get_insider_transactions, t, days): t for t in universe}
         for fut in as_completed(futures, timeout=30):
             try:
                 results.extend(fut.result())
             except Exception:  # noqa: BLE001 — 개별 종목 실패는 피드에서 생략
                 pass
+    except TimeoutError:
+        pass
+    finally:
+        # bare `with`는 __exit__에서 shutdown(wait=True) 걸려 위 30s 타임아웃 무의미해짐
+        # (edgar_client.py get_recent_form4_feed와 동일 버그, 거기 고친 패턴 그대로 적용).
+        pool.shutdown(wait=False, cancel_futures=True)
     results.sort(key=lambda x: x["transaction_date"], reverse=True)
     return results[:max_filings]

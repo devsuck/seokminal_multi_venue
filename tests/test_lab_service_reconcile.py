@@ -1,9 +1,22 @@
 """service 되먹임 배선 — _autoresearch_batch가 배치 후 lab reconcile 트리거."""
 from __future__ import annotations
 
+import os
+
+import pytest
+
 import research.autoresearch.engine as eng
 from research.lab import pipeline as pl
 from research.lab.service import ResearchService
+
+
+@pytest.fixture(autouse=True)
+def _isolate_state(tmp_path, monkeypatch):
+    def sp(name):
+        return os.path.join(tmp_path, name)
+    import importlib
+    monkeypatch.setattr(importlib.import_module("research.lab.service"), "state_path", sp)
+    return tmp_path
 
 
 def test_autoresearch_batch_triggers_reconcile(monkeypatch):

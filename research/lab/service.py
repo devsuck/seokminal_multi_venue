@@ -35,27 +35,33 @@ class ResearchService:
         self.last_result: dict | None = None
         self.processed_total = 0
         self.ticks = 0
-        self._last_refresh_ts = 0.0
+        # 스로틀 타임스탬프를 디스크에서 복원 — 하드코딩 0.0으로 두면 uvicorn 재기동마다
+        # (특히 api_watchdog가 메모리 압박으로 강제 재기동할 때) "마지막 실행 후 86400초 지남"
+        # 판정이 매번 참이 되어 24h/6h 스로틀 배치(autoresearch, krx pull 등 무거운 작업들)가
+        # 재기동 직후 첫 tick에서 한꺼번에 몰아쳐 다시 메모리를 터뜨림 → 재재기동 크래시루프.
+        # 2026-09-03 api_watchdog.log 재기동↔실패 5~10분 간격 반복 패턴으로 실측.
+        _persisted = self._load()
+        self._last_refresh_ts = _persisted.get("last_refresh_ts", 0.0)
         self.last_refresh: str | None = None
         self.refresh_added_total = 0
-        self._last_autoresearch_ts = 0.0
+        self._last_autoresearch_ts = _persisted.get("last_autoresearch_ts", 0.0)
         self.last_autoresearch: str | None = None
         self.autoresearch_candidates = 0
         self.autoresearch_reconciled = 0
         self.jarvis_bridged_total = 0
-        self._last_edge_ts = 0.0
+        self._last_edge_ts = _persisted.get("last_edge_ts", 0.0)
         self.last_edge_warm: str | None = None
         self.edge_status_cache: str | None = None
         self.arm_decision: str | None = None
-        self._last_tsmom_ts = 0.0
+        self._last_tsmom_ts = _persisted.get("last_tsmom_ts", 0.0)
         self.tsmom_last_month: str | None = None
         self.tsmom_in_envelope: bool | None = None
         self.watchdog_new_total = 0
-        self._last_execution_ts = 0.0
+        self._last_execution_ts = _persisted.get("last_execution_ts", 0.0)
         self.last_execution_check: str | None = None
         self.execution_routed_total = 0
         self.last_execution_result: dict | None = None
-        self._last_krx_pull_ts = 0.0
+        self._last_krx_pull_ts = _persisted.get("last_krx_pull_ts", 0.0)
         self.last_krx_pull: str | None = None
         self.krx_pull_saved_total = 0
 
@@ -71,6 +77,14 @@ class ResearchService:
     def _save(self, cfg: dict) -> None:
         os.makedirs(os.path.dirname(state_path(_CFG)), exist_ok=True)
         json.dump(cfg, open(state_path(_CFG), "w"))
+
+    def _touch(self, key: str) -> float:
+        """스로틀 타임스탬프 갱신 + 즉시 디스크 반영(재기동 생존)."""
+        ts = time.time()
+        cfg = self._load()
+        cfg[key] = ts
+        self._save(cfg)
+        return ts
 
     def running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -101,7 +115,7 @@ class ResearchService:
         """24시간 스로틀 buyback 증분갱신 → v2 forward(OOS) 자동 축적."""
         if time.time() - self._last_refresh_ts < 86400:
             return
-        self._last_refresh_ts = time.time()
+        self._last_refresh_ts = self._touch("last_refresh_ts")
         try:
             from research.data.kr_dart_events import refresh_events
             n = refresh_events("buyback", days=120)
@@ -129,7 +143,7 @@ class ResearchService:
         재개 버퍼(이미 있는 날짜는 pull_range가 스킵 — 멱등)."""
         if time.time() - self._last_krx_pull_ts < 86400:
             return
-        self._last_krx_pull_ts = time.time()
+        self._last_krx_pull_ts = self._touch("last_krx_pull_ts")
         try:
             import datetime as _dt
             from research.data.krx_api import pull_range
@@ -148,7 +162,7 @@ class ResearchService:
         데이터가 갱신되면(refill/refresh) 새 family 편입 → 밤새 자동으로 잘 건짐."""
         if time.time() - self._last_autoresearch_ts < 86400:
             return
-        self._last_autoresearch_ts = time.time()
+        self._last_autoresearch_ts = self._touch("last_autoresearch_ts")
         try:
             from research.autoresearch.engine import run_batch
             s = run_batch()
@@ -201,7 +215,7 @@ class ResearchService:
         응답하도록(series 로드 무거움 → 배경서 미리 계산). OOS 월은 느리게 변해 6h 충분."""
         if time.time() - self._last_edge_ts < 21600:
             return
-        self._last_edge_ts = time.time()
+        self._last_edge_ts = self._touch("last_edge_ts")
         try:
             from research.paper.buyback_edge import edge_status
             s = edge_status(force=True)
@@ -237,7 +251,7 @@ class ResearchService:
         generate(write=False)는 저장된 선물 데이터만 읽음(가벼움, IB 연결 불필요)."""
         if time.time() - self._last_tsmom_ts < 86400:
             return
-        self._last_tsmom_ts = time.time()
+        self._last_tsmom_ts = self._touch("last_tsmom_ts")
         try:
             from research.paper.tsmom_forward import generate
             r = generate(write=False)
@@ -258,7 +272,7 @@ class ResearchService:
         """6h 스로틀 — live_router 실행. armed+GO 전략 없으면 사실상 항상 no-op."""
         if time.time() - self._last_execution_ts < 21600:
             return
-        self._last_execution_ts = time.time()
+        self._last_execution_ts = self._touch("last_execution_ts")
         try:
             from jarvis.execution.live_router import route_all
             r = route_all(as_of=_now())

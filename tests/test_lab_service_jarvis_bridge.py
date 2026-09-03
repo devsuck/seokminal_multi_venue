@@ -19,7 +19,8 @@ def _isolate_state(tmp_path, monkeypatch):
         return os.path.join(tmp_path, name)
     import importlib
     for mod in ("jarvis.audit.log", "jarvis.registry.lifecycle", "jarvis.memory.store",
-                "jarvis.paper.ledger", "jarvis.paper.deploy", "jarvis.research_queue"):
+                "jarvis.paper.ledger", "jarvis.paper.deploy", "jarvis.research_queue",
+                "research.lab.service"):
         monkeypatch.setattr(importlib.import_module(mod), "state_path", sp)
     return tmp_path
 

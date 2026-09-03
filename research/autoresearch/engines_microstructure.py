@@ -172,34 +172,49 @@ def _ofi_candidate(symbol: str, n_variants: int):
         direction="research", run=_run, meta={})
 
 
-def _daily_mid(venue: str, coin: str) -> dict:
+def _daily_mid(venue: str, coin: str, _cache: dict | None = None) -> dict:
     """venue×coin 오더북 스냅샷 -> 날짜별 평균 mid((best_bid+best_ask)/2).
-    UTC 날짜 경계 사용(dt.timezone.utc — Python 3.14 대상, utcfromtimestamp 미사용)."""
+    UTC 날짜 경계 사용(dt.timezone.utc — Python 3.14 대상, utcfromtimestamp 미사용).
+
+    _cache는 호출자(_select_basis_pairs)가 한 배치 실행 범위로만 넘기는 dict —
+    BASIS_VENUE_PAIRS에서 같은 (venue,coin)이 여러 페어에 걸쳐 재등장해(각 거래소가
+    2개 페어에 참여) 캐시 없이는 3.1GB짜리 cross_venue_skew 원본 스냅샷을 배치당
+    2배 중복 로드/파싱함(2026-09-03 실서버에서 이 경로가 json.loads에 멈춰 GC 스톨
+    -> /health 타임아웃 유발 실측). 날짜 범위·선정 로직은 그대로라 결과값 불변,
+    순수 중복 I/O 제거."""
+    key = (venue, coin)
+    if _cache is not None and key in _cache:
+        return _cache[key]
     from research.hypotheses.cross_venue_skew import load_venue_snapshots
 
     dates = jsonl_dates.list_dates(_SKEW_DIR, glob_prefix=f"{venue}_{coin}_")
     if not dates:
-        return {}
-    df = load_venue_snapshots(venue, coin, dates)
-    if df.empty:
-        return {}
-    mids: dict[str, list] = {}
-    for _, row in df.iterrows():
-        if not row["bids"] or not row["asks"]:
-            continue
-        best_bid = max(lvl["price"] for lvl in row["bids"])
-        best_ask = min(lvl["price"] for lvl in row["asks"])
-        mid = (best_bid + best_ask) / 2.0
-        date = dt.datetime.fromtimestamp(row["ts"], tz=dt.timezone.utc).strftime("%Y-%m-%d")
-        mids.setdefault(date, []).append(mid)
-    return {d: _st.mean(vs) for d, vs in mids.items()}
+        result = {}
+    else:
+        df = load_venue_snapshots(venue, coin, dates)
+        if df.empty:
+            result = {}
+        else:
+            mids: dict[str, list] = {}
+            for _, row in df.iterrows():
+                if not row["bids"] or not row["asks"]:
+                    continue
+                best_bid = max(lvl["price"] for lvl in row["bids"])
+                best_ask = min(lvl["price"] for lvl in row["asks"])
+                mid = (best_bid + best_ask) / 2.0
+                date = dt.datetime.fromtimestamp(row["ts"], tz=dt.timezone.utc).strftime("%Y-%m-%d")
+                mids.setdefault(date, []).append(mid)
+            result = {d: _st.mean(vs) for d, vs in mids.items()}
+    if _cache is not None:
+        _cache[key] = result
+    return result
 
 
-def _basis_signs_outcomes(coin: str, venue_a: str, venue_b: str) -> tuple:
+def _basis_signs_outcomes(coin: str, venue_a: str, venue_b: str, _cache: dict | None = None) -> tuple:
     """basis_t = (mid_a-mid_b)/mid_b -> (부호[t], 수렴폭 basis_t-basis_next[t], 겹치는 날짜수).
     수렴방향 베팅: basis_t>0(A가 비쌈)이면 sign=+1 -> basis가 줄어들수록(outcome>0) 이익."""
-    mid_a = _daily_mid(venue_a, coin)
-    mid_b = _daily_mid(venue_b, coin)
+    mid_a = _daily_mid(venue_a, coin, _cache)
+    mid_b = _daily_mid(venue_b, coin, _cache)
     dates = sorted(d for d in mid_a if d in mid_b)
     signs, outcomes = [], []
     for i in range(len(dates) - 1):
@@ -221,10 +236,11 @@ def _select_basis_pairs() -> list:
     Note: len(signs) <= n_overlap-1 (consecutive pairs) and further reduced by zero-basis skip;
     filtering on n_overlap alone would pass boundary cases that fail at _series_evidence()."""
     scored = []
+    _cache: dict = {}
     for coin in BASIS_COINS:
         for venue_a, venue_b in BASIS_VENUE_PAIRS:
             try:
-                signs, outcomes, n_overlap = _basis_signs_outcomes(coin, venue_a, venue_b)
+                signs, outcomes, n_overlap = _basis_signs_outcomes(coin, venue_a, venue_b, _cache)
             except Exception:
                 logging.warning(
                     "basis pair skipped, snapshot load failed: %s %s-%s",

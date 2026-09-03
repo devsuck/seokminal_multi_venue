@@ -131,7 +131,7 @@ def test_daily_ofi_and_price_skips_line_with_missing_field(tmp_path, monkeypatch
 def test_select_basis_pairs_skips_pair_that_raises(monkeypatch):
     # _basis_signs_outcomes raising for one coin×venue-pair (e.g. torn snapshot files via
     # load_venue_snapshots) must not abort selection for the remaining pairs.
-    def fake_signs_outcomes(coin, venue_a, venue_b):
+    def fake_signs_outcomes(coin, venue_a, venue_b, _cache=None):
         if (coin, venue_a, venue_b) == ("BTC", "binance", "okx"):
             raise ValueError("torn snapshot file")
         return [1.0] * 35, [0.001] * 35, 35
@@ -221,7 +221,7 @@ def test_select_basis_pairs_real_data_filters_and_truncates(monkeypatch):
         ("ETH", "okx", "hl"): (32, 32),        # qualifies, rank 5 -> truncated by top-4 cap
     }
 
-    def fake_signs_outcomes(coin, venue_a, venue_b):
+    def fake_signs_outcomes(coin, venue_a, venue_b, _cache=None):
         n_signs, n_overlap = fixtures[(coin, venue_a, venue_b)]
         return [1.0] * n_signs, [0.001] * n_signs, n_overlap
 
@@ -317,3 +317,30 @@ def test_microstructure_candidates_n_variants_uses_actual_basis_count(monkeypatc
     em.microstructure_candidates()
     # 3 OFI + 1 basis(selected) + 3 absorption + 2 skew = 9, NOT 3+4(cap)+3+2=12
     assert captured["n_variants"] == 9
+
+
+def test_select_basis_pairs_caches_daily_mid_across_pairs(tmp_path, monkeypatch):
+    """BASIS_VENUE_PAIRS의 binance/okx/hl는 각각 2개 페어에 재등장 — 캐시 없으면
+    같은 (venue,coin) 스냅샷을 배치 1회당 2번씩 중복 로드(2026-09-03 실서버:
+    3.1GB cross_venue_skew 원본을 이 경로가 중복 로드해 GC 스톨 유발 실측).
+    캐시 도입 후 distinct (venue,coin) 조합당 load_venue_snapshots 호출이 1번만 되는지 확인."""
+    monkeypatch.setattr(em, "_SKEW_DIR", tmp_path)
+    monkeypatch.setattr(cvs, "_DATA_DIR", tmp_path)
+    ts0 = 1752105600.0
+    for venue in ("binance", "okx", "hl"):
+        _write_skew_day(tmp_path, venue, "BTC", "2025-07-10", [
+            {"ts": ts0, "bids": [{"price": 100.0, "size": 1.0}], "asks": [{"price": 102.0, "size": 1.0}]}])
+
+    calls = []
+    real = cvs.load_venue_snapshots
+
+    def counting(venue, coin, dates):
+        calls.append((venue, coin))
+        return real(venue, coin, dates)
+    monkeypatch.setattr(cvs, "load_venue_snapshots", counting)
+
+    em._select_basis_pairs()
+
+    # BASIS_VENUE_PAIRS = [(binance,okx),(binance,hl),(okx,hl)] -> 3 distinct venues,
+    # 캐시 없으면 6번(각 페어가 venue_a/venue_b 둘 다 로드) 호출됨. ETH는 데이터 없어 스킵.
+    assert sorted(calls) == [("binance", "BTC"), ("hl", "BTC"), ("okx", "BTC")]

@@ -2308,3 +2308,37 @@ Alpaca가 한 번이라도 응답 없이 멈추면: 그 스레드가 `_alert_loc
 
 ### 막힌 부분/결정사항
 - `launchctl load`는 이 세션에서 또 막힘 — auto mode classifier가 blanket 허가와 무관하게 매번 차단. 패턴 확정, 앞으로도 유저 직접 실행 전제.
+
+### 추가: DNS hang이 진짜 근본원인이었음 — options_uoa_client 티커별 하드 데드라인 (`7616ed8`, 같은 세션)
+
+`_capped()`(requests timeout=12, `837dba3`)로 근본 해결됐다고 판단했던 주기적 행이 사실 이 세션
+당일 하루종일(01:22, 02:40, 04:43, 05:55, 08:09) 반복 재발 중이었음 — api_watchdog 로그로 확인.
+"그럼 지금 이제 아무문제 없는거야?" 질문에 답하려고 라이브 서버 직접 진단하다 발견.
+
+**원인**: `requests`의 `timeout=`은 connect/read만 막고 DNS 해석(`socket.getaddrinfo`)은 못 막음
+— urllib3 `create_connection()`이 getaddrinfo 완료 후에야 `sock.settimeout()`을 건다(파이썬/OS
+레벨 제약, SDK/라이브러리 어디서도 우회 불가). 라이브 hang 중 SIGUSR1 스택덤프로 정확히 이 프레임
+(`urllib3/util/connection.py` 안 `getaddrinfo`)에서 무기한 대기 확인. 20초 요청타임아웃 미들웨어도
+못 살렸음 — FastAPI 동기 핸들러가 도는 스레드풀 자체가 (일부) 막혀서로 추정.
+
+**수정**: `insider/options_uoa_client.py::get_unusual_options_activity()` 루프에서 티커마다 새
+1-worker `ThreadPoolExecutor`로 `_scan_ticker`를 감싸 20초 하드 데드라인. 넘기면 그 워커 스레드는
+버리고(leak, 티커당 최대 1개) 다음 티커로 계속 진행 — 공유 풀이면 버려진 워커가 자리를 영구히
+막아 다음 티커도 못 돎, 그래서 티커마다 새 풀이 필수였음.
+
+**검증**: `tests/test_options_uoa_client.py` 신규 2건(행 걸린 티커 있어도 나머지 정상 반환 / 정상
+스캔 그대로 동작) — `_KEY` 모듈레벨 전역이라 단독 실행시 `.env` 안 읽힌 문제 있어 테스트에서
+`_KEY`도 함께 patch. `pytest tests/ -q` 전건(1972) 그린. `restart_api.sh`로 라이브 배포, health 200
+확인.
+
+**교훈**: SDK/라이브러리 레벨 `timeout=` kwarg는 "네트워크 콜이 유한 시간 안에 끝난다"를 보장 못함
+— DNS 해석은 별개 계층. 외부 API 호출 하나라도 무한 대기 가능성 있으면 반드시 별도 스레드+
+`future.result(timeout=N)`으로 감싸는 하드 데드라인이 유일한 일반해. `_capped()`의 requests
+timeout은 여전히 유효(read 단계 방어)지만 그것만으론 불충분했음 — 두 방어선 다 있어야 완전.
+
+### 다음 할 일
+- 몇 시간 관찰해서 08:09 이후로 `/health 실패` 패턴이 실제로 안 재발하는지 확인 (이게 진짜
+  확정검증 — 지금까진 로그/코드 분석 기반 추정).
+- 같은 무제한-대기 취약점이 다른 외부 API 호출부에도 있는지 훑어볼 여지 있음(edgar/dart/finnhub는
+  이미 이번 세션에 하드 데드라인 패턴 적용됨 — options_uoa_client만 빠져있었던 것). 당장 급한 건
+  아님, YAGNI로 보류.

@@ -117,6 +117,11 @@ _MOBILE_API_KEY = os.environ.get("MOBILE_API_KEY", "")
 
 @app.middleware("http")
 async def _require_key_for_remote(request, call_next):
+    # CORS preflight(OPTIONS)엔 브라우저가 커스텀 헤더(X-Api-Key)를 절대 안 실음 —
+    # 여기서 막으면 CORSMiddleware가 응답할 기회조차 없이 401로 프리플라이트가 죽어
+    # 실제 요청(GET/POST)이 브라우저 단에서 CORS 에러로 영원히 안 나감(2026-09-04, 폰 무한로딩).
+    if request.method == "OPTIONS":
+        return await call_next(request)
     if request.client and request.client.host not in ("127.0.0.1", "::1"):
         if not _MOBILE_API_KEY or request.headers.get("x-api-key") != _MOBILE_API_KEY:
             from fastapi.responses import JSONResponse

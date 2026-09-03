@@ -13,6 +13,7 @@ from __future__ import annotations
 import datetime as _dt
 import functools
 import os
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FutureTimeoutError
 
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.historical.option import OptionHistoricalDataClient
@@ -25,6 +26,11 @@ from alpaca.trading.requests import GetOptionContractsRequest
 _KEY = os.getenv("ALPACA_API_KEY", "")
 _SECRET = os.getenv("ALPACA_SECRET_KEY", "")
 _TIMEOUT = 12
+# requests timeout=은 connect/read만 막고 DNS(socket.getaddrinfo)는 못 막음(파이썬 자체 제약,
+# urllib3 create_connection이 getaddrinfo 이후에야 settimeout 걸음) — 2026-09-03 실서버 행에서
+# 이 경로로 실측(SIGUSR1 덤프: create_connection 안 getaddrinfo에서 무한 대기). _capped()의
+# requests timeout으론 못 막아 티커 단위 하드 데드라인을 별도 스레드로 감싼다.
+_SCAN_TIMEOUT = 20
 
 
 def _require_key() -> None:
@@ -122,9 +128,19 @@ def get_unusual_options_activity(
     _require_key()
     out: list[dict] = []
     for t in tickers:
+        # 티커마다 새 1-worker 풀 — 공유 풀이면 타임아웃으로 버린 워커가 자리 계속 차지해
+        # (max_workers=1인데 그 하나가 영구 행) 다음 티커도 막힘. 버려진 워커는 스레드 leak이지만
+        # 티커당 최대 1개, 하드 데드라인 있는 게 무한 대기보다 훨씬 낫다.
+        pool = ThreadPoolExecutor(max_workers=1)
         try:
-            out.extend(_scan_ticker(t.upper(), max_dte, min_otm_pct, min_vol_oi_ratio, min_volume))
-        except Exception:
-            continue  # 개별 티커 실패는 건너뛰고 나머지 계속
+            fut = pool.submit(_scan_ticker, t.upper(), max_dte, min_otm_pct, min_vol_oi_ratio, min_volume)
+            try:
+                out.extend(fut.result(timeout=_SCAN_TIMEOUT))
+            except _FutureTimeoutError:
+                continue  # 하드 데드라인 초과(DNS 행 등) — 워커는 버리고 다음 티커로
+            except Exception:
+                continue  # 개별 티커 실패는 건너뛰고 나머지 계속
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
     out.sort(key=lambda r: r["vol_oi_ratio"], reverse=True)
     return out

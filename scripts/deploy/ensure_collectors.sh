@@ -30,7 +30,8 @@ ENSURE=(
   # "convergence-legs|research.run_convergence_signal_collect"
 )
 
-for entry in "${ENSURE[@]}"; do
+for entry in "${ENSURE[@]:-}"; do
+  [ -z "$entry" ] && continue  # bash 3.2 set -u 우회: 빈 배열이 빈 문자열 1개로 전개되는 걸 스킵
   session="${entry%%|*}"
   module="${entry##*|}"
   if tmux has-session -t "$session" 2>/dev/null; then

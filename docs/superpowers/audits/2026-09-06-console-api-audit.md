@@ -1,6 +1,8 @@
 # console_api.py 엔드포인트 전수 감사 (2026-09-06)
 
-**요약:** 전체 `@router.get` 엔드포인트 107개 중 사전 확인된 3개(macro-intelligence/insider-flow-live/dart-events-live)를 제외한 **104개**를 감사. `data_source` 분포 — **REAL 75 / MIXED 13 / DEMO 16**. `trading_relevant=YES`이면서 `data_source`가 REAL/MIXED인 후보는 **5개** (`/fusion`, `/overlay`, `/investment-os`, `/forward-learning`, `/monthly-review`) — 전부 전략 단위(strategy-level)이며 개별 종목 필터 쿼리파라미터는 없음.
+**요약:** 전체 `@router.get` 엔드포인트 107개 중 사전 확인된 3개(macro-intelligence/insider-flow-live/dart-events-live)를 제외한 **104개**를 감사. `data_source` 분포 — **REAL 76 / MIXED 14 / DEMO 14**. `trading_relevant=YES`이면서 `data_source`가 REAL/MIXED인 후보는 **5개** (`/fusion`, `/overlay`, `/investment-os`, `/forward-learning`, `/monthly-review`) — 전부 전략 단위(strategy-level)이며 개별 종목 필터 쿼리파라미터는 없음.
+
+**정정 이력(2026-09-06 리뷰 반영):** `/data-health`를 DEMO→REAL, `/market-cockpit`을 DEMO→MIXED로 정정. 근거는 각 행의 notes 참조. 최초 감사 방법론의 맹점 — "backing 함수가 빈 인자(`{}`)로 호출된다"는 사실만으로 DEMO 처리하고, 그 함수 내부에서 실제로 무엇을 계산하는지 재확인하지 않은 것 — 을 교정하기 위해 유사 패턴(호출부에서 하드코딩된 빈/기본 인자를 넘기는 엔드포인트) 전체를 재점검함. 상세는 표 하단 "정정 내역" 절 참조.
 
 ## 조사 방법 및 판정 기준
 
@@ -59,7 +61,7 @@
 | `/alt-data` | `jarvis.research_workflow.alt_data.catalog()` | DEMO | NO | NO | 정적 하드코딩 소스 카탈로그(`ALT_SOURCES`), 실 관측 없음. |
 | `/council-expanded` | `jarvis.research_workflow.council_evolution.deliberate(q)` | REAL | NO | NO | `assistant.recall`/`mistake_check` 실측 결합, 7관점 논거 생성. |
 | `/strategy-lab` | `jarvis.research_workflow.strategy_lab.strategy_dna/repeated_mistakes` + `_strategy_metrics()`(실 원장) | REAL | NO | NO | q=전략명, 실험 원장 기반. |
-| `/market-cockpit` | `jarvis.research_workflow.market_cockpit.build_market_cockpit({}, {})` | DEMO | NO | NO | 하드코딩된 빈 인자로 항상 호출 — 구조적 stub. |
+| `/market-cockpit` | `jarvis.research_workflow.market_cockpit.build_market_cockpit({}, {})` | MIXED | NO | NO | 정정(리뷰 반영): `indicators`/`signals`가 `{}`로 고정돼 `market_state`(UNKNOWN)·`research_opportunities`(빈 리스트)만 구조적으로 비지만, 응답 대부분(active_experiments/validation_status/risk/portfolio_context/decision_queue/knowledge_growth/timeline/health_score 등)은 인자와 무관하게 `cockpit.build_cockpit()`(REAL)을 그대로 반환 — DEMO 아니라 MIXED. |
 | `/news-intel` | `jarvis.research_workflow.news_intelligence.analyze_headline(q)` | DEMO | NO | NO | 키워드 기반 분류기 + 정적 관계그래프. 실 뉴스 피드 수집 없음(호출자가 텍스트 직접 입력). |
 | `/supply-chain-impact` | `jarvis.research_workflow.supply_chain_impact.propagate` | DEMO | NO | NO | 정적 공급망/기업 관계 참조 그래프("정적 공급망 그래프" — 코드 주석 명시). |
 | `/earnings-intel` | 없음(백킹 모듈 미연결) | DEMO | NO | NO | 하드코딩된 스텁 note+필드 스키마만 반환. "데이터 소스 연결 시 채워짐"이라 코드에 명시. |
@@ -71,7 +73,7 @@
 | `/v2-release` | `jarvis.research_workflow.release_validation.validate_release` | REAL | NO | NO | 릴리스 검증(내부 안전점검). |
 | `/validation-loop` | lifecycle/ops(REAL) + `_DEMO_BT`/`_DEMO_PAPER`(코드에 `is_demo: True` 명시) | MIXED | NO | NO | validation/quality 패널은 명시적 데모 백테스트·페이퍼 지표로 시연. |
 | `/data-capability-map` | `jarvis.research_workflow.providers.provider_registry` | REAL | NO | NO | 정적 카탈로그 + 실측 env credential 체크(available/not_configured). 인프라 상태. |
-| `/data-health` | `jarvis.research_workflow.data_quality.build_data_health()` (인자 없이 호출) | DEMO | NO | NO | `series_by_source` 미주입 → 구조적으로 항상 LIMITED에 가까움(패턴 기반, 미상세 확인). |
+| `/data-health` | `jarvis.research_workflow.data_quality.build_data_health()` (인자 없이 호출) | REAL | NO | NO | 정정(리뷰 반영): `series_by_source`/`rows_by_source` 미주입이라 freshness/schema 서브리포트만 빈 리스트지만, `overall_status`/`api_availability`는 `providers.provider_registry()`(실측 env credential 체크) 기반 `avail_ratio`로 결정적 계산됨(`/data-capability-map`과 동일 소스) — 하드코딩 아님. |
 | `/research-feed` | `jarvis.research_workflow.research_feed.collect(demo)` | DEMO | NO | NO | `demo = {"market":[{"asset":"AAPL",...}], "news":[...]}` 하드코딩 변수명 자체가 demo. |
 | `/live-intelligence` | `jarvis.research_workflow.live_intelligence.build_live_intelligence(demo=True)` | DEMO | NO | NO | 파라미터명 자체가 `demo=True`. |
 | `/operational-validation` | `jarvis.research_workflow.operational_validation.validate_operations` | REAL | NO | NO | 아키텍처 안전 검증(내부). |
@@ -130,3 +132,15 @@ trading_relevant=YES + REAL/MIXED 후보 5개는 전부 **전략 단위**이며 
 2. `/investment-os`, `/forward-learning`, `/monthly-review` — 이미 실 레지스트리/실험/예측 원장을 조인하는 성숙한 모듈(`jarvis/investment_os/`). symbol 단위로 세분화하려면 candidate 구조에 종목 필드를 추가해야 함(전략이 다종목 유니버스를 다루는 경우 전략:종목 매핑이 필요) — 중간 난이도.
 
 나머지 99개 엔드포인트는 (a) 순수 거버넌스/운영모니터링/메타연구 프로세스(REAL이지만 종목과 무관), (b) 하드코딩된 데모 데이터로 감싸인 프레임워크(DEMO), 또는 (c) 그 혼합(MIXED)이다. 특히 `/sector-intelligence`, `/company-intelligence`, `/company-monitor`는 종목/섹터 파라미터가 있어 symbol_scoped처럼 보이지만 재무 데이터가 하드코딩 가짜값(`eps: 0.5/0.62` 등)이라 trading_relevant=NO로 판정했다 — 이 3개는 실제 재무 데이터 소스(SEC-EDGAR/OpenDART/data.go.kr — `providers.py`의 `PROVIDER_CATALOG`에 이미 목록화됨)만 연결하면 빠르게 REAL로 전환 가능해 보인다.
+
+## 정정 내역 (2026-09-06, 리뷰 반영)
+
+리뷰어가 `/data-health` 판정 오류를 지적함: 최초 감사는 "backing 함수가 빈/기본 인자로 호출된다"는 호출부 패턴만 보고 DEMO로 분류했는데, 실제로는 함수 내부에서 `providers.provider_registry()`(실측 env-credential 체크)를 사용해 `overall_status`를 결정적으로 계산하고 있어 REAL이 맞음. 이 지적을 계기로 같은 실수 패턴(호출부가 빈/기본 인자를 넘긴다는 이유만으로 DEMO 처리하고, backing 함수 내부에서 그 인자와 무관하게 실측 데이터를 쓰는지는 재확인하지 않음)이 있는지 `market_cockpit.py`(비슷하게 `{}, {}` 인자로 호출됨) · `opportunity_discovery.py`(`discover({})`)를 다시 열어 재검증함.
+
+- **`/data-health`: DEMO → REAL.** `build_data_health()`는 인자가 없어도 `provider_registry()` 기반 `avail_ratio`로 `overall_status`(HEALTHY/DEGRADED/LIMITED)를 실측 계산한다(`/data-capability-map`과 동일 근거). `series_by_source`/`rows_by_source` 미주입으로 비는 건 freshness/schema 서브리포트뿐.
+- **`/market-cockpit`: DEMO → MIXED.** `build_market_cockpit({}, {})`는 인자와 무관하게 `cockpit.build_cockpit()`(REAL)의 대부분 필드를 그대로 반환한다. `indicators`/`signals`가 `{}`라서 비는 건 `market_state`(UNKNOWN)와 `research_opportunities`(빈 리스트) 두 필드뿐 — 응답의 절반 이상은 실측.
+- **`/opportunity-queue`: DEMO 유지(재확인 완료, 오분류 아님).** `discover(signals)`는 `signals.items()`를 순회하는 구조라 `discover({})`는 정말로 아무 조각도 만들지 않고 `count=0`을 반환한다 — market-cockpit과 달리 "인자와 무관하게 실측을 섞어 반환하는 다른 경로"가 없는 순수 구조적 stub이 맞음.
+
+이 두 건 수정으로 요약 카운트가 REAL 75→76, DEMO 16→14, MIXED 13→14로 변경됨(총 104 불변). trading_relevant=YES 후보 5개는 두 행 모두 NO라 영향 없음.
+
+**남은 우려**: "패턴 기반, 미상세 확인"으로 표시한 다른 REAL/MIXED 행들(예: `/research-graph`, `/cockpit`, `/strategy-health`, `/knowledge-conflicts` 등)도 같은 방식(호출부 인자 패턴만 보고 판정)의 위험이 남아있을 수 있어, 실제 배선(Task 3+) 전 해당 backing 모듈 소스를 직접 열어 재확인할 것을 권장.

@@ -11,6 +11,10 @@ the `CompanyAnalyst` (P124) — which composes `fundamental_pipeline`, `earnings
 `ownership_pipeline`. Impact direction (POSITIVE/NEGATIVE/NEUTRAL) and a research priority (HIGH/MEDIUM/LOW)
 are derived deterministically.
 
+`GET /console/company-monitor` also takes optional `symbol` (US, Finnhub) / `code` (KR, DART) query
+params; when given, the response gets an extra `financials_live` field with real financial metrics
+(via `_fetch_us_financials`/`_fetch_kr_financials`). Absent otherwise — no change to the base report shape.
+
 ## Reuse & no-duplication
 CompanyAnalyst + the P114–116 pipelines. No new store.
 

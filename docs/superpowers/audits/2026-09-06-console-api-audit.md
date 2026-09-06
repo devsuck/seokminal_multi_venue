@@ -1,6 +1,6 @@
 # console_api.py 엔드포인트 전수 감사 (2026-09-06)
 
-**요약:** 전체 `@router.get` 엔드포인트 107개 중 사전 확인된 3개(macro-intelligence/insider-flow-live/dart-events-live)를 제외한 **104개**를 감사. `data_source` 분포 — **REAL 76 / MIXED 14 / DEMO 14**. `trading_relevant=YES`이면서 `data_source`가 REAL/MIXED인 후보는 **5개** (`/fusion`, `/overlay`, `/investment-os`, `/forward-learning`, `/monthly-review`) — 전부 전략 단위(strategy-level)이며 개별 종목 필터 쿼리파라미터는 없음.
+**요약:** 전체 `@router.get` 엔드포인트 107개 중 사전 확인된 3개(macro-intelligence/insider-flow-live/dart-events-live)를 제외한 **104개**를 감사. `data_source` 분포 — **REAL 76 / MIXED 16 / DEMO 12**. `trading_relevant=YES`이면서 `data_source`가 REAL/MIXED인 후보는 **5개** (`/fusion`, `/overlay`, `/investment-os`, `/forward-learning`, `/monthly-review`) — 전부 전략 단위(strategy-level)이며 개별 종목 필터 쿼리파라미터는 없음.
 
 **정정 이력(2026-09-06 리뷰 반영):** `/data-health`를 DEMO→REAL, `/market-cockpit`을 DEMO→MIXED로 정정. 근거는 각 행의 notes 참조. 최초 감사 방법론의 맹점 — "backing 함수가 빈 인자(`{}`)로 호출된다"는 사실만으로 DEMO 처리하고, 그 함수 내부에서 실제로 무엇을 계산하는지 재확인하지 않은 것 — 을 교정하기 위해 유사 패턴(호출부에서 하드코딩된 빈/기본 인자를 넘기는 엔드포인트) 전체를 재점검함. 상세는 표 하단 "정정 내역" 절 참조.
 
@@ -89,7 +89,7 @@
 | `/research-brain` | knowledge_graph_upgrade + memory_audit + conflict_detection + knowledge_quality + 실패패턴(assistant) | REAL | NO | NO | 지식 시스템 통합 뷰, 전부 실측 하위모듈. |
 | `/research-schedule` | `jarvis.research_workflow.research_scheduler.plan_cycle` | REAL | NO | NO | 연구 운영 계획(패턴 기반, 미상세 확인). |
 | `/morning-briefing` | `jarvis.research_workflow.morning_briefing.generate(events=demo_events)` | DEMO | NO | NO | `demo_events = [{"kind":"macro","text":"CPI surprise"},{"kind":"earnings","text":"NVDA earnings"}]` 하드코딩. |
-| `/company-monitor` | `jarvis.research_workflow.company_monitor.update(name, financials=[하드코딩 eps 0.5/0.62], headlines=[템플릿 텍스트])` + `_fetch_us_financials(symbol)` / `_fetch_kr_financials(code)` | MIXED | YES(company) | NO | company 파라미터에 symbol(US)/code(KR) 함께 주면 financials_live에 실측 재무(Finnhub/DART) 부착 — Task 3에서 전환 완료. 기존 financials 파라미터는 경과 데모로 유지. |
+| `/company-monitor` | `jarvis.research_workflow.company_monitor.update(name, financials=[하드코딩 eps 0.5/0.62], headlines=[템플릿 텍스트])` + `_fetch_us_financials(symbol)` / `_fetch_kr_financials(code)` | MIXED | YES(company) | NO | 응답 본체(재무 서프라이즈 판정)는 여전히 하드코딩 데모값 기반. `financials_live`로 실측 재무가 별도 필드로 붙었으나(Task 3), 현재 대시보드/autopilot 어느 쪽도 이 필드를 소비하지 않고 curl 직접 호출로만 도달 가능 — 그래서 아직 trading_relevant=NO 유지. `/financials-live` 엔드포인트(YES)는 전체 응답 자체가 실측이라 다름. |
 | `/strategy-health` | `jarvis.research_workflow.strategy_health.StrategyHealthMonitor().board()` | REAL | NO | NO | 전략 건강 보드(패턴 기반, registry/experiment 의존 추정). |
 | `/agent-performance` | `jarvis.research_workflow.agent_performance.report(objective="momentum research" 고정)` | MIXED | NO | NO | 리포트 메커니즘은 실측이나 objective가 고정값이라 실질 컨텍스트 없음. |
 | `/research-workspace` | `jarvis.research_workflow.research_workspace.build_workspace` | REAL | NO | NO | inbox/review queue/agent outputs(내부). |
@@ -97,7 +97,7 @@
 | `/research-organization` | briefing(DEMO) + company_monitor(DEMO) + strategy_health(REAL) + agent_performance(MIXED) + knowledge_quality(REAL) + workspace(REAL) + ops_validation(REAL) | MIXED | NO | NO | 조합형 대시보드, 절반 이상 하드코딩 데모 조각 포함. |
 | `/data-production` | `jarvis.research_workflow.data_production.build_data_production`(직접 확인) | REAL | NO | NO | provider 실측 env 체크 + freshness. 인프라 상태(트레이딩 신호 아님). |
 | `/sector-intelligence` | `jarvis.research_workflow.sector_intelligence.analyze_sector`(직접 확인, `_SECTOR_SEED` 정적) | DEMO | NO | NO | 3개 섹터만 정적 seed(`semiconductor/ai_infra/tech`), 연구질문도 템플릿 문자열. |
-| `/company-intelligence` | `jarvis.research_workflow.company_intelligence.analyze_company(entity, financials=[하드코딩], headlines=[템플릿])` + `_fetch_us_financials(symbol)` / `_fetch_kr_financials(code)` | MIXED | YES(entity) | NO | entity 파라미터에 symbol(US)/code(KR) 함께 주면 financials_live에 실측 재무(Finnhub/DART) 부착 — Task 3에서 전환 완료. 기존 financials 파라미터는 경과 데모로 유지. |
+| `/company-intelligence` | `jarvis.research_workflow.company_intelligence.analyze_company(entity, financials=[하드코딩], headlines=[템플릿])` + `_fetch_us_financials(symbol)` / `_fetch_kr_financials(code)` | MIXED | YES(entity) | NO | 응답 본체(재무 서프라이즈 판정)는 여전히 하드코딩 데모값 기반. `financials_live`로 실측 재무가 별도 필드로 붙었으나(Task 3), 현재 대시보드/autopilot 어느 쪽도 이 필드를 소비하지 않고 curl 직접 호출로만 도달 가능 — 그래서 아직 trading_relevant=NO 유지. `/financials-live` 엔드포인트(YES)는 전체 응답 자체가 실측이라 다름. |
 | `/research-context` | `jarvis.research_workflow.research_context_engine.build_research_context` (semantic_recall 실측 + macro_intelligence 기본 `{}` + regime) | MIXED | YES(entity) | NO | recall 부분은 실측, macro 컨텍스트 부분은 인자 미주입으로 사실상 비어있음. |
 | `/cross-asset` | `jarvis.research_workflow.cross_asset_intelligence.build_cross_asset(correlations=하드코딩)` | DEMO | NO | NO | `{"AAPL~SPY":0.72,"GLD~DXY":-0.58,"TLT~SPY":-0.35}` 하드코딩 상관계수. |
 | `/institutional-memory` | `jarvis.research_workflow.institutional_memory_expansion.build_institutional_memory`(직접 확인, rmi_ 실측 재구성) | REAL | NO | NO | 테마 분류는 정적 키워드이나 원천 데이터는 실 rmi_ 레코드. |
@@ -131,7 +131,7 @@ trading_relevant=YES + REAL/MIXED 후보 5개는 전부 **전략 단위**이며 
 1. `/fusion`, `/overlay` — 원장이 채워지려면 오프라인 CLI(퓨전 계산/오케스트레이터 evaluate)가 먼저 실행되어야 함. symbol 필터 추가는 코드 한 줄 수준(난이도 낮음)이나, 원장 자체가 비어있는 게 선결 문제.
 2. `/investment-os`, `/forward-learning`, `/monthly-review` — 이미 실 레지스트리/실험/예측 원장을 조인하는 성숙한 모듈(`jarvis/investment_os/`). symbol 단위로 세분화하려면 candidate 구조에 종목 필드를 추가해야 함(전략이 다종목 유니버스를 다루는 경우 전략:종목 매핑이 필요) — 중간 난이도.
 
-나머지 99개 엔드포인트는 (a) 순수 거버넌스/운영모니터링/메타연구 프로세스(REAL이지만 종목과 무관), (b) 하드코딩된 데모 데이터로 감싸인 프레임워크(DEMO), 또는 (c) 그 혼합(MIXED)이다. 특히 `/sector-intelligence`, `/company-intelligence`, `/company-monitor`는 종목/섹터 파라미터가 있어 symbol_scoped처럼 보이지만 재무 데이터가 하드코딩 가짜값(`eps: 0.5/0.62` 등)이라 trading_relevant=NO로 판정했다 — 이 3개는 실제 재무 데이터 소스(SEC-EDGAR/OpenDART/data.go.kr — `providers.py`의 `PROVIDER_CATALOG`에 이미 목록화됨)만 연결하면 빠르게 REAL로 전환 가능해 보인다.
+나머지 99개 엔드포인트는 (a) 순수 거버넌스/운영모니터링/메타연구 프로세스(REAL이지만 종목과 무관), (b) 하드코딩된 데모 데이터로 감싸인 프레임워크(DEMO), 또는 (c) 그 혼합(MIXED)이다. 특히 `/sector-intelligence`, `/company-intelligence`, `/company-monitor` 3개는 이 감사 시점엔 전부 종목/섹터 파라미터가 있어 symbol_scoped처럼 보이지만 재무 데이터가 하드코딩 가짜값(`eps: 0.5/0.62` 등)이라 trading_relevant=NO로 판정했었다. **Task 3(2026-09-06)로 갱신:** 이 중 `/company-intelligence`·`/company-monitor` 2개는 실제 재무 데이터 소스(Finnhub/DART)가 새 `financials_live` 필드로 추가 부착됐다(기존 하드코딩 가짜 EPS 데모 페이로드 자체는 그대로 유지 — 대체가 아니라 별도 필드 추가). `/sector-intelligence`는 company/symbol 파라미터 자체가 없고 데이터도 정적 섹터 seed라 이번 범위에서 제외됐다(아래 "Task 3 배제 사항" 및 플랜 파일 `docs/superpowers/plans/2026-09-06-multi-signal-integration.md`의 "Task 3+: 결정 경과" Ruling B 참조).
 
 ## 정정 내역 (2026-09-06, 리뷰 반영)
 
@@ -143,6 +143,8 @@ trading_relevant=YES + REAL/MIXED 후보 5개는 전부 **전략 단위**이며 
 
 이 두 건 수정으로 요약 카운트가 REAL 75→76, DEMO 16→14, MIXED 13→14로 변경됨(총 104 불변). trading_relevant=YES 후보 5개는 두 행 모두 NO라 영향 없음.
 
+Task 3(2026-09-06)로 DEMO 14→12, MIXED 14→16 (`/company-monitor`, `/company-intelligence` financials_live 부착).
+
 **Task 3 배제 사항: `/sector-intelligence`는 재무 헬퍼 재사용 범위 외**: `/company-monitor`, `/company-intelligence`와 달리 `/sector-intelligence`는 `sector` 파라미터만 받고 company/symbol 파라미터가 없으며, 데이터도 정적 seed(`_SECTOR_SEED`: semiconductor/ai_infra/tech 3개만)에 의존. 실제 REAL 전환에는 KRX/나스닥 섹터 구성종목 매핑 데이터(새 외부 데이터소스)가 필요해 "기존 금융 헬퍼 재사용"의 범위를 벗어남 — Task 3은 `/company-monitor`·`/company-intelligence` 2개로 축소, `/sector-intelligence`는 별도 스파이크로 연기.
 
 **남은 우려**: "패턴 기반, 미상세 확인"으로 표시한 다른 REAL/MIXED 행들(예: `/research-graph`, `/cockpit`, `/strategy-health`, `/knowledge-conflicts` 등)도 같은 방식(호출부 인자 패턴만 보고 판정)의 위험이 남아있을 수 있어, 실제 배선(Task 3+) 전 해당 backing 모듈 소스를 직접 열어 재확인할 것을 권장.
@@ -151,5 +153,5 @@ trading_relevant=YES + REAL/MIXED 후보 5개는 전부 **전략 단위**이며 
 
 이 감사 이후 Task 2에서 아래가 추가됨 — 위 표는 갱신하지 않았으니 참고할 것:
 
-- `@router.get` 엔드포인트 총 개수가 이 감사 시점(108개)보다 늘어남 — `GET /console/financials-live` 신규 추가(위 표에 없음). data_source=REAL, symbol_scoped=YES(symbol 또는 code 쿼리파라미터), trading_relevant=YES.
-- 이 감사 하단에서 "`/sector-intelligence`, `/company-intelligence`, `/company-monitor`는 실제 재무 데이터 소스만 연결하면 REAL 전환 가능"이라고 언급한 부분 — 그 연결에 쓸 수 있는 헬퍼가 이미 `api_server/console_api.py`에 존재함: `_fetch_kr_financials(code)`(DART 재사용), `_fetch_us_financials(symbol)`(Finnhub). Task 3+ 에서 이 세 엔드포인트를 REAL로 전환할 때 새로 구현하지 말고 이 두 함수를 재사용할 것.
+- `@router.get` 엔드포인트 총 개수가 이 감사 시점(107개)보다 늘어남 — `GET /console/financials-live` 신규 추가(위 표에 없음). data_source=REAL, symbol_scoped=YES(symbol 또는 code 쿼리파라미터), trading_relevant=YES.
+- 이 감사 하단에서 "`/sector-intelligence`, `/company-intelligence`, `/company-monitor`는 실제 재무 데이터 소스만 연결하면 REAL 전환 가능"이라고 언급했던 부분 — **Task 3(2026-09-06)에서 완료**: `_fetch_kr_financials(code)`(DART 재사용), `_fetch_us_financials(symbol)`(Finnhub) 두 헬퍼를 새로 구현하지 않고 그대로 재사용해 `/company-intelligence`·`/company-monitor` 2개에 `financials_live` 필드로 부착했다(위 표 92행·100행, "Task 3 배제 사항" 절). `/sector-intelligence`는 종목/섹터 파라미터 구조가 달라(사실상 3번째 엔드포인트가 아니라 처음부터 별도 스코프) 의도적으로 제외됐다 — 플랜 파일의 Ruling B 참조.

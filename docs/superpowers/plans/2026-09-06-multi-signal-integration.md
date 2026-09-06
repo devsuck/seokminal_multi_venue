@@ -27,9 +27,9 @@
 
 **Interfaces:**
 - Consumes: 없음(신규 조사)
-- Produces: 감사 보고서 — Task 3+(이 플랜엔 없음, 감사 후 별도 플랜 갱신)가 참조할 `{endpoint, backing_module, data_source, symbol_scoped, trading_relevant, notes}` 표
+- Produces: 감사 보고서 — Task 3(감사 시점엔 이 플랜에 없었으나, 감사 결과를 바탕으로 이후 이 플랜에 추가됨)가 참조할 `{endpoint, backing_module, data_source, symbol_scoped, trading_relevant, notes}` 표
 
-- [ ] **Step 1: 서브에이전트에 감사 위임**
+- [x] **Step 1: 서브에이전트에 감사 위임**
 
 `general-purpose` 서브에이전트(subagent_type: "general-purpose")에게 아래 프롬프트로 위임:
 
@@ -51,11 +51,11 @@ dart-events-live 3개는 이미 확인 완료라 건너뛰고, 나머지 각각�
 마크다운 표로 정리해서 보고. 코드 수정 금지 — 읽기 전용 조사만.
 ```
 
-- [ ] **Step 2: 보고서 저장**
+- [x] **Step 2: 보고서 저장**
 
 서브에이전트 결과를 `docs/superpowers/audits/2026-09-06-console-api-audit.md`에 저장.
 
-- [ ] **Step 3: 커밋**
+- [x] **Step 3: 커밋**
 
 ```bash
 cd /Users/seokhun/seokminal/seokminal-multi-venue
@@ -81,7 +81,7 @@ git commit -m "docs: console_api.py 100+ 엔드포인트 실측/demo 감사 보�
   net_profit, ...}` (KR, DART 계정과목 기준) 또는 `{symbol, pe_ttm, roe_ttm,
   debt_to_equity, current_ratio, net_margin_ttm, revenue_growth_yoy}` (US, Finnhub 기준)
 
-- [ ] **Step 1: Finnhub 실제 응답 필드 확인 (US)**
+- [x] **Step 1: Finnhub 실제 응답 필드 확인 (US)**
 
 먼저 실제 API를 한 번 호출해서 필드명을 확정한다 (Finnhub 무료 티어 `stock/metric` 응답
 필드는 심볼/시점에 따라 존재 여부가 다를 수 있어 문서만 보고 짐작하지 않는다):
@@ -98,7 +98,7 @@ PER(peNormalizedAnnual 계열), ROE(roeTTM 계열), 부채비율(totalDebt/total
 유동비율(currentRatioAnnual 계열), 순이익률(netProfitMarginTTM 계열), 매출성장률(YoY 계열).
 Step 2의 `_FINNHUB_FIELD_MAP` 값을 이 출력에 맞게 조정한다.
 
-- [ ] **Step 2: `console_api.py`에 엔드포인트 추가**
+- [x] **Step 2: `console_api.py`에 엔드포인트 추가**
 
 `@router.get("/company-intelligence")` 정의 바로 위에 추가 (기존 macro/insider/dart
 엔드포인트들과 같은 블록):
@@ -163,7 +163,7 @@ def financials_live_endpoint(symbol: str | None = None, code: str | None = None)
     return {}
 ```
 
-- [ ] **Step 3: API 재시작 + 실측 스모크테스트**
+- [x] **Step 3: API 재시작 + 실측 스모크테스트**
 
 ```bash
 cd /Users/seokhun/seokminal/seokminal-multi-venue
@@ -175,14 +175,14 @@ curl -s "http://localhost:8000/console/financials-live?code=005930" | python3 -m
 Expected: 둘 다 하드코딩 demo가 아닌 실제 숫자(0이나 null이 아닌 자산총계/ROE 등) 포함.
 비어있으면 Step 1 필드명 또는 DART corp_code 매핑을 재확인.
 
-- [ ] **Step 4: pytest 전체 회귀 확인**
+- [x] **Step 4: pytest 전체 회귀 확인**
 
 ```bash
 /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 -m pytest tests/ -q
 ```
 Expected: 1975 passed(신규 실패 없음).
 
-- [ ] **Step 5: `autopilot/tools/financials.sh` 신설**
+- [x] **Step 5: `autopilot/tools/financials.sh` 신설**
 
 ```bash
 #!/bin/zsh
@@ -216,7 +216,7 @@ zsh /Users/seokhun/seokminal/autopilot/tools/financials.sh AAPL
 zsh /Users/seokhun/seokminal/autopilot/tools/financials.sh --kr 005930
 ```
 
-- [ ] **Step 6: `autopilot/CLAUDE.md` 배선**
+- [x] **Step 6: `autopilot/CLAUDE.md` 배선**
 
 도구 표에 행 추가 (`dart.sh` 행 바로 아래):
 
@@ -243,7 +243,7 @@ zsh tools/financials.sh --kr 005930   # 한국
 - (STEP 3E 재무제표 부채비율 급등/적자전환 있으면 신규 진입 보류 검토)
 ```
 
-- [ ] **Step 7: 커밋 (양쪽 레포)**
+- [x] **Step 7: 커밋 (양쪽 레포)**
 
 ```bash
 cd /Users/seokhun/seokminal/seokminal-multi-venue
@@ -255,15 +255,153 @@ git add CLAUDE.md tools/financials.sh
 git commit -m "feat: STEP 3E 재무제표(회계장부) 관점 추가"
 ```
 
-- [ ] **Step 8: progress.md 기록 (양쪽 레포)**
+- [x] **Step 8: progress.md 기록 (양쪽 레포)**
 
 `seokminal-multi-venue/docs/progress.md`에 새 세션 로그 항목, `seokminal-dashboard/docs/progress.md`에 새 Phase 항목 — 기존 macro/insider/dart 항목과 동일 형식으로 완료 내용 + 커밋 해시 기록.
 
 ---
 
-## Task 3+ (감사 결과 대기)
+## Task 3+: 결정 경과 (2026-09-06)
 
-스펙 §Open Question대로, Task 1의 감사 보고서가 나와야 나머지 배선 대상과 순서가 확정된다.
-Task 1·2 완료 후 감사 보고서를 사용자에게 보여주고, 이 플랜 파일에 Task 3부터 이어서
-추가한 뒤 진행한다. **지금 이 시점에 Task 3+를 미리 만들지 않는 이유**: 존재하지도 않는
-엔드포인트를 대상으로 가짜 태스크를 쓰는 건 no-placeholder 원칙 위반이기 때문.
+Task 1·2 완료 + 최종 리뷰(fix 1회 포함) CLEAN 후, 감사 보고서의 "배선 우선순위 후보"
+(전략 단위 5개: `/fusion`/`/overlay`/`/investment-os`/`/forward-learning`/`/monthly-review`,
+빠른 전환 후보 3개: `/sector-intelligence`/`/company-intelligence`/`/company-monitor`)를
+사용자에게 제시.
+
+**Ruling A (사용자 선택 옵션 2 → 조사 후 기각):** 사용자가 처음 전략 단위 5개(옵션 2)를
+선택했으나, read-only 조사 결과 `jarvis.registry`(96개 계량전략, 신호 나오는 건 선물
+TSMOM류 + 한국 자사주매입/월초효과 4개 전략뿐)와 `autopilot`(registry 미등록, 별도
+스크리너로 임의 종목 스윙매매)이 **개념적으로 별개 시스템** — 5개 엔드포인트 응답은 전부
+`strategy_id` 키 기준이고 종목(symbol) 필드 자체가 없어 종목 필터로 좁힐 자연스러운
+교집합이 없음(단순 난이도 문제 아님). 이 사실을 사용자에게 보고 → 사용자가 옵션 1(빠른
+전환 3개)로 재선택.
+
+**Ruling B (사용자 선택 옵션 1 중 `/sector-intelligence` 제외):** 빠른 전환 3개 착수 전
+`console_api.py`/`jarvis/research_workflow/{company_monitor,company_intelligence,
+sector_intelligence}.py` 실제 코드 확인 결과 `/sector-intelligence`는 다른 둘과 패턴이
+다름 — `company`/`entity` 같은 종목 파라미터가 아예 없고(`sector` 파라미터만 받음),
+데모 데이터도 가짜 재무(`eps 0.5/0.62`)가 아니라 정적 3-섹터 seed(`_SECTOR_SEED`:
+semiconductor/ai_infra/tech)라 재무제표 헬�를 꽂을 지점이 없음. 실제 REAL 전환에는
+섹터/ETF 구성종목 데이터소스가 새로 필요해 "재무 헬퍼 재사용" 범위를 벗어남 —
+**이번 Task 3에서 제외**, 별도 스파이크로 남김(감사서에 이미 "패턴 기반, 미상세 확인"
+경고가 있던 항목과 같은 성격). Task 3는 `/company-monitor`·`/company-intelligence`
+2개로 축소.
+
+**Ruling C (autopilot CLAUDE.md 미변경):** `/company-monitor`/`/company-intelligence`가
+내부적으로 재사용하는 `news_pipeline`/`ownership_pipeline`/`earnings_intelligence`는
+이미 autopilot STEP 3C(뉴스)·3D(내부자/공시)·3E(재무제표)가 각각 커버 중인 정보와
+겹친다. 이 둘을 autopilot에 새 STEP으로 추가하면 같은 정보를 다른 포맷으로 한 번 더
+묻는 중복 호출이 되어 STEP 3 비용 가드레일(스펙 §가드레일, 사이클당 도구 호출 수)에
+반하는 효과만 있음 — **이번 Task는 대시보드(`console_api.py`) 응답을 실측으로 바꾸는
+것에 한정하고 `autopilot/CLAUDE.md`는 건드리지 않는다.**
+
+### Task 3: `/company-monitor`, `/company-intelligence` 실측 재무 필드 부착
+
+**Files:**
+- Modify: `api_server/console_api.py:1578-1586`(`/company-monitor`), `1814-1822`(`/company-intelligence`)
+- Modify: `docs/superpowers/audits/2026-09-06-console-api-audit.md`, `docs/progress.md`,
+  `seokminal-dashboard/docs/progress.md` (Step 5/6에서 갱신)
+
+**Interfaces:**
+- Consumes: Task 2가 이미 만든 `_fetch_us_financials(symbol) -> dict | None`,
+  `_fetch_kr_financials(code) -> dict | None`(둘 다 모듈 상단, 시그니처 변경 없음)
+- Produces: 두 엔드포인트 응답에 신규 top-level 키 `financials_live`(symbol/code 쿼리파라미터
+  준 경우만 채워짐, 없으면 응답 구조 기존과 동일 — 하위호환)
+
+**설계 메모(왜 기존 `financials=[...]` 파라미터에 안 꽂는지):** `company_monitor.update()`가
+내부적으로 넘기는 `financials=[{"expected":{"eps":0.5},"actual":{"eps":0.62}}]`는
+`earnings_intelligence.analyze_earnings()`가 "기대 vs 실제 서프라이즈"를 계산하는 용도
+(애널리스트 컨센서스 vs 실제 실적). Finnhub/DART 헬퍼가 주는 건 컨센서스 추정치가 아니라
+현재 시점 실측 비율(P/E·ROE·부채비율 등)이라 이 파라미터의 "expected" 자리에 넣을 게
+없음 — 억지로 끼워맞추면 의미 왜곡. 대신 완전히 별도 필드로 붙여서 진짜 실측 데이터임을
+명확히 구분한다. 기존 `financials=[eps 0.5/0.62]` 하드코딩은 예시 데모로 그대로 둔다
+(제거는 이번 Task 범위 밖 — earnings-surprise 예시 로직 자체는 이번 변경과 무관).
+
+- [x] **Step 1: `/company-monitor`에 `symbol`/`code` 쿼리파라미터 + `financials_live` 부착**
+
+`api_server/console_api.py:1578-1586`을 아래로 교체:
+
+```python
+@router.get("/company-monitor")
+def company_monitor(company: str = "", symbol: str | None = None, code: str | None = None) -> dict:
+    """P143 — CompanyUpdateReport(재무·실적·뉴스·소유 변화·영향·우선순위). 신호 아님. READ ONLY.
+    symbol(US)/code(KR) 주면 financials_live에 실측 재무지표(Finnhub/DART) 부착."""
+    def _run():
+        name = (company or "NVDA").strip()
+        from jarvis.research_workflow.company_monitor import update
+        result = update(name, financials=[{"company": name, "expected": {"eps": 0.5},
+                      "actual": {"eps": 0.62}}], headlines=[{"text": f"{name} product news", "entity": name}])
+        if code:
+            result["financials_live"] = _safe(lambda: _fetch_kr_financials(code.strip()))
+        elif symbol:
+            result["financials_live"] = _safe(lambda: _fetch_us_financials(symbol.strip().upper()))
+        return result
+    return _safe(_run, {"events": []}) or {}
+```
+
+- [x] **Step 2: `/company-intelligence`에 동일 패턴 적용**
+
+`api_server/console_api.py:1814-1822`을 아래로 교체:
+
+```python
+@router.get("/company-intelligence")
+def company_intelligence_endpoint(entity: str = "TSMC", symbol: str | None = None,
+                                  code: str | None = None) -> dict:
+    """P154 — CompanyIntelligenceReport(관계·이벤트·재무·교훈·리스크). 매수/매도 신호 아님. READ ONLY.
+    symbol(US)/code(KR) 주면 financials_live에 실측 재무지표(Finnhub/DART) 부착."""
+    def _run():
+        name = (entity or "TSMC").strip()
+        from jarvis.research_workflow.company_intelligence import analyze_company
+        result = analyze_company(name, financials=[{"company": name, "expected": {"eps": 0.5},
+                               "actual": {"eps": 0.62}}], headlines=[{"text": f"{name} news", "entity": name}])
+        if code:
+            result["financials_live"] = _safe(lambda: _fetch_kr_financials(code.strip()))
+        elif symbol:
+            result["financials_live"] = _safe(lambda: _fetch_us_financials(symbol.strip().upper()))
+        return result
+    return _safe(_run, {"relationships": {}}) or {}
+```
+
+- [x] **Step 3: API 재시작 + 실측 스모크테스트**
+
+```bash
+cd /Users/seokhun/seokminal/seokminal-multi-venue
+bash scripts/restart_api.sh
+curl -s "http://localhost:8000/console/company-monitor?company=AAPL&symbol=AAPL" | python3 -m json.tool
+curl -s "http://localhost:8000/console/company-monitor?company=삼성전자&code=005930" | python3 -m json.tool
+curl -s "http://localhost:8000/console/company-intelligence?entity=AAPL&symbol=AAPL" | python3 -m json.tool
+curl -s "http://localhost:8000/console/company-monitor" | python3 -m json.tool
+```
+
+Expected: 처음 3개는 `financials_live`에 null 아닌 실측 값(P/E·ROE 또는 자산총계 등) 포함.
+마지막(파라미터 없음, 기존 호출 방식)은 `financials_live` 키 자체가 응답에 없어야 함
+(하위호환 — 기존 대시보드 호출부가 깨지지 않는지 확인).
+
+- [x] **Step 4: pytest 전체 회귀 확인**
+
+```bash
+/Library/Frameworks/Python.framework/Versions/3.14/bin/python3 -m pytest tests/ -q
+```
+Expected: 1975 passed(신규 실패 없음).
+
+- [x] **Step 5: 감사 보고서 갱신**
+
+`docs/superpowers/audits/2026-09-06-console-api-audit.md`의 `/company-monitor`,
+`/company-intelligence` 행(92행, 100행)을 `data_source: DEMO → MIXED`로 갱신하고,
+`/sector-intelligence`가 Task 3 범위에서 제외된 이유(위 Ruling B)를 "남은 우려" 절
+바로 위에 짧게 추가.
+
+- [x] **Step 6: 커밋 + 기록**
+
+```bash
+cd /Users/seokhun/seokminal/seokminal-multi-venue
+git add api_server/console_api.py docs/superpowers/audits/2026-09-06-console-api-audit.md
+git commit -m "feat: company-monitor/company-intelligence에 실측 재무(financials_live) 부착"
+```
+
+`seokminal-multi-venue/docs/progress.md`, `seokminal-dashboard/docs/progress.md`에
+기존 Phase 형식으로 완료 항목 추가(별도 커밋 또는 위 커밋에 포함, 기존 관행대로).
+
+**Task 3 이후:** `/sector-intelligence` REAL 전환과 5개 전략 엔드포인트 건은 이번
+플랜 범위 밖으로 확정 종료(위 Ruling A/B). 이 플랜은 Task 3 완료 + 리뷰 클린을 끝으로
+종료한다.

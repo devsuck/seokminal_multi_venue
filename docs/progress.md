@@ -3,6 +3,30 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-09-06 계속4) — 멀티시그널 통합 Task 3: company-monitor/company-intelligence 실측 재무 부착
+
+배경: Task 1(감사)·Task 2(재무제표 실측 배선) 완료 후 감사 보고서의 "빠른 전환 후보 3개"
+(`/sector-intelligence`/`/company-intelligence`/`/company-monitor`) 중 조사 결과
+`/sector-intelligence`는 종목 파라미터 자체가 없어 제외, 나머지 2개로 Task 3 축소(플랜 파일
+"Task 3+: 결정 경과" Ruling A/B 참조).
+
+### 완료된 작업
+- **`/company-monitor`, `/company-intelligence`에 실측 재무(`financials_live` 필드) 부착** —
+  Finnhub(US)/DART(KR) 재사용(Task 2가 만든 `_fetch_us_financials`/`_fetch_kr_financials` 그대로
+  재사용, 신규 구현 없음), `symbol`/`code` 쿼리파라미터 추가. `/sector-intelligence`는 재무 데이터
+  주입 지점이 없어 이번 범위에서 제외(별도 스파이크로 이월). 커밋 `550b8a2`.
+- 감사 보고서(`docs/superpowers/audits/2026-09-06-console-api-audit.md`) 92행·100행 갱신
+  (DEMO→MIXED), 헤더 카운트 정정(REAL 76/MIXED 16/DEMO 12).
+
+### 변경된 파일
+- 수정: `api_server/console_api.py`(`/company-monitor`, `/company-intelligence`에 `symbol`/`code`
+  파라미터 + `financials_live` 부착)
+- 수정: `docs/superpowers/audits/2026-09-06-console-api-audit.md`
+
+### 다음 할 일
+- `/sector-intelligence` REAL 전환은 별도 스파이크로 이월(섹터/ETF 구성종목 데이터소스 신규 필요).
+- 이 플랜(`docs/superpowers/plans/2026-09-06-multi-signal-integration.md`)은 Task 3 완료로 종료.
+
 ## 세션 로그 (2026-09-06 계속3) — 멀티시그널 통합 Task 2: 재무제표(회계장부) 실측 배선
 
 배경: "멀티시그널 통합" SDD 플랜(`.superpowers/sdd/2026-09-06-multi-signal-integration/`) Task 2 —

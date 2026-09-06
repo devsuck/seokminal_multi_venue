@@ -10,6 +10,10 @@ Tracks a company's suppliers/customers/competitors/industries (via `supply_chain
 financial context (via `company_monitor`, P143), and historical lessons (via `semantic_recall`, P133).
 Deterministic risks; **no buy/sell signal**.
 
+`GET /console/company-intelligence` also takes optional `symbol` (US, Finnhub) / `code` (KR, DART) query
+params; when given, the response gets an extra `financials_live` field with real financial metrics
+(via `_fetch_us_financials`/`_fetch_kr_financials`). Absent otherwise — no change to the base report shape.
+
 ## Reuse & no-duplication
 knowledge_graph + company_monitor + fundamental_pipeline + supply_chain_impact. No new store.
 

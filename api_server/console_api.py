@@ -1675,12 +1675,46 @@ def sector_intelligence_endpoint(sector: str = "semiconductor") -> dict:
     return _safe(lambda: analyze_sector(sector), {"key_entities": []}) or {}
 
 
+def _fetch_real_macro_indicators() -> dict | None:
+    """FRED에서 실측 fed_funds/cpi(YoY%)/unemployment 조회. 실패 시 None(호출부가 demo로 폴백)."""
+    import datetime as _dt
+    from fred.client import FREDClient
+
+    client = FREDClient()
+    end = _dt.date.today()
+    start = end - _dt.timedelta(days=420)  # CPI YoY 계산에 13개월분 필요
+
+    def _latest(series_id: str) -> float | None:
+        obs = [o for o in client.get_series(series_id, start.isoformat(), end.isoformat())
+               if o["value"] is not None]
+        return obs[-1]["value"] if obs else None
+
+    fed_funds = _latest("FEDFUNDS")
+    unemployment = _latest("UNRATE")
+
+    # 월별 지표라 결측월 있을 수 있음 — 인덱스가 아니라 "YYYY-MM" 키로 12개월 전 값을 찾는다.
+    by_month = {o["date"][:7]: o["value"] for o in client.get_series("CPIAUCSL", start.isoformat(), end.isoformat())
+                if o["value"] is not None}
+    cpi_yoy = None
+    if by_month:
+        latest_month = max(by_month)
+        y, m = int(latest_month[:4]), int(latest_month[5:7])
+        year_ago_month = f"{y - 1:04d}-{m:02d}"
+        year_ago_value = by_month.get(year_ago_month)
+        if year_ago_value:
+            cpi_yoy = round((by_month[latest_month] / year_ago_value - 1) * 100, 2)
+
+    return {"fed_funds": fed_funds, "cpi": cpi_yoy, "unemployment": unemployment}
+
+
 @router.get("/macro-intelligence")
 def macro_intelligence_endpoint() -> dict:
     """P153 — MacroContextReport(상태·지표·과거·영향자산·불확실성). 예측 아님. READ ONLY."""
     demo = {"fed_funds": 5.0, "cpi": 3.5, "unemployment": 4.2}
+    real = _safe(_fetch_real_macro_indicators)
+    indicators = real if real and any(v is not None for v in real.values()) else demo
     from jarvis.research_workflow.macro_intelligence import build_macro_context
-    return _safe(lambda: build_macro_context(indicators=demo), {"macro_state": "UNKNOWN"}) or {}
+    return _safe(lambda: build_macro_context(indicators=indicators), {"macro_state": "UNKNOWN"}) or {}
 
 
 @router.get("/company-intelligence")

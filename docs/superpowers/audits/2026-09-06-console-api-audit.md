@@ -89,7 +89,7 @@
 | `/research-brain` | knowledge_graph_upgrade + memory_audit + conflict_detection + knowledge_quality + 실패패턴(assistant) | REAL | NO | NO | 지식 시스템 통합 뷰, 전부 실측 하위모듈. |
 | `/research-schedule` | `jarvis.research_workflow.research_scheduler.plan_cycle` | REAL | NO | NO | 연구 운영 계획(패턴 기반, 미상세 확인). |
 | `/morning-briefing` | `jarvis.research_workflow.morning_briefing.generate(events=demo_events)` | DEMO | NO | NO | `demo_events = [{"kind":"macro","text":"CPI surprise"},{"kind":"earnings","text":"NVDA earnings"}]` 하드코딩. |
-| `/company-monitor` | `jarvis.research_workflow.company_monitor.update(name, financials=[하드코딩 eps 0.5/0.62], headlines=[템플릿 텍스트])` | DEMO | YES(company) | NO | company 파라미터가 있어도 재무/헤드라인이 항상 가짜값 — symbol_scoped처럼 보이나 정보가치 없음. |
+| `/company-monitor` | `jarvis.research_workflow.company_monitor.update(name, financials=[하드코딩 eps 0.5/0.62], headlines=[템플릿 텍스트])` + `_fetch_us_financials(symbol)` / `_fetch_kr_financials(code)` | MIXED | YES(company) | NO | company 파라미터에 symbol(US)/code(KR) 함께 주면 financials_live에 실측 재무(Finnhub/DART) 부착 — Task 3에서 전환 완료. 기존 financials 파라미터는 경과 데모로 유지. |
 | `/strategy-health` | `jarvis.research_workflow.strategy_health.StrategyHealthMonitor().board()` | REAL | NO | NO | 전략 건강 보드(패턴 기반, registry/experiment 의존 추정). |
 | `/agent-performance` | `jarvis.research_workflow.agent_performance.report(objective="momentum research" 고정)` | MIXED | NO | NO | 리포트 메커니즘은 실측이나 objective가 고정값이라 실질 컨텍스트 없음. |
 | `/research-workspace` | `jarvis.research_workflow.research_workspace.build_workspace` | REAL | NO | NO | inbox/review queue/agent outputs(내부). |
@@ -97,7 +97,7 @@
 | `/research-organization` | briefing(DEMO) + company_monitor(DEMO) + strategy_health(REAL) + agent_performance(MIXED) + knowledge_quality(REAL) + workspace(REAL) + ops_validation(REAL) | MIXED | NO | NO | 조합형 대시보드, 절반 이상 하드코딩 데모 조각 포함. |
 | `/data-production` | `jarvis.research_workflow.data_production.build_data_production`(직접 확인) | REAL | NO | NO | provider 실측 env 체크 + freshness. 인프라 상태(트레이딩 신호 아님). |
 | `/sector-intelligence` | `jarvis.research_workflow.sector_intelligence.analyze_sector`(직접 확인, `_SECTOR_SEED` 정적) | DEMO | NO | NO | 3개 섹터만 정적 seed(`semiconductor/ai_infra/tech`), 연구질문도 템플릿 문자열. |
-| `/company-intelligence` | `jarvis.research_workflow.company_intelligence.analyze_company(entity, financials=[하드코딩], headlines=[템플릿])` | DEMO | YES(entity) | NO | company-monitor와 동일 패턴 — entity 있어도 재무 데이터가 가짜. |
+| `/company-intelligence` | `jarvis.research_workflow.company_intelligence.analyze_company(entity, financials=[하드코딩], headlines=[템플릿])` + `_fetch_us_financials(symbol)` / `_fetch_kr_financials(code)` | MIXED | YES(entity) | NO | entity 파라미터에 symbol(US)/code(KR) 함께 주면 financials_live에 실측 재무(Finnhub/DART) 부착 — Task 3에서 전환 완료. 기존 financials 파라미터는 경과 데모로 유지. |
 | `/research-context` | `jarvis.research_workflow.research_context_engine.build_research_context` (semantic_recall 실측 + macro_intelligence 기본 `{}` + regime) | MIXED | YES(entity) | NO | recall 부분은 실측, macro 컨텍스트 부분은 인자 미주입으로 사실상 비어있음. |
 | `/cross-asset` | `jarvis.research_workflow.cross_asset_intelligence.build_cross_asset(correlations=하드코딩)` | DEMO | NO | NO | `{"AAPL~SPY":0.72,"GLD~DXY":-0.58,"TLT~SPY":-0.35}` 하드코딩 상관계수. |
 | `/institutional-memory` | `jarvis.research_workflow.institutional_memory_expansion.build_institutional_memory`(직접 확인, rmi_ 실측 재구성) | REAL | NO | NO | 테마 분류는 정적 키워드이나 원천 데이터는 실 rmi_ 레코드. |
@@ -142,6 +142,8 @@ trading_relevant=YES + REAL/MIXED 후보 5개는 전부 **전략 단위**이며 
 - **`/opportunity-queue`: DEMO 유지(재확인 완료, 오분류 아님).** `discover(signals)`는 `signals.items()`를 순회하는 구조라 `discover({})`는 정말로 아무 조각도 만들지 않고 `count=0`을 반환한다 — market-cockpit과 달리 "인자와 무관하게 실측을 섞어 반환하는 다른 경로"가 없는 순수 구조적 stub이 맞음.
 
 이 두 건 수정으로 요약 카운트가 REAL 75→76, DEMO 16→14, MIXED 13→14로 변경됨(총 104 불변). trading_relevant=YES 후보 5개는 두 행 모두 NO라 영향 없음.
+
+**Task 3 배제 사항: `/sector-intelligence`는 재무 헬퍼 재사용 범위 외**: `/company-monitor`, `/company-intelligence`와 달리 `/sector-intelligence`는 `sector` 파라미터만 받고 company/symbol 파라미터가 없으며, 데이터도 정적 seed(`_SECTOR_SEED`: semiconductor/ai_infra/tech 3개만)에 의존. 실제 REAL 전환에는 KRX/나스닥 섹터 구성종목 매핑 데이터(새 외부 데이터소스)가 필요해 "기존 금융 헬퍼 재사용"의 범위를 벗어남 — Task 3은 `/company-monitor`·`/company-intelligence` 2개로 축소, `/sector-intelligence`는 별도 스파이크로 연기.
 
 **남은 우려**: "패턴 기반, 미상세 확인"으로 표시한 다른 REAL/MIXED 행들(예: `/research-graph`, `/cockpit`, `/strategy-health`, `/knowledge-conflicts` 등)도 같은 방식(호출부 인자 패턴만 보고 판정)의 위험이 남아있을 수 있어, 실제 배선(Task 3+) 전 해당 backing 모듈 소스를 직접 열어 재확인할 것을 권장.
 

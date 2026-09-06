@@ -1576,13 +1576,19 @@ def morning_briefing() -> dict:
 
 
 @router.get("/company-monitor")
-def company_monitor(company: str = "") -> dict:
-    """P143 — CompanyUpdateReport(재무·실적·뉴스·소유 변화·영향·우선순위). 신호 아님. READ ONLY."""
+def company_monitor(company: str = "", symbol: str | None = None, code: str | None = None) -> dict:
+    """P143 — CompanyUpdateReport(재무·실적·뉴스·소유 변화·영향·우선순위). 신호 아님. READ ONLY.
+    symbol(US)/code(KR) 주면 financials_live에 실측 재무지표(Finnhub/DART) 부착."""
     def _run():
         name = (company or "NVDA").strip()
         from jarvis.research_workflow.company_monitor import update
-        return update(name, financials=[{"company": name, "expected": {"eps": 0.5},
+        result = update(name, financials=[{"company": name, "expected": {"eps": 0.5},
                       "actual": {"eps": 0.62}}], headlines=[{"text": f"{name} product news", "entity": name}])
+        if code:
+            result["financials_live"] = _safe(lambda: _fetch_kr_financials(code.strip()))
+        elif symbol:
+            result["financials_live"] = _safe(lambda: _fetch_us_financials(symbol.strip().upper()))
+        return result
     return _safe(_run, {"events": []}) or {}
 
 
@@ -1812,13 +1818,20 @@ def financials_live_endpoint(symbol: str | None = None, code: str | None = None)
 
 
 @router.get("/company-intelligence")
-def company_intelligence_endpoint(entity: str = "TSMC") -> dict:
-    """P154 — CompanyIntelligenceReport(관계·이벤트·재무·교훈·리스크). 매수/매도 신호 아님. READ ONLY."""
+def company_intelligence_endpoint(entity: str = "TSMC", symbol: str | None = None,
+                                  code: str | None = None) -> dict:
+    """P154 — CompanyIntelligenceReport(관계·이벤트·재무·교훈·리스크). 매수/매도 신호 아님. READ ONLY.
+    symbol(US)/code(KR) 주면 financials_live에 실측 재무지표(Finnhub/DART) 부착."""
     def _run():
         name = (entity or "TSMC").strip()
         from jarvis.research_workflow.company_intelligence import analyze_company
-        return analyze_company(name, financials=[{"company": name, "expected": {"eps": 0.5},
+        result = analyze_company(name, financials=[{"company": name, "expected": {"eps": 0.5},
                                "actual": {"eps": 0.62}}], headlines=[{"text": f"{name} news", "entity": name}])
+        if code:
+            result["financials_live"] = _safe(lambda: _fetch_kr_financials(code.strip()))
+        elif symbol:
+            result["financials_live"] = _safe(lambda: _fetch_us_financials(symbol.strip().upper()))
+        return result
     return _safe(_run, {"relationships": {}}) or {}
 
 

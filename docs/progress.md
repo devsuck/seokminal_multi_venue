@@ -3,6 +3,28 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-09-06) — 무인운영 인프라 점검(launchd PATH 버그 2건 수정, AUTONOMY_LEVEL 게이트 원인 확인, autoresearch OOM 추정) (사용자 자리비움, 위임 판단으로 진행)
+
+배경: "페이퍼 안 돌아가는 것 같다" 확인 요청으로 시작 — `/agents` API 500부터 추적해 무인운영 launchd 잡 전수 점검까지 확장. 상세 로그는 `seokminal-dashboard/docs/progress.md` Phase 243~245 참고(이 세션은 그쪽에 기록됐다가 백엔드 리포 쪽 progress.md 미동기화 발견해 뒤늦게 요약 반영).
+
+### 완료된 작업
+- **`com.seokminal.api.plist` PATH 버그 수정**: `EnvironmentVariables`/`PATH` 키 부재로 launchd 최소 PATH(`/usr/bin:/bin:/usr/sbin:/sbin`) 상속 → `agents.py`의 `subprocess.run(["tmux",...])`가 `/opt/homebrew/bin/tmux` 못 찾아 `/agents` 500. PATH 키 추가 후 `launchctl unload`/`load`로 반영, `/health`·`/agents` 200 확인, `pytest tests/ -q` 1975 passed 확인. (plist는 git 리포 밖, 홈 LaunchAgents 디렉토리)
+- **`scripts/deploy/ensure_collectors.sh` 크래시 루프 수정**: bash 3.2 `set -u`가 빈 배열 전개에서 "unbound variable" 던지는 버그(`com.seokminal.collectors`가 60초마다 크래시). `"${ENSURE[@]}"` → `"${ENSURE[@]:-}"` + 빈 문자열 skip 가드로 수정. 직접 실행(exit 0) + 워치독 로그 75초 폴링으로 신규 크래시 없음 확인. 커밋 `9722be5`.
+- **나머지 launchd job 6개 PATH 감사**: `com.seokminal.api`만 취약했고 나머지(`collectors`, `api-watchdog`, `dashboard`, `prune-research-data`, `tailscale-watchdog` 등)는 wrapper 스크립트 자체 PATH export 또는 절대경로 바이너리 사용이라 안전 확인.
+- **AUTONOMY_LEVEL 게이트가 페이퍼 주문까지 차단 중임을 확인**: `jarvis/config.py`의 `AUTONOMY_LEVEL=5 < MIN_LIVE_LEVEL=6`이 `broker_bridge.py::_gate()`에서 `paper` 플래그 무관하게 전 주문 차단(반면 `gateway.py`는 mode="paper"/"mock" 예외 처리함 — 두 레이어 설계가 다름). `test_broker_bridge.py::test_blocked_when_autonomy_level_insufficient`로 의도된 동작임을 확인(버그 아님). tmux 에이전트(`seokminal-agent-7591f352`, swing/GOOGL)는 ~2시간 주기로 사이클은 정상 도는데 실제 주문 단계에서 이 게이트에 막히는 중.
+- **`autoresearch` 주간잡 SIGKILL 원인 추정(비sudo)**: `logs/autoresearch.log`에 `Killed: 9` 2건, 파일 mtime 확인 결과 오늘(일요일 05:48, 잡 스케줄과 일치) 발생. `research/scanner/event_study.py::load_series()` 단독 측정 시 3080종목/335만 bar 로드에 ~2.1GB 피크 RSS(51.5초 소요) — API 서버 자체도 `api_watchdog.log` 상 4~5GB RSS 주기적 사용 확인됨. 두 프로세스 동시 실행 시 OOM/jetsam 가능성이 유력하나 커널 로그(`log show` jetsam predicate)는 sudo 없이는 조회 안 돼 확정은 못 함(정황 증거만).
+
+### 변경된 파일
+- `~/Library/LaunchAgents/com.seokminal.api.plist` (git 밖, PATH 키 추가)
+- `scripts/deploy/ensure_collectors.sh` (bash 3.2 unbound variable 가드) — 커밋 `9722be5`
+
+### 다음 할 일
+- `AUTONOMY_LEVEL`을 6으로 올릴지 여부는 사용자 결정 대기 — **이번 세션에서 올리지 않음**(명시적 보류 지시).
+- `autoresearch` 메모리 문제 해결(예: `load_series()` 청크 로딩, API 서버와 스케줄 분리 등)도 사용자 결정 대기 — **이번 세션에서 손대지 않음**(명시적 보류 지시).
+
+### 막힌 부분/결정사항
+- 두 항목 모두 실거래/리소스 영향 있는 변경이라 사용자 부재 중 자율판단 범위 밖으로 판단, 조사·기록까지만 진행.
+
 ## 세션 로그 (2026-08-25) — 모바일 대시보드 "마켓 퀄리티(PWA급)" 4서브시스템 중 백엔드 Web Push 인프라 (사용자 자리비움, 위임 판단으로 진행)
 
 배경: 사용자가 "모바일 플랫폼 마켓 올라가도 될 정도로 다 해줘"(PWA급 완성도로 확정) 위임. 4서브시스템(PWA 설치/오프라인, 터치/제스처, 푸시알림, QA) 중 이 리포 담당분(푸시알림 백엔드) 작업. 프론트 쪽 세부는 `seokminal-dashboard/docs/progress.md` 참고.
@@ -2342,3 +2364,67 @@ timeout은 여전히 유효(read 단계 방어)지만 그것만으론 불충분�
 - 같은 무제한-대기 취약점이 다른 외부 API 호출부에도 있는지 훑어볼 여지 있음(edgar/dart/finnhub는
   이미 이번 세션에 하드 데드라인 패턴 적용됨 — options_uoa_client만 빠져있었던 것). 당장 급한 건
   아님, YAGNI로 보류.
+
+### 추가: iOS `-999 cancelled` 콜드런치 프리즈 + 메모리경합 재기동 크래시루프 근본원인 (`b68cb96`, `0dac939`, 같은 세션)
+
+유저가 "UXUI 작업한거 맞냐"고 물어서 확인 도중, 새 UI는 배포됐지만 두 탭 다 `-999 cancelled`로
+멈춰있는 스크린샷 받음.
+
+**`-999` 원인**: `ios-remote/Seokminal/ContentView.swift`의 `RefreshingList`가 `.task { while
+!Task.isCancelled { ... } }` 구조 — SwiftUI 콜드런치 초반 `TabView`/`NavigationStack` 재구성 중
+`.task`가 스퓨리어스하게 한 번 취소되는 알려진 현상인데, `Task.isCancelled`는 한번 참이 되면
+영구 참이라 루프가 그대로 죽어버림(네트워크 문제 아니라 클라이언트 버그). `.task(id: generation)`
+로 바꾸고 `URLError.cancelled` 잡으면 `generation` 증가시켜 완전히 새 Task 발급하도록 수정.
+`xcodebuild ... -destination 'generic/platform=iOS' build` → BUILD SUCCEEDED로 컴파일만 확인,
+기기 설치는 유저가 Xcode로 직접(기기 잠금상태라 이 세션에서 접근 불가). **`ios-remote/`는 git repo
+자체가 없어 커밋 안 됨** — 별도 결정사항.
+
+**`-1001 timed out`(그다음 스크린샷)**: 처음엔 폰 쪽 신호 문제로 오판(유저가 "1,2,3 셋다 아니다"로
+정정) → 재조사해서 서버측 09:11:20 헬스실패+워치독 강제재기동과 스크린샷 시각(09:13-14)이 거의
+정확히 겹치는 걸 확인 — 실제로 그 순간 서버가 재기동 중이었음.
+
+**"2번(메모리경합 근본원인 고쳐줘)" — 두 겹 원인 다 실측+수정**:
+
+1. **재기동 크래시루프 증폭**: `research/lab/service.py::ResearchService.__init__`이
+   `_last_*_ts`(autoresearch/krx pull/buyback/edge/execution/tsmom, 전부 24h 또는 6h 스로틀)를
+   인스턴스 변수 0.0으로만 초기화 — 디스크 영구화 안 됨. api_watchdog가 메모리압박으로 강제
+   재기동할 때마다 "마지막 실행 후 86400초 지남" 판정이 매번 참이 되어 스로틀 배치 전부가 재기동
+   직후 첫 tick에 몰아쳐 실행 → 메모리 재폭증 → 워치독 재재기동 → 무한반복. `api_watchdog.log`
+   재기동↔실패 5~10분 간격 반복 패턴으로 확정.
+   수정: `_touch(key)`로 타임스탬프 변경 시마다 `research_service.json`에 즉시 반영, `__init__`에서
+   복원. 부수 발견: 관련 테스트 3개가 `research.lab.service`의 `state_path`를 격리 안 해서 로컬
+   테스트 실행이 실제 프로덕션 상태파일을 오염시키고 있었음(`jarvis/_state/research_service.json`에
+   가짜 타임스탬프가 실제로 찍힘) — 세 파일 다 격리 추가, 오염된 실제 상태파일도 정리.
+
+2. **배치 자체가 원래 무거움**: 라이브 SIGUSR1 스택덤프로 `_loop` 스레드가
+   `research/hypotheses/cross_venue_skew.py::load_venue_snapshots`의 `json.loads`에 몇 분째 멈춰
+   있는 걸 직접 확인, 동시에 메인 asyncio 이벤트루프는 GC 중(`/health` 타임아웃과 시간대 일치).
+   추적 결과: `cross_venue_skew` 원본 데이터가 3.1GB인데 `_select_basis_pairs()`가
+   `BASIS_VENUE_PAIRS`(각 거래소가 페어 2개에 재등장) 순회하며 같은 (venue,coin) 스냅샷을 캐시 없이
+   페어마다 다시 로드 — 배치 1회에 2배 중복 I/O.
+   수정: `_daily_mid`에 호출 스코프 캐시(`_select_basis_pairs`가 실행마다 새로 생성) 추가, distinct
+   (venue,coin)당 로드 1번으로 축소. 날짜범위/선정로직(통계적 방법론, 파일 자체 주석에 "설계시점
+   고정값, 결과 보고 변경 금지") 자체는 안 건드림 — 순수 중복 I/O 제거.
+
+**검증**: 두 커밋 다 `pytest tests/ -q` 그린(1974 → 1975, 회귀테스트 3개 추가:
+`test_lab_service_persist_throttle.py` 2건 + 캐시 중복로드 방지 1건). 배포 후 라이브 확인 —
+재기동 직후 첫 tick에서 6개 타임스탬프 전부 정상 실행+영구화되는 것까지 실측(RSS 한때 3.6GB까지
+튀었지만 health는 200 유지, 자체 복구). **두 번째 재기동(이 세션 09:45)에서는 이미 영구화된
+타임스탬프 덕에 스로틀 배치 전부 스킵 — RSS가 480~494MB에서 안정, health 200 연속 확인**(이전
+패턴이면 이 시점에 이미 GB대로 치솟기 시작했어야 함).
+
+### 변경된 파일 (이 추가 섹션)
+- 수정: `research/lab/service.py`(`_touch` 영구화), `research/autoresearch/engines_microstructure.py`
+  (`_daily_mid`/`_basis_signs_outcomes`/`_select_basis_pairs` 캐시), `tests/test_lab_service_execution_check.py`
+  /`test_lab_service_jarvis_bridge.py`/`test_lab_service_reconcile.py`(state_path 격리),
+  `tests/test_engines_microstructure.py`(fake 시그니처 + 캐시 회귀테스트), `ios-remote/Seokminal/ContentView.swift`
+  (커밋 안 됨, git repo 없음)
+- 신규: `tests/test_lab_service_persist_throttle.py`
+
+### 다음 할 일
+- 몇 시간~하루 관찰해서 `/health 실패` 패턴이 실제로 완전히 재발 안 하는지 확인(지금까진 재기동
+  직후 2회 관찰 기준 — 표본 더 필요).
+- 유저가 iOS 기기 잠금 풀고 Xcode로 재설치해야 `-999` 수정이 실제로 적용됨. `ios-remote/`를 git
+  버전관리에 넣을지는 아직 안 물어봄(관찰만 함).
+- `com.seokminal.autoresearch` launchd job 마지막 종료코드 137(SIGKILL) 미조사 — 주간배치라 당장
+  급한 daily 패턴은 아님, YAGNI로 보류.

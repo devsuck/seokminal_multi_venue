@@ -1750,6 +1750,67 @@ def dart_events_live_endpoint(code: str) -> dict:
     return _safe(_run, {"code": code, "events": []}) or {}
 
 
+_FINNHUB_FIELD_MAP = {
+    "pe_ttm": "peNormalizedAnnual",
+    "roe_ttm": "roeTTM",
+    "debt_to_equity": "totalDebt/totalEquityAnnual",
+    "current_ratio": "currentRatioAnnual",
+    "net_margin_ttm": "netProfitMarginTTM",
+    "revenue_growth_yoy": "revenueGrowthTTMYoy",
+}  # 2026-09-06 실제 Finnhub 응답(AAPL)으로 검증됨 — 브리프 추정치와 동일
+
+
+def _fetch_us_financials(symbol: str) -> dict | None:
+    """Finnhub 기본 재무지표(무료 티어) 실측. 실패 시 None(호출부가 빈 값 폴백)."""
+    import os
+
+    import requests
+
+    key = os.environ.get("FINNHUB_API_KEY", "")
+    if not key:
+        return None
+    r = requests.get("https://finnhub.io/api/v1/stock/metric",
+                      params={"symbol": symbol, "metric": "all", "token": key}, timeout=15)
+    r.raise_for_status()
+    m = r.json().get("metric", {}) or {}
+    if not m:
+        return None
+    return {k: m.get(v) for k, v in _FINNHUB_FIELD_MAP.items()}
+
+
+def _fetch_kr_financials(code: str) -> dict | None:
+    """DART 재무제표(연간, 캐시 우선) 실측. 실패 시 None."""
+    import datetime as _dt
+
+    from research.data.dart_financials import fetch_one, load_cached, load_corp_codes, parse_financials
+
+    year = str(_dt.date.today().year - 1)  # 최신 확정 사업연도(전년 사업보고서)
+    cached = load_cached(code, year)
+    if cached:
+        return {"year": year, **cached}
+    corp_df = load_corp_codes()
+    row = corp_df[corp_df["stock_code"] == code]
+    if row.empty:
+        return None
+    rows = fetch_one(row.iloc[0]["corp_code"], year)
+    if not rows:
+        return None
+    return {"year": year, **parse_financials(rows)}
+
+
+@router.get("/financials-live")
+def financials_live_endpoint(symbol: str | None = None, code: str | None = None) -> dict:
+    """회계장부(재무제표) 실측 — KR: DART(연간 사업보고서) / US: Finnhub 기본지표.
+    매수/매도 신호 아님, 참고용. READ ONLY."""
+    if code:
+        real = _safe(lambda: _fetch_kr_financials(code.strip()))
+        return {"code": code.strip(), **(real or {})}
+    if symbol:
+        real = _safe(lambda: _fetch_us_financials(symbol.strip().upper()))
+        return {"symbol": symbol.strip().upper(), **(real or {})}
+    return {}
+
+
 @router.get("/company-intelligence")
 def company_intelligence_endpoint(entity: str = "TSMC") -> dict:
     """P154 — CompanyIntelligenceReport(관계·이벤트·재무·교훈·리스크). 매수/매도 신호 아님. READ ONLY."""

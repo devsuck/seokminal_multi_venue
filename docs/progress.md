@@ -3,6 +3,38 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-09-06 계속3) — 멀티시그널 통합 Task 2: 재무제표(회계장부) 실측 배선
+
+배경: "멀티시그널 통합" SDD 플랜(`.superpowers/sdd/2026-09-06-multi-signal-integration/`) Task 2 —
+macro/insider/dart와 동일한 검증된 레시피를 재무제표(회계장부)에 적용. 사용자가 최우선 항목으로
+명시 지목. Task 1(감사)과는 독립적으로 이미 확정된 작업.
+
+### 완료된 작업
+- **Finnhub 실제 응답 필드 검증(Step 1)**: `stock/metric?metric=all` AAPL 응답으로 브리프의
+  `_FINNHUB_FIELD_MAP` 6개 필드(peNormalizedAnnual/roeTTM/totalDebt/totalEquityAnnual/
+  currentRatioAnnual/netProfitMarginTTM/revenueGrowthTTMYoy) 전부 실제 키와 일치 확인, 값도 전부
+  non-null(pe_ttm 41.69 등) — 브리프 추정치 그대로 사용, 수정 불필요.
+- **`/console/financials-live` 엔드포인트 신설**: `code=` (KR, DART 연간 사업보고서 캐시 우선 →
+  `dart_financials.fetch_one`/`parse_financials` 폴백) / `symbol=` (US, Finnhub 기본지표) 분기.
+  005930 실측(총자산 566.9조 등)·AAPL 실측(PE 41.69, ROE 137.2 등) 둘 다 curl 스모크테스트로
+  0/null 아닌 실제 숫자 확인. 커밋 `fea506e`.
+- **autopilot 에이전트 STEP 3E 배선**: `tools/financials.sh`(미국 Finnhub/한국 DART 분기) 신설 +
+  CLAUDE.md에 E관점(참고용, 매수/매도 신호 아님) 추가 — 부채비율 급등/유동비율 급락 시 신규 진입
+  보류, 영업이익/순이익 급감 시 기존 포지션 리스크 재점검. 매수 신호 목록에 한 줄 추가. autopilot
+  리포 커밋 `03a221b`.
+- **회귀 확인**: `pytest tests/ -q` 1975 passed(신규 실패 0).
+
+### 변경된 파일
+- 수정: `api_server/console_api.py`(`_FINNHUB_FIELD_MAP`, `_fetch_us_financials`,
+  `_fetch_kr_financials`, `/console/financials-live` 엔드포인트)
+- (별도 레포) 수정: `autopilot/CLAUDE.md`(STEP 3E, 도구 표, 매수신호 목록) / 신규:
+  `autopilot/tools/financials.sh`
+
+### 다음 할 일
+- SDD 플랜의 다음 Task로 진행 (Task 1 감사 결과 반영 여부는 별도 트랙).
+- 위 "내가 만든 모든 기능 복합 판단" 전수 감사 요청과 연계된 나머지 미배선 기능들은 계속 브레인스토밍
+  스킬로 서브프로젝트 분해 필요(변동 없음).
+
 ## 세션 로그 (2026-09-06 계속2) — 모바일 실기기 접속 링크 제공 + insider/DART 실측 배선
 
 배경: 모바일 실기기 push 검증용 접속 링크 요청 → Tailscale IP(`100.108.67.7:3000`) 확인해 제공(대시보드/API 0.0.0.0 바인딩, CORS·mobile API key 매칭 09-03/04 이미 완료 확인). 이어서 "내부자매매/DART 등도 판단에 들어가는지" 질문 → macro와 동일하게 **연구용 모듈만 존재, 실매매 경로엔 미반영** 확인 후 승인받아 배선.

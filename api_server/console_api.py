@@ -1717,6 +1717,39 @@ def macro_intelligence_endpoint() -> dict:
     return _safe(lambda: build_macro_context(indicators=indicators), {"macro_state": "UNKNOWN"}) or {}
 
 
+@router.get("/insider-flow-live")
+def insider_flow_live_endpoint(symbol: str) -> dict:
+    """US 내부자 오픈마켓 매수(P-Purchase, OpenInsider 실측). 매수 신호 아님, 연구 트리거 참고용. READ ONLY."""
+    from research.data.openinsider import load_events
+
+    def _run():
+        sym = symbol.strip().upper()
+        rows = [e for e in load_events() if e.get("ticker") == sym]
+        rows.sort(key=lambda e: e.get("disclosure_date", ""), reverse=True)
+        recent = rows[:20]
+        return {"symbol": sym, "events": recent, "recent_buy_count": len(recent)}
+
+    return _safe(_run, {"symbol": symbol, "events": [], "recent_buy_count": 0}) or {}
+
+
+@router.get("/dart-events-live")
+def dart_events_live_endpoint(code: str) -> dict:
+    """KR 주요사항보고 공시(OpenDART 실측 캐시: 자사주/유상증자/CB 등). 매수 신호 아님. READ ONLY."""
+    from research.data.kr_dart_events import EVENT_DEFS, load_events
+
+    def _run():
+        sc = code.strip()
+        rows = []
+        for event, d in EVENT_DEFS.items():
+            for r in load_events(event):
+                if r.get("stock_code") == sc:
+                    rows.append({**r, "bias": d["bias"]})
+        rows.sort(key=lambda r: r.get("date", ""), reverse=True)
+        return {"code": sc, "events": rows[:20]}
+
+    return _safe(_run, {"code": code, "events": []}) or {}
+
+
 @router.get("/company-intelligence")
 def company_intelligence_endpoint(entity: str = "TSMC") -> dict:
     """P154 — CompanyIntelligenceReport(관계·이벤트·재무·교훈·리스크). 매수/매도 신호 아님. READ ONLY."""

@@ -9,7 +9,7 @@ from __future__ import annotations
 import bisect
 import os
 import statistics as _st
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 HOLD_DAYS = 20
 COST_BASE_BPS = 5  # 미국 주식 낮은 수수료
@@ -108,7 +108,7 @@ def generate(since: str | None = None, write: bool = True) -> dict:
         import json
         os.makedirs(os.path.dirname(LEDGER), exist_ok=True)
         with open(LEDGER, "a") as f:
-            f.write(json.dumps({"ts": datetime.utcnow().isoformat(), "result": result}) + "\n")
+            f.write(json.dumps({"ts": datetime.now(timezone.utc).isoformat(), "result": result}) + "\n")
 
     return result
 

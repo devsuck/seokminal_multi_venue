@@ -248,7 +248,7 @@ def get_graph() -> dict:
 def patch_graph(patch: dict) -> dict:
     """노드·엣지 부분 업데이트. AI 파이프라인이 호출."""
     g = _load()
-    now = _dt.datetime.utcnow().isoformat()
+    now = _dt.datetime.now(_dt.timezone.utc).isoformat()
 
     if "nodes" in patch:
         existing = {n["id"]: i for i, n in enumerate(g["nodes"])}
@@ -318,7 +318,7 @@ def _claude_bin() -> str | None:
 def _fetch_news_headlines(finnhub_key: str, max_per_ticker: int = 5) -> list[str]:
     """Finnhub에서 핵심 뉴스 헤드라인 수집."""
     headlines: list[str] = []
-    now = _dt.datetime.utcnow()
+    now = _dt.datetime.now(_dt.timezone.utc)
     date_to = now.strftime("%Y-%m-%d")
     date_from = (now - _dt.timedelta(days=3)).strftime("%Y-%m-%d")
 
@@ -464,7 +464,7 @@ def reset_graph() -> dict:
     """시드 데이터로 초기화."""
     seed = dict(_SEED)
     seed["meta"] = dict(_SEED["meta"])
-    seed["meta"]["last_updated"] = _dt.datetime.utcnow().isoformat()
+    seed["meta"]["last_updated"] = _dt.datetime.now(_dt.timezone.utc).isoformat()
     seed["meta"]["update_count"] = 0
     _save(seed)
     return {"status": "reset"}
@@ -530,7 +530,7 @@ def _generate_signals(old_nodes: dict, new_nodes: dict, finnhub_key: str) -> lis
     """bottleneck_score 변화 → 페이퍼 포지션 자동 집행."""
     paper = _load_paper()
     signals: list[dict] = []
-    now = _dt.datetime.utcnow().isoformat()
+    now = _dt.datetime.now(_dt.timezone.utc).isoformat()
 
     for node_id, new_node in new_nodes.items():
         old_node = old_nodes.get(node_id)
@@ -633,7 +633,7 @@ def close_position(node_id: str) -> dict:
         else (pos["entry_price"] - exit_price) * pos["qty"],
         2,
     )
-    closed = {**pos, "exit_price": exit_price, "exit_time": _dt.datetime.utcnow().isoformat(), "pnl": pnl}
+    closed = {**pos, "exit_price": exit_price, "exit_time": _dt.datetime.now(_dt.timezone.utc).isoformat(), "pnl": pnl}
     paper["closed"].insert(0, closed)
     paper["positions"] = [p for p in paper["positions"] if p["node_id"] != node_id]
     paper["cash"] = round(paper["cash"] + pos["value"] + pnl, 2)

@@ -3,6 +3,22 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-09-06 계속) — "에이전틱 트레이딩 플랫폼" 리스크/임팩트 우선순위 작업: macro 배선 + autoresearch 성능수정 (사용자 자리비움, 위임 판단으로 진행)
+
+배경: "믿고 맡길 수 있는 온라인 모바일 플랫폼" 요청. HL/KR 에이전트 미가동·거시경제 미반영·병목 상태 점검 후 "리스크/임팩트 순으로 우선순위 매겨서 진행해줘"로 위임.
+
+### 완료된 작업
+- **HL/KR 에이전트 상태 확인**: `/agents` 등록 4건(자율형학습AI, KR거시전략AI, US Daytrade E2E, lv5가상화폐) 전부 `status:stopped, session_live:false` — tmux 세션은 US GOOGL swing(`7591f352`) 하나뿐. `agents.py`에 type별 분기 없음(전부 동일 route_order/broker_bridge 경로) — 켜도 AUTONOMY_LEVEL 게이트는 동일 적용됨. **다만 지금 API 서버 자체가 메모리로 불안정한 상태라 신규 에이전트 기동은 보류** — 인프라 안정화가 먼저.
+- **`/console/macro-intelligence` 실측 배선**: 하드코딩 demo(fed_funds 5.0 등) → FRED 실측(fed_funds/CPI YoY/unemployment) 교체. 실패 시 demo 폴백. 커밋 `243b349`.
+- **autopilot 에이전트에 거시 컨텍스트 연결**: `tools/macro.sh` 신설 + `CLAUDE.md` STEP 1.5 추가(거시 사이클 확인, TIGHTENING 시 신규진입 사이즈 축소). 사이클마다 `claude --print` 새로 실행이라 재시작 없이 다음 사이클부터 적용(autopilot 리포 커밋 `7673e33`).
+- **autoresearch OOM 완화(근본 성능 수정)**: `research/data/krx_api.py::build_series()`가 7년치 전종목 스냅샷(300만+ row)을 `iterrows()`로 순회하며 Series 박싱 오버헤드 발생 — 컬럼 단위 numpy 벡터화로 교체. 8개 파일 대상 원본 로직과 완전 일치 검증 후 적용. `load_series()` 51.5s → 6.2s(8배 단축). pytest 1975 passed. 커밋 `4939e06`.
+
+### 다음 할 일
+- **피크 메모리 자체는 거의 불변(~2.1GB)** — 7년치 데이터 전량을 메모리에 들고 있는 구조라 로드시간 단축만으로는 API서버(4-5GB)와의 동시부하 OOM을 완전히 없애진 못함. 추가 옵션: (a) 조회 기간 제한(예: 최근 3-4년) — 통계적 방법론 트레이드오프라 사용자 판단 필요, (b) 서버 램 증설, (c) autoresearch를 API서버 저부하 시간대로 재스케줄. **사용자 결정 대기.**
+- HL/KR 에이전트 기동은 인프라 안정화(위 항목) 이후 재검토.
+- AUTONOMY_LEVEL 게이트는 여전히 미조치 — 사용자 결정 대기(변동 없음).
+- 모바일 실기기 push 검증은 여전히 블록(사용자가 폰 접근 가능해야 함).
+
 ## 세션 로그 (2026-09-06) — 무인운영 인프라 점검(launchd PATH 버그 2건 수정, AUTONOMY_LEVEL 게이트 원인 확인, autoresearch OOM 추정) (사용자 자리비움, 위임 판단으로 진행)
 
 배경: "페이퍼 안 돌아가는 것 같다" 확인 요청으로 시작 — `/agents` API 500부터 추적해 무인운영 launchd 잡 전수 점검까지 확장. 상세 로그는 `seokminal-dashboard/docs/progress.md` Phase 243~245 참고(이 세션은 그쪽에 기록됐다가 백엔드 리포 쪽 progress.md 미동기화 발견해 뒤늦게 요약 반영).

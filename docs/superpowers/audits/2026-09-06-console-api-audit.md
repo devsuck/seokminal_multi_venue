@@ -144,3 +144,10 @@ trading_relevant=YES + REAL/MIXED 후보 5개는 전부 **전략 단위**이며 
 이 두 건 수정으로 요약 카운트가 REAL 75→76, DEMO 16→14, MIXED 13→14로 변경됨(총 104 불변). trading_relevant=YES 후보 5개는 두 행 모두 NO라 영향 없음.
 
 **남은 우려**: "패턴 기반, 미상세 확인"으로 표시한 다른 REAL/MIXED 행들(예: `/research-graph`, `/cockpit`, `/strategy-health`, `/knowledge-conflicts` 등)도 같은 방식(호출부 인자 패턴만 보고 판정)의 위험이 남아있을 수 있어, 실제 배선(Task 3+) 전 해당 backing 모듈 소스를 직접 열어 재확인할 것을 권장.
+
+## Task 2 이후 변경 (2026-09-06)
+
+이 감사 이후 Task 2에서 아래가 추가됨 — 위 표는 갱신하지 않았으니 참고할 것:
+
+- `@router.get` 엔드포인트 총 개수가 이 감사 시점(108개)보다 늘어남 — `GET /console/financials-live` 신규 추가(위 표에 없음). data_source=REAL, symbol_scoped=YES(symbol 또는 code 쿼리파라미터), trading_relevant=YES.
+- 이 감사 하단에서 "`/sector-intelligence`, `/company-intelligence`, `/company-monitor`는 실제 재무 데이터 소스만 연결하면 REAL 전환 가능"이라고 언급한 부분 — 그 연결에 쓸 수 있는 헬퍼가 이미 `api_server/console_api.py`에 존재함: `_fetch_kr_financials(code)`(DART 재사용), `_fetch_us_financials(symbol)`(Finnhub). Task 3+ 에서 이 세 엔드포인트를 REAL로 전환할 때 새로 구현하지 말고 이 두 함수를 재사용할 것.

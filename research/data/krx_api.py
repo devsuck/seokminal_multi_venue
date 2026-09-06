@@ -81,20 +81,34 @@ def pull_range(market: str, start: str, end: str, pace_s: float = 0.25, log=prin
 
 def build_series(market: str, min_bars: int = 60) -> dict:
     """날짜별 스냅샷 → {code: {name, dates[], open/high/low/close/tval[], marcap[], sect[]}}.
-    survivorship-free: 각 종목은 실제 거래된 날짜에만 존재."""
+    survivorship-free: 각 종목은 실제 거래된 날짜에만 존재.
+
+    컬럼 단위(numpy) 추출 — 행 단위 iterrows()는 다년치 전종목 스냅샷(수백만 row)에서
+    Series 박싱 오버헤드로 메모리/시간을 몇 배씩 잡아먹어(autoresearch 주간잡 OOM 원인 중
+    하나) 벡터화함. 출력 스키마·값은 기존과 동일."""
     files = sorted(glob.glob(os.path.join(market_dir(market), "*.parquet")))
     series: dict = {}
     for f in files:
         df = pd.read_parquet(f)
-        for _, r in df.iterrows():
-            code = str(r["ISU_CD"])
-            s = series.setdefault(code, {"name": str(r.get("ISU_NM", "")), "market": str(r.get("MKT_NM", "")),
+        codes = df["ISU_CD"].astype(str).to_numpy()
+        names = df["ISU_NM"].fillna("").astype(str).to_numpy() if "ISU_NM" in df else [""] * len(df)
+        markets = df["MKT_NM"].fillna("").astype(str).to_numpy() if "MKT_NM" in df else [""] * len(df)
+        sects = df["SECT_TP_NM"].fillna("").astype(str).to_numpy() if "SECT_TP_NM" in df else [""] * len(df)
+        bas_dd = df["BAS_DD"].astype(str).to_numpy()
+        opens = df["TDD_OPNPRC"].fillna(0).astype(float).to_numpy()
+        highs = df["TDD_HGPRC"].fillna(0).astype(float).to_numpy()
+        lows = df["TDD_LWPRC"].fillna(0).astype(float).to_numpy()
+        closes = df["TDD_CLSPRC"].fillna(0).astype(float).to_numpy()
+        tvals = df["ACC_TRDVAL"].fillna(0).astype(float).to_numpy()
+        marcaps = df["MKTCAP"].fillna(0).astype(float).to_numpy()
+        for i, code in enumerate(codes):
+            s = series.setdefault(code, {"name": names[i], "market": markets[i],
                                          "dates": [], "open": [], "high": [], "low": [], "close": [],
                                          "tval": [], "marcap": [], "sect": []})
-            bd = str(r["BAS_DD"])
+            bd = bas_dd[i]
             s["dates"].append(f"{bd[:4]}-{bd[4:6]}-{bd[6:8]}")
-            s["open"].append(float(r["TDD_OPNPRC"] or 0)); s["high"].append(float(r["TDD_HGPRC"] or 0))
-            s["low"].append(float(r["TDD_LWPRC"] or 0)); s["close"].append(float(r["TDD_CLSPRC"] or 0))
-            s["tval"].append(float(r["ACC_TRDVAL"] or 0)); s["marcap"].append(float(r["MKTCAP"] or 0))
-            s["sect"].append(str(r.get("SECT_TP_NM", "")))
+            s["open"].append(opens[i]); s["high"].append(highs[i])
+            s["low"].append(lows[i]); s["close"].append(closes[i])
+            s["tval"].append(tvals[i]); s["marcap"].append(marcaps[i])
+            s["sect"].append(sects[i])
     return {c: s for c, s in series.items() if len(s["dates"]) >= min_bars}

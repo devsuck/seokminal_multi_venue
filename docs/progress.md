@@ -3,6 +3,32 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-09-06 계속5) — financials_live 대시보드 배선 + autopilot 재배선 스킵 확정
+
+배경: Task 3(`financials_live` 필드)이 curl 전용이라 사용자가 대시보드/autopilot 양쪽 실배선 검토
+요청. 브레인스토밍(bounded) 후 대시보드 쪽만 진행, autopilot 쪽은 재확인 후 스킵 확정.
+
+### 완료된 작업
+- **대시보드(`seokminal-dashboard`)**: `investment-os` research 탭에 "재무제표 실측 조회" 패널
+  신설 — `/console/financials-live` 직접 배선(종목코드 입력 → 6자리 숫자면 KR `code`, 아니면 US
+  `symbol`). `lib/console-api.ts`에 `getFinancialsLive`/`FinancialsLiveResp` 추가. 커밋
+  (seokminal-dashboard) `ad3f97a`, `442b23a`. 빌드 후 `launchctl kickstart`로 프로덕션(launchd
+  `com.seokminal.dashboard`, 포트 3000) 재기동 완료, 005930 실측 조회로 재검증.
+- **`/company-monitor`·`/company-intelligence`·`/research-organization`·`/institutional-intelligence`
+  확장은 기각** — 전부 하드코딩 종목("NVDA"/"TSMC" 등)이거나 프론트 소비자 자체가 없어(그렙 확인)
+  새 패널의 확장 대상으로 부적합. `/console/financials-live`에 직접 배선하는 쪽이 유일하게 깨끗한
+  경로.
+- **autopilot 재배선은 스킵(Ruling C 재확인)** — `autopilot/tools/financials.sh` 소스를 이번에
+  직접 다시 읽어 확인: 이미 `curl "$API/console/financials-live?..."`로 동일 엔드포인트를 직접
+  호출 중. `financials_live`를 `/company-monitor`/`/company-intelligence` 경유로 또 배선하면 같은
+  데이터를 다른 포맷으로 재요청하는 순수 중복 — Task 3 진행 중 내린 Ruling C(STEP3 비용 가드레일
+  위반)가 이번 재검토에서도 그대로 유효함을 확인. **autopilot 리포는 코드 변경 없음.**
+- autopilot 리포는 `docs/progress.md` 컨벤션 자체가 없음(CLAUDE.md가 개발 문서 컨벤션을 명시적으로
+  배제 — 순수 자율 트레이딩 실행 컨텍스트). 그래서 이 결정도 이 파일(multi-venue)에 기록.
+
+### 다음 할 일
+- 없음(이번 배선 검토 완료 — 대시보드 배선 SHIPPED, autopilot 쪽은 변경 불필요로 결론).
+
 ## 세션 로그 (2026-09-06 계속4) — 멀티시그널 통합 Task 3: company-monitor/company-intelligence 실측 재무 부착
 
 배경: Task 1(감사)·Task 2(재무제표 실측 배선) 완료 후 감사 보고서의 "빠른 전환 후보 3개"

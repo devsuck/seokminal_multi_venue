@@ -76,6 +76,17 @@ def test_generate_ai_recommendation_cap_violation_falls_back(monkeypatch, tmp_pa
     assert rec["fallback_used"] is True
 
 
+def test_generate_ai_recommendation_non_dict_weights_falls_back(monkeypatch, tmp_path):
+    _patch_consume(monkeypatch, CANDIDATES)
+    _patch_state_path(monkeypatch, tmp_path)
+    monkeypatch.setattr(ap, "claude_bin", lambda: "claude")
+    monkeypatch.setattr(ap, "call_claude", lambda *a, **kw: '{"weights": "oops"}')
+
+    rec = ap.generate_ai_recommendation()  # must not raise AttributeError
+
+    assert rec["fallback_used"] is True
+
+
 def test_generate_ai_recommendation_no_candidates(monkeypatch, tmp_path):
     _patch_consume(monkeypatch, [])
     _patch_state_path(monkeypatch, tmp_path)

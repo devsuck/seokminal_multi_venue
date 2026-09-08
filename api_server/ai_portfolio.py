@@ -41,6 +41,8 @@ def _parse_response(raw: str, candidate_ids: set[str]) -> dict | None:
         return None
     if not isinstance(data, dict) or "weights" not in data:
         return None
+    if not isinstance(data["weights"], dict):
+        return None
     try:
         weights = {k: float(v) for k, v in data["weights"].items() if k in candidate_ids}
     except (TypeError, ValueError):
@@ -53,9 +55,12 @@ def _parse_response(raw: str, candidate_ids: set[str]) -> dict | None:
     weights = {k: round(v / total, 4) for k, v in weights.items()}
     if max(weights.values()) > _MAX_WEIGHT + 1e-6:
         return None  # 캡 위반 — 폴백으로
+    notes = data.get("per_strategy_note")
+    if notes is not None and not isinstance(notes, dict):
+        return None
     return {
         "weights": weights,
-        "per_strategy_note": {k: v for k, v in (data.get("per_strategy_note") or {}).items()
+        "per_strategy_note": {k: v for k, v in (notes or {}).items()
                                if k in candidate_ids},
         "overall_rationale": str(data.get("overall_rationale", "")),
     }

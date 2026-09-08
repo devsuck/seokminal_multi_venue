@@ -3,6 +3,46 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-09-09) — 레벨6 로드맵 조사 + agent_gate profile_name 죽은 코드 버그 수정
+
+배경: 사용자가 "레벨6까지 남은 게 뭐냐" 요청 → 코드 조사(`arm_criteria.py`/`arm_criteria_v2.py`/
+`arm.py`/`config.py`/`agent_gate.py`/`registry.jsonl`)로 로드맵 정리. 조사 중 `agent_gate.py`
+`PROFILE_TO_STRATEGY` 매핑이 구조적으로 절대 안 걸리는 버그 발견 → 사용자 승인 받고 즉시 수정.
+
+### 완료된 작업 — 레벨6 로드맵 (코드 확인, 구현 아님)
+- `AUTONOMY_LEVEL` 현재 5(env var, 사람만 변경), `MIN_LIVE_LEVEL=6`. 자동 승격 로직 없음 — 사람이
+  기준 확인 후 수동 변경.
+- registry 실측: paper_active 13개, live_candidate 0개. 최소 paper_active 시작일 2026-07-03
+  (futures_tsmom 계열) → 6개월 기준 최단 **2027-01초** 도달.
+- `agent_gate.py`의 `PROFILE_TO_STRATEGY` 매핑은 별개 블로커(시간표 무관, 아래 버그 참고).
+- Lv6 도달해도 AUTO_EXECUTION은 헌법 v2로 영구 OFF — 매 주문 사람 승인 필요, 레벨과 무관하게
+  안 풀림. Lv6 = "사람 승인 하 소액 arming 가능" 이상 아님.
+
+### 완료된 작업 — agent_gate.py 버그 수정 (커밋 `1aad9a6`)
+- `validation_of()`가 `agent["profile"]["name"]`/`agent["style"]`/`agent["profile_name"]` 순서로
+  조회했는데 셋 다 실제로 어디서도 채워지지 않는 죽은 필드 — `profile_name`이 항상 빈 문자열이라
+  `PROFILE_TO_STRATEGY`에 뭘 넣어도 절대 매칭 안 됐음. `agent.get("type")`(=`AGENT_PROFILES`
+  인덱스와 동일한 실제 키)로 교체.
+- `jarvis/execution/tests/test_agent_gate.py` 신규(6개 테스트) — 죽은 필드 회귀 방지 포함.
+- `PROFILE_TO_STRATEGY`는 의도적으로 비운 채 유지 — 매핑할 정직한 대상이 아직 없음(아래 참고).
+
+### 조사만 하고 보류 — registry 전략 실행 에이전트 타입 신설
+- `PROFILE_TO_STRATEGY`를 실제로 채우려면 registry 검증 전략(`futures_tsmom` 등)을 그대로
+  실행하는 새 에이전트 타입이 필요한데, 기존 타입(swing/daytrade/kr_daytrade/autonomous 등)은
+  전부 `/Users/seokhun/seokminal/autopilot/agent_loop.sh`(외부 zsh, 290줄)에서 **Claude CLI가
+  해석·주문**하는 AI-판단 패러다임 — registry forward runner를 결정적으로 그대로 실행하는 것과
+  근본적으로 다른 분기를 새로 만들어야 함(architectural 스코프, `api_server` 밖 `autopilot/`
+  저장소까지 건드림).
+- 브레인스토밍 중 우선순위 재확인 → **보류로 확정**. 지금 만들어도 AUTONOMY_LEVEL<6 등 다른
+  게이트가 이미 실전 주문 다 막고 있어서(최단 2027-01) `validated: True` 플래그 찍는 것 외
+  기능적 효과 없음. 6개월 페이퍼 기간 임박 시 재검토.
+
+### 다음 할 일
+- 없음(이 세션 스코프). 다음 세션은 Edge Score 샘플 축적 진행 상황이나 페이퍼 트레이딩 경과
+  개월 수 확인 정도가 자연스러운 후속.
+
+---
+
 ## 세션 로그 (2026-09-06 계속5) — financials_live 대시보드 배선 + autopilot 재배선 스킵 확정
 
 배경: Task 3(`financials_live` 필드)이 curl 전용이라 사용자가 대시보드/autopilot 양쪽 실배선 검토

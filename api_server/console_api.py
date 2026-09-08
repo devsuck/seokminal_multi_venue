@@ -2320,7 +2320,10 @@ def ai_portfolio_latest() -> dict:
 def ai_portfolio_history(limit: int = 20) -> dict:
     """AI 포트폴리오 추천 이력."""
     import api_server.ai_portfolio as ap
-    return {"records": _safe(lambda: ap.history(limit), []) or []}
+    records = _safe(lambda: ap.history(limit), []) or []
+    return {"records": records, "count": len(records),
+            "is_advisory": True, "is_decision": False,
+            "disclaimer": "AI 포트폴리오 추천 이력 · 실배분 아님. 모든 결정은 사람."}
 
 
 # ── Forward Learning — thesis vs 실제 결과 (READ ONLY) ──

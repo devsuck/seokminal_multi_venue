@@ -119,3 +119,48 @@ def test_history_and_latest_round_trip(monkeypatch, tmp_path):
     assert ap.latest_recommendation()["timestamp"] == "t2"
     hist = ap.history(limit=10)
     assert [r["timestamp"] for r in hist] == ["t2", "t1"]
+
+
+def test_history_limit_zero_or_negative_clamped_to_one(monkeypatch, tmp_path):
+    _patch_state_path(monkeypatch, tmp_path)
+    ap._append({"timestamp": "t1", "weights": {"s1": 1.0}})
+    ap._append({"timestamp": "t2", "weights": {"s2": 1.0}})
+
+    assert [r["timestamp"] for r in ap.history(limit=0)] == ["t2"]
+    assert [r["timestamp"] for r in ap.history(limit=-5)] == ["t2"]
+
+
+def test_generate_ai_recommendation_negative_weight_falls_back(monkeypatch, tmp_path):
+    _patch_consume(monkeypatch, CANDIDATES)
+    _patch_state_path(monkeypatch, tmp_path)
+    monkeypatch.setattr(ap, "claude_bin", lambda: "claude")
+    raw = json.dumps({"weights": {"s1": 1.2, "s2": -0.2}})
+    monkeypatch.setattr(ap, "call_claude", lambda *a, **kw: raw)
+
+    rec = ap.generate_ai_recommendation()
+
+    assert rec["fallback_used"] is True
+
+
+def test_generate_ai_recommendation_nan_weight_falls_back(monkeypatch, tmp_path):
+    _patch_consume(monkeypatch, CANDIDATES)
+    _patch_state_path(monkeypatch, tmp_path)
+    monkeypatch.setattr(ap, "claude_bin", lambda: "claude")
+    raw = '{"weights": {"s1": NaN, "s2": 0.5}}'
+    monkeypatch.setattr(ap, "call_claude", lambda *a, **kw: raw)
+
+    rec = ap.generate_ai_recommendation()
+
+    assert rec["fallback_used"] is True
+
+
+def test_generate_ai_recommendation_infinity_weight_falls_back(monkeypatch, tmp_path):
+    _patch_consume(monkeypatch, CANDIDATES)
+    _patch_state_path(monkeypatch, tmp_path)
+    monkeypatch.setattr(ap, "claude_bin", lambda: "claude")
+    raw = '{"weights": {"s1": Infinity, "s2": 0.5}}'
+    monkeypatch.setattr(ap, "call_claude", lambda *a, **kw: raw)
+
+    rec = ap.generate_ai_recommendation()
+
+    assert rec["fallback_used"] is True

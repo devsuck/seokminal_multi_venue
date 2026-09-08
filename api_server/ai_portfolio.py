@@ -7,13 +7,15 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import math
 import os
 
 from api_server.claude_cli import call_claude, claude_bin
+from jarvis.config import state_path
+from jarvis.investment_os.portfolio_construction import _MAX_WEIGHT
 
 _log = logging.getLogger(__name__)
-_STATE_PATH = "jarvis/_state/ai_portfolio_recs.jsonl"
-_MAX_WEIGHT = 0.4  # portfolio_construction.py의 _MAX_WEIGHT와 동일 캡
+_STATE_PATH = state_path("ai_portfolio_recs.jsonl")
 
 
 def _build_prompt(candidates: list[dict]) -> str:
@@ -26,7 +28,7 @@ def _build_prompt(candidates: list[dict]) -> str:
     return (
         "다음은 페이퍼 검증을 통과했거나 진행 중인 트레이딩 전략 목록이다. 각 전략에 배분 비중을 "
         "추천하라.\n\n" + "\n".join(lines) +
-        "\n\n규칙: 비중 합계는 정확히 1.0. 단일 전략 최대 비중 0.4. evidence_grade가 낮거나 "
+        f"\n\n규칙: 비중 합계는 정확히 1.0. 단일 전략 최대 비중 {_MAX_WEIGHT}. evidence_grade가 낮거나 "
         "UNKNOWN인 전략은 보수적으로. 아래 JSON 스키마로 한 줄만 출력(설명 텍스트 금지):\n"
         '{"weights": {"<strategy_id>": <float>, ...}, '
         '"per_strategy_note": {"<strategy_id>": "<한줄 근거>", ...}, '
@@ -48,6 +50,8 @@ def _parse_response(raw: str, candidate_ids: set[str]) -> dict | None:
     except (TypeError, ValueError):
         return None
     if not weights:
+        return None
+    if not all(math.isfinite(v) and v >= 0 for v in weights.values()):
         return None
     total = sum(weights.values())
     if total <= 0:
@@ -121,6 +125,7 @@ def latest_recommendation() -> dict | None:
 
 
 def history(limit: int = 20) -> list[dict]:
+    limit = max(1, limit)
     return _read_all()[-limit:][::-1]
 
 

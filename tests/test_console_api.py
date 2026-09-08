@@ -128,3 +128,7 @@ def test_ai_portfolio_history_shape(monkeypatch):
     monkeypatch.setattr("api_server.ai_portfolio.history", lambda limit=20: recs)
     r = c.ai_portfolio_history(limit=5)
     assert isinstance(r, dict) and r["records"] == recs
+    assert r["count"] == 2
+    assert r["is_advisory"] is True
+    assert r["is_decision"] is False
+    assert isinstance(r["disclaimer"], str) and r["disclaimer"]

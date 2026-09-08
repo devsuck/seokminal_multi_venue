@@ -3,6 +3,35 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-09-09) — 텔레그램 스팸 원인: 테스트가 진짜 알림 쏘던 버그
+
+배경: 사용자가 "텔레그램 자꾸 메세지 오는거 어떻게 진행되고있냐" 질문 → 조사 결과 실거래/헬스체크
+문제 아니고 **pytest 풀스위트가 실제 텔레그램 발송하던 버그**였음.
+
+### 원인
+- `api_server/main.py`의 `load_dotenv()`가 `.env`의 진짜 `TELEGRAM_BOT_TOKEN`을 pytest 프로세스에
+  로드(`test_api_server.py`가 `from api_server.main import app` 하는 순간 트리거).
+- `broker_bridge._audit_submitted()` → `notify_live_trade()`가 paper 여부 무관, 쓰로틀 없이 매 주문마다
+  텔레그램 발송.
+- `test_broker_bridge.py` 주문 테스트 7개 있어서, 풀스위트 돌릴 때마다 같은 초에 실제 메시지 다발 발송.
+  `audit.jsonl` 확인 결과 08-25~09-08 사이 "같은 초에 15건 몰림" 패턴 반복 = pytest 실행 흔적.
+- 함께 확인해서 배제한 것들: `api_watchdog`(현재 RSS 528MB, 4GB 한도 밑 — 플래핑 아님), daily_summary(1일 1회
+  정상), arm_check(6h 스로틀 dedup 정상), circuit_breaker(일 1회 dedup 정상), lv5 review(10사이클마다 정상).
+
+### 완료된 작업
+- `tests/conftest.py`에 세션 스코프 autouse fixture 추가 — `lv6_notify.send`를 테스트 전체 no-op 처리.
+- `pytest tests/test_broker_bridge.py tests/test_api_server.py -q` → 43 passed 확인.
+- 커밋 `2fdb79b`.
+
+### 부가 확인 (운영 상태, 조치 없음)
+- 실행 중인 에이전트 1개(스윙, `7591f352`, US)뿐. 나머지 4개 stopped. 스윙은 정상 사이클, GOOGL/NVDA
+  진입조건 미충족이라 HOLD만 — 정상 대기 상태, 고장 아님.
+
+### 다음 할 일 / 막힌 부분
+- 없음. 이 이슈 종결.
+
+---
+
 ## 세션 로그 (2026-09-09) — 레벨6 로드맵 조사 + agent_gate profile_name 죽은 코드 버그 수정
 
 배경: 사용자가 "레벨6까지 남은 게 뭐냐" 요청 → 코드 조사(`arm_criteria.py`/`arm_criteria_v2.py`/

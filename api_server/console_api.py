@@ -2307,6 +2307,22 @@ def investment_os_advance(current_rung: str = "PAPER", approve: bool = False) ->
                      "주문/실행 없음. Investment OS 는 자본을 움직이지 않는다.")}
 
 
+@router.get("/investment-os/ai-portfolio/latest")
+def ai_portfolio_latest() -> dict:
+    """AI 포트폴리오 추천 최신 1건. 없으면 빈 weights. 추천만, 실행 없음."""
+    import api_server.ai_portfolio as ap
+    rec = _safe(lambda: ap.latest_recommendation(), None)
+    return rec or {"weights": {}, "is_advisory": True, "is_decision": False,
+                    "note": "아직 생성된 추천 없음(주간 launchd job 대기 중)."}
+
+
+@router.get("/investment-os/ai-portfolio/history")
+def ai_portfolio_history(limit: int = 20) -> dict:
+    """AI 포트폴리오 추천 이력."""
+    import api_server.ai_portfolio as ap
+    return {"records": _safe(lambda: ap.history(limit), []) or []}
+
+
 # ── Forward Learning — thesis vs 실제 결과 (READ ONLY) ──
 @router.get("/forward-learning")
 def forward_learning() -> dict:

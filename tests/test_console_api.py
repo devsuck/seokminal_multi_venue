@@ -107,3 +107,24 @@ def test_no_mutation_verbs_in_source():
     for banned in ("submit_order", "place_order", "execute(", ".buy(", ".sell(",
                    "append_", "write_", "record("):
         assert banned not in src, f"console_api contains mutation verb: {banned}"
+
+
+def test_ai_portfolio_latest_empty_when_no_recs(monkeypatch):
+    monkeypatch.setattr("api_server.ai_portfolio.latest_recommendation", lambda: None)
+    r = c.ai_portfolio_latest()
+    assert isinstance(r, dict)
+    assert r["weights"] == {}
+
+
+def test_ai_portfolio_latest_returns_record(monkeypatch):
+    rec = {"timestamp": "t1", "weights": {"s1": 1.0}, "fallback_used": False}
+    monkeypatch.setattr("api_server.ai_portfolio.latest_recommendation", lambda: rec)
+    r = c.ai_portfolio_latest()
+    assert r["timestamp"] == "t1"
+
+
+def test_ai_portfolio_history_shape(monkeypatch):
+    recs = [{"timestamp": "t2"}, {"timestamp": "t1"}]
+    monkeypatch.setattr("api_server.ai_portfolio.history", lambda limit=20: recs)
+    r = c.ai_portfolio_history(limit=5)
+    assert isinstance(r, dict) and r["records"] == recs

@@ -15,15 +15,14 @@ Phase 3 — Merger     : 두 의견 통합 → 최종 JSON + DSL 생성
 """
 from __future__ import annotations
 
+
 import json
 import logging
-import os
 import re
-import shutil
-import subprocess
 import threading
 import time
 
+from api_server.claude_cli import call_claude as _call_claude, claude_bin as _claude_bin
 from api_server.lv5_learner import extract_trade_outcomes
 from api_server.lv5_memory import read_memory, append_memory
 from api_server.lv5_context import get_cached_context, format_context_for_prompt
@@ -48,29 +47,6 @@ def _set_cache(agent_id: str, update: dict) -> None:
         existing = _CACHE.get(agent_id, {})
         existing.update(update)
         _CACHE[agent_id] = existing
-
-
-# ── Claude CLI helper ─────────────────────────────────────────────────────────
-
-def _claude_bin() -> str | None:
-    return shutil.which("claude") or (
-        os.path.expanduser("~/.local/bin/claude")
-        if os.path.exists(os.path.expanduser("~/.local/bin/claude")) else None
-    )
-
-
-def _call_claude(claude_path: str, prompt: str, timeout: int = 90) -> str:
-    """Claude CLI 호출 → stdout 반환. 실패 시 빈 문자열."""
-    try:
-        proc = subprocess.run(
-            [claude_path, "--dangerously-skip-permissions",
-             "--permission-mode", "bypassPermissions", "--print", prompt],
-            capture_output=True, text=True, timeout=timeout,
-        )
-        return proc.stdout.strip()
-    except Exception as e:
-        _log.warning("[Lv5] Claude 호출 실패: %s", e)
-        return ""
 
 
 # ── Prompt builders ───────────────────────────────────────────────────────────

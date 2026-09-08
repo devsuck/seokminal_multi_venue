@@ -1,6 +1,16 @@
 import pytest
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _no_real_telegram():
+    """route_order 테스트가 실제 TELEGRAM_BOT_TOKEN으로 진짜 메시지를 쏘는 걸 막음
+    (api_server.main import가 .env를 로드해버려서 발생). 세션 전체 no-op."""
+    from unittest.mock import patch
+
+    with patch("api_server.lv6_notify.send"):
+        yield
+
+
 @pytest.fixture(autouse=True)
 def _reset_pooled_order_state():
     """api_server.main의 풀링된 IB 주문 클라이언트 + 멱등성 캐시 + OMS 상태는 모듈

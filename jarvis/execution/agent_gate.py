@@ -24,8 +24,9 @@ _VALIDATED_STATUSES = {
 
 def validation_of(agent: dict) -> dict:
     """에이전트의 전략 검증 상태. 반환: {validated, strategy_id, reason}."""
-    profile_name = str((agent.get("profile") or {}).get("name")
-                       or agent.get("style") or agent.get("profile_name") or "")
+    # agent["type"]이 유일한 실제 키(AGENT_PROFILES 인덱스와 동일) — profile.name/style/
+    # profile_name은 어디서도 채워지지 않는 죽은 필드였음(항상 빈 문자열 → 매핑 영구 미스).
+    profile_name = str(agent.get("type") or "")
     sid = PROFILE_TO_STRATEGY.get(profile_name)
     if not sid:
         return {"validated": False, "strategy_id": None,

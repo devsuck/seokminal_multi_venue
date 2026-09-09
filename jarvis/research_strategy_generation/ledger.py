@@ -36,7 +36,7 @@ def source_count(layer) -> int:
     spec = SOURCE_LAYERS.get(layer)
     if not spec:
         return 0
-    return len(read_jsonl(spec[0]))
+    return len(read_jsonl(spec[0], resolver=state_path))
 
 
 def source_present(layer) -> bool:

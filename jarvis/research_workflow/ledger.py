@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 
+from jarvis.config import state_path
 from jarvis.ledger_io import append as _append, read_jsonl, head as _head
 
 RUNS = ("rwf_runs.jsonl", "event_id")          # 워크플로 단계 이벤트(event-sourced)
@@ -18,15 +19,15 @@ ALL_LEDGERS = (RUNS, SESSIONS, LOOPS)
 
 
 def append_run(rec) -> None:
-    _append(RUNS[0], rec)
+    _append(RUNS[0], rec, resolver=state_path)
 
 
 def read_runs() -> list[dict]:
-    return read_jsonl(RUNS[0])
+    return read_jsonl(RUNS[0], resolver=state_path)
 
 
 def runs_head():
-    return _head(RUNS[0])
+    return _head(RUNS[0], resolver=state_path)
 
 
 def run_events(run_id) -> list[dict]:
@@ -37,15 +38,15 @@ def run_events(run_id) -> list[dict]:
 
 
 def append_session(rec) -> None:
-    _append(SESSIONS[0], rec)
+    _append(SESSIONS[0], rec, resolver=state_path)
 
 
 def read_sessions() -> list[dict]:
-    return read_jsonl(SESSIONS[0])
+    return read_jsonl(SESSIONS[0], resolver=state_path)
 
 
 def sessions_head():
-    return _head(SESSIONS[0])
+    return _head(SESSIONS[0], resolver=state_path)
 
 
 def session_events(session_id) -> list[dict]:
@@ -56,15 +57,15 @@ def session_events(session_id) -> list[dict]:
 
 
 def append_loop(rec) -> None:
-    _append(LOOPS[0], rec)
+    _append(LOOPS[0], rec, resolver=state_path)
 
 
 def read_loops() -> list[dict]:
-    return read_jsonl(LOOPS[0])
+    return read_jsonl(LOOPS[0], resolver=state_path)
 
 
 def loops_head():
-    return _head(LOOPS[0])
+    return _head(LOOPS[0], resolver=state_path)
 
 
 def loop_events(loop_id) -> list[dict]:

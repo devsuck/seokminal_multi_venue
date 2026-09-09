@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 
+from jarvis.config import state_path
 from jarvis.ledger_io import append as _append, read_jsonl, head as _head, exists as _exists
 
 EVENTS = ("lrt_events.jsonl", "event_id")     # 런타임 생애 이벤트
@@ -18,16 +19,16 @@ def _readers(spec):
     fname, idf = spec
 
     def append(rec):
-        _append(fname, rec)
+        _append(fname, rec, resolver=state_path)
 
     def read():
-        return read_jsonl(fname)
+        return read_jsonl(fname, resolver=state_path)
 
     def head():
-        return _head(fname)
+        return _head(fname, resolver=state_path)
 
     def exists(rid):
-        return _exists(fname, idf, rid)
+        return _exists(fname, idf, rid, resolver=state_path)
 
     return append, read, head, exists
 

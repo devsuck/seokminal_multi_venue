@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 
+from jarvis.config import state_path
 from jarvis.ledger_io import append as _append, read_jsonl, head as _head, exists as _exists
 
 # (파일명, id 필드)
@@ -25,38 +26,38 @@ ALL_LEDGERS = (PORTFOLIOS, PORTFOLIO_VERSIONS, HYPOTHESES, CONSTRUCTION_STUDIES,
 
 
 def append_portfolio(rec: dict) -> None:
-    _append(PORTFOLIOS[0], rec)
+    _append(PORTFOLIOS[0], rec, resolver=state_path)
 
 
 def read_portfolios() -> list[dict]:
-    return read_jsonl(PORTFOLIOS[0])
+    return read_jsonl(PORTFOLIOS[0], resolver=state_path)
 
 
 def portfolios_head() -> dict | None:
-    return _head(PORTFOLIOS[0])
+    return _head(PORTFOLIOS[0], resolver=state_path)
 
 
 def portfolio_hash_exists(h: str) -> bool:
-    return _exists(PORTFOLIOS[0], PORTFOLIOS[1], h)
+    return _exists(PORTFOLIOS[0], PORTFOLIOS[1], h, resolver=state_path)
 
 
 # ── Portfolio versions (event-sourced) ──
 
 
 def append_version(rec: dict) -> None:
-    _append(PORTFOLIO_VERSIONS[0], rec)
+    _append(PORTFOLIO_VERSIONS[0], rec, resolver=state_path)
 
 
 def read_versions() -> list[dict]:
-    return read_jsonl(PORTFOLIO_VERSIONS[0])
+    return read_jsonl(PORTFOLIO_VERSIONS[0], resolver=state_path)
 
 
 def versions_head() -> dict | None:
-    return _head(PORTFOLIO_VERSIONS[0])
+    return _head(PORTFOLIO_VERSIONS[0], resolver=state_path)
 
 
 def version_event_exists(version_id: str) -> bool:
-    return _exists(PORTFOLIO_VERSIONS[0], PORTFOLIO_VERSIONS[1], version_id)
+    return _exists(PORTFOLIO_VERSIONS[0], PORTFOLIO_VERSIONS[1], version_id, resolver=state_path)
 
 
 def version_events_for(vkey: str) -> list[dict]:
@@ -67,38 +68,38 @@ def version_events_for(vkey: str) -> list[dict]:
 
 
 def append_hypothesis(rec: dict) -> None:
-    _append(HYPOTHESES[0], rec)
+    _append(HYPOTHESES[0], rec, resolver=state_path)
 
 
 def read_hypotheses() -> list[dict]:
-    return read_jsonl(HYPOTHESES[0])
+    return read_jsonl(HYPOTHESES[0], resolver=state_path)
 
 
 def hypotheses_head() -> dict | None:
-    return _head(HYPOTHESES[0])
+    return _head(HYPOTHESES[0], resolver=state_path)
 
 
 def hypothesis_exists(hypothesis_id: str) -> bool:
-    return _exists(HYPOTHESES[0], HYPOTHESES[1], hypothesis_id)
+    return _exists(HYPOTHESES[0], HYPOTHESES[1], hypothesis_id, resolver=state_path)
 
 
 # ── Construction studies ──
 
 
 def append_study(rec: dict) -> None:
-    _append(CONSTRUCTION_STUDIES[0], rec)
+    _append(CONSTRUCTION_STUDIES[0], rec, resolver=state_path)
 
 
 def read_studies() -> list[dict]:
-    return read_jsonl(CONSTRUCTION_STUDIES[0])
+    return read_jsonl(CONSTRUCTION_STUDIES[0], resolver=state_path)
 
 
 def studies_head() -> dict | None:
-    return _head(CONSTRUCTION_STUDIES[0])
+    return _head(CONSTRUCTION_STUDIES[0], resolver=state_path)
 
 
 def study_exists(study_id: str) -> bool:
-    return _exists(CONSTRUCTION_STUDIES[0], CONSTRUCTION_STUDIES[1], study_id)
+    return _exists(CONSTRUCTION_STUDIES[0], CONSTRUCTION_STUDIES[1], study_id, resolver=state_path)
 
 
 def get_study(study_id: str) -> dict | None:
@@ -112,19 +113,19 @@ def get_study(study_id: str) -> dict | None:
 
 
 def append_backtest(rec: dict) -> None:
-    _append(BACKTESTS[0], rec)
+    _append(BACKTESTS[0], rec, resolver=state_path)
 
 
 def read_backtests() -> list[dict]:
-    return read_jsonl(BACKTESTS[0])
+    return read_jsonl(BACKTESTS[0], resolver=state_path)
 
 
 def backtests_head() -> dict | None:
-    return _head(BACKTESTS[0])
+    return _head(BACKTESTS[0], resolver=state_path)
 
 
 def backtest_exists(backtest_id: str) -> bool:
-    return _exists(BACKTESTS[0], BACKTESTS[1], backtest_id)
+    return _exists(BACKTESTS[0], BACKTESTS[1], backtest_id, resolver=state_path)
 
 
 def backtests_for_portfolio(portfolio_id: str) -> list[dict]:
@@ -135,54 +136,54 @@ def backtests_for_portfolio(portfolio_id: str) -> list[dict]:
 
 
 def append_risk(rec: dict) -> None:
-    _append(RISK_ANALYSES[0], rec)
+    _append(RISK_ANALYSES[0], rec, resolver=state_path)
 
 
 def read_risk() -> list[dict]:
-    return read_jsonl(RISK_ANALYSES[0])
+    return read_jsonl(RISK_ANALYSES[0], resolver=state_path)
 
 
 def risk_head() -> dict | None:
-    return _head(RISK_ANALYSES[0])
+    return _head(RISK_ANALYSES[0], resolver=state_path)
 
 
 def risk_exists(analysis_id: str) -> bool:
-    return _exists(RISK_ANALYSES[0], RISK_ANALYSES[1], analysis_id)
+    return _exists(RISK_ANALYSES[0], RISK_ANALYSES[1], analysis_id, resolver=state_path)
 
 
 # ── Comparisons ──
 
 
 def append_comparison(rec: dict) -> None:
-    _append(COMPARISONS[0], rec)
+    _append(COMPARISONS[0], rec, resolver=state_path)
 
 
 def read_comparisons() -> list[dict]:
-    return read_jsonl(COMPARISONS[0])
+    return read_jsonl(COMPARISONS[0], resolver=state_path)
 
 
 def comparisons_head() -> dict | None:
-    return _head(COMPARISONS[0])
+    return _head(COMPARISONS[0], resolver=state_path)
 
 
 def comparison_exists(comparison_id: str) -> bool:
-    return _exists(COMPARISONS[0], COMPARISONS[1], comparison_id)
+    return _exists(COMPARISONS[0], COMPARISONS[1], comparison_id, resolver=state_path)
 
 
 # ── Artifacts ──
 
 
 def append_artifact(rec: dict) -> None:
-    _append(ARTIFACTS[0], rec)
+    _append(ARTIFACTS[0], rec, resolver=state_path)
 
 
 def read_artifacts() -> list[dict]:
-    return read_jsonl(ARTIFACTS[0])
+    return read_jsonl(ARTIFACTS[0], resolver=state_path)
 
 
 def artifacts_head() -> dict | None:
-    return _head(ARTIFACTS[0])
+    return _head(ARTIFACTS[0], resolver=state_path)
 
 
 def artifact_exists(artifact_id: str) -> bool:
-    return _exists(ARTIFACTS[0], ARTIFACTS[1], artifact_id)
+    return _exists(ARTIFACTS[0], ARTIFACTS[1], artifact_id, resolver=state_path)

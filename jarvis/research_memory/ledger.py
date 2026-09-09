@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+from jarvis.config import state_path
 from jarvis.ledger_io import append as _append, read_jsonl, head as _head, exists as _exists
 
 # (파일명, id 필드) — 본 레이어 소유 원장 (rm_ 접두사)
@@ -36,26 +37,26 @@ SOURCE_LEDGERS = {
 
 def read_source(filename: str) -> list[dict]:
     """상위 레이어 원장을 읽기 전용으로 로드. 절대 쓰지 않는다."""
-    return read_jsonl(filename)
+    return read_jsonl(filename, resolver=state_path)
 
 
 # ── Memories (event-sourced) ──
 
 
 def append_memory_event(rec: dict) -> None:
-    _append(MEMORIES[0], rec)
+    _append(MEMORIES[0], rec, resolver=state_path)
 
 
 def read_memory_events() -> list[dict]:
-    return read_jsonl(MEMORIES[0])
+    return read_jsonl(MEMORIES[0], resolver=state_path)
 
 
 def memories_head() -> dict | None:
-    return _head(MEMORIES[0])
+    return _head(MEMORIES[0], resolver=state_path)
 
 
 def memory_event_exists(event_id: str) -> bool:
-    return _exists(MEMORIES[0], MEMORIES[1], event_id)
+    return _exists(MEMORIES[0], MEMORIES[1], event_id, resolver=state_path)
 
 
 def memory_events_for(memory_id: str) -> list[dict]:
@@ -79,19 +80,19 @@ def memory_exists(memory_id: str) -> bool:
 
 
 def append_lesson(rec: dict) -> None:
-    _append(LESSONS[0], rec)
+    _append(LESSONS[0], rec, resolver=state_path)
 
 
 def read_lessons() -> list[dict]:
-    return read_jsonl(LESSONS[0])
+    return read_jsonl(LESSONS[0], resolver=state_path)
 
 
 def lessons_head() -> dict | None:
-    return _head(LESSONS[0])
+    return _head(LESSONS[0], resolver=state_path)
 
 
 def lesson_exists(lesson_id: str) -> bool:
-    return _exists(LESSONS[0], LESSONS[1], lesson_id)
+    return _exists(LESSONS[0], LESSONS[1], lesson_id, resolver=state_path)
 
 
 def get_lesson(lesson_id: str) -> dict | None:
@@ -105,111 +106,111 @@ def get_lesson(lesson_id: str) -> dict | None:
 
 
 def append_pattern(rec: dict) -> None:
-    _append(PATTERNS[0], rec)
+    _append(PATTERNS[0], rec, resolver=state_path)
 
 
 def read_patterns() -> list[dict]:
-    return read_jsonl(PATTERNS[0])
+    return read_jsonl(PATTERNS[0], resolver=state_path)
 
 
 def patterns_head() -> dict | None:
-    return _head(PATTERNS[0])
+    return _head(PATTERNS[0], resolver=state_path)
 
 
 def pattern_exists(pattern_id: str) -> bool:
-    return _exists(PATTERNS[0], PATTERNS[1], pattern_id)
+    return _exists(PATTERNS[0], PATTERNS[1], pattern_id, resolver=state_path)
 
 
 # ── Connections ──
 
 
 def append_connection(rec: dict) -> None:
-    _append(CONNECTIONS[0], rec)
+    _append(CONNECTIONS[0], rec, resolver=state_path)
 
 
 def read_connections() -> list[dict]:
-    return read_jsonl(CONNECTIONS[0])
+    return read_jsonl(CONNECTIONS[0], resolver=state_path)
 
 
 def connections_head() -> dict | None:
-    return _head(CONNECTIONS[0])
+    return _head(CONNECTIONS[0], resolver=state_path)
 
 
 def connection_exists(connection_id: str) -> bool:
-    return _exists(CONNECTIONS[0], CONNECTIONS[1], connection_id)
+    return _exists(CONNECTIONS[0], CONNECTIONS[1], connection_id, resolver=state_path)
 
 
 # ── Retrievals ──
 
 
 def append_retrieval(rec: dict) -> None:
-    _append(RETRIEVALS[0], rec)
+    _append(RETRIEVALS[0], rec, resolver=state_path)
 
 
 def read_retrievals() -> list[dict]:
-    return read_jsonl(RETRIEVALS[0])
+    return read_jsonl(RETRIEVALS[0], resolver=state_path)
 
 
 def retrievals_head() -> dict | None:
-    return _head(RETRIEVALS[0])
+    return _head(RETRIEVALS[0], resolver=state_path)
 
 
 def retrieval_exists(retrieval_id: str) -> bool:
-    return _exists(RETRIEVALS[0], RETRIEVALS[1], retrieval_id)
+    return _exists(RETRIEVALS[0], RETRIEVALS[1], retrieval_id, resolver=state_path)
 
 
 # ── Clusters ──
 
 
 def append_cluster(rec: dict) -> None:
-    _append(CLUSTERS[0], rec)
+    _append(CLUSTERS[0], rec, resolver=state_path)
 
 
 def read_clusters() -> list[dict]:
-    return read_jsonl(CLUSTERS[0])
+    return read_jsonl(CLUSTERS[0], resolver=state_path)
 
 
 def clusters_head() -> dict | None:
-    return _head(CLUSTERS[0])
+    return _head(CLUSTERS[0], resolver=state_path)
 
 
 def cluster_exists(cluster_id: str) -> bool:
-    return _exists(CLUSTERS[0], CLUSTERS[1], cluster_id)
+    return _exists(CLUSTERS[0], CLUSTERS[1], cluster_id, resolver=state_path)
 
 
 # ── Reports ──
 
 
 def append_report(rec: dict) -> None:
-    _append(REPORTS[0], rec)
+    _append(REPORTS[0], rec, resolver=state_path)
 
 
 def read_reports() -> list[dict]:
-    return read_jsonl(REPORTS[0])
+    return read_jsonl(REPORTS[0], resolver=state_path)
 
 
 def reports_head() -> dict | None:
-    return _head(REPORTS[0])
+    return _head(REPORTS[0], resolver=state_path)
 
 
 def report_exists(report_id: str) -> bool:
-    return _exists(REPORTS[0], REPORTS[1], report_id)
+    return _exists(REPORTS[0], REPORTS[1], report_id, resolver=state_path)
 
 
 # ── Artifacts ──
 
 
 def append_artifact(rec: dict) -> None:
-    _append(ARTIFACTS[0], rec)
+    _append(ARTIFACTS[0], rec, resolver=state_path)
 
 
 def read_artifacts() -> list[dict]:
-    return read_jsonl(ARTIFACTS[0])
+    return read_jsonl(ARTIFACTS[0], resolver=state_path)
 
 
 def artifacts_head() -> dict | None:
-    return _head(ARTIFACTS[0])
+    return _head(ARTIFACTS[0], resolver=state_path)
 
 
 def artifact_exists(artifact_id: str) -> bool:
-    return _exists(ARTIFACTS[0], ARTIFACTS[1], artifact_id)
+    return _exists(ARTIFACTS[0], ARTIFACTS[1], artifact_id, resolver=state_path)

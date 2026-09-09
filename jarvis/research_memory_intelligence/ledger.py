@@ -46,7 +46,7 @@ def source_count(layer) -> int:
     spec = SOURCE_LAYERS.get(layer)
     if not spec:
         return 0
-    return len(read_jsonl(spec[0]))
+    return len(read_jsonl(spec[0], resolver=state_path))
 
 
 def source_present(layer) -> bool:
@@ -60,7 +60,7 @@ def source_ref_exists(layer, rid) -> bool:
     spec = SOURCE_LAYERS.get(layer)
     if not spec:
         return False
-    return _exists(spec[0], spec[1], rid)
+    return _exists(spec[0], spec[1], rid, resolver=state_path)
 
 
 def all_source_counts() -> dict:
@@ -74,16 +74,16 @@ def _readers(spec):
     fname, idf = spec
 
     def append(rec):
-        _append(fname, rec)
+        _append(fname, rec, resolver=state_path)
 
     def read():
-        return read_jsonl(fname)
+        return read_jsonl(fname, resolver=state_path)
 
     def head():
-        return _head(fname)
+        return _head(fname, resolver=state_path)
 
     def exists(rid):
-        return _exists(fname, idf, rid)
+        return _exists(fname, idf, rid, resolver=state_path)
 
     return append, read, head, exists
 

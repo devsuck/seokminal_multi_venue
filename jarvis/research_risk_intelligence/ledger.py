@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 
+from jarvis.config import state_path
 from jarvis.ledger_io import append as _append, read_jsonl, head as _head, exists as _exists
 
 # (파일명, id 필드) — 본 레이어 소유 원장 (rr_ 접두사)
@@ -31,7 +32,7 @@ SOURCE_LEDGERS = {
 
 def read_source(filename: str) -> list[dict]:
     """상위 소스 원장을 읽기 전용으로 로드. 절대 쓰지 않는다."""
-    return read_jsonl(filename)
+    return read_jsonl(filename, resolver=state_path)
 
 
 def source_count(layer: str) -> int:
@@ -45,19 +46,19 @@ def source_count(layer: str) -> int:
 
 
 def append_risk_event(rec: dict) -> None:
-    _append(RISKS[0], rec)
+    _append(RISKS[0], rec, resolver=state_path)
 
 
 def read_risk_events() -> list[dict]:
-    return read_jsonl(RISKS[0])
+    return read_jsonl(RISKS[0], resolver=state_path)
 
 
 def risks_head() -> dict | None:
-    return _head(RISKS[0])
+    return _head(RISKS[0], resolver=state_path)
 
 
 def risk_event_exists(event_id: str) -> bool:
-    return _exists(RISKS[0], RISKS[1], event_id)
+    return _exists(RISKS[0], RISKS[1], event_id, resolver=state_path)
 
 
 def risk_events_for(risk_id: str) -> list[dict]:
@@ -81,19 +82,19 @@ def risk_exists(risk_id: str) -> bool:
 
 
 def append_assessment(rec: dict) -> None:
-    _append(ASSESSMENTS[0], rec)
+    _append(ASSESSMENTS[0], rec, resolver=state_path)
 
 
 def read_assessments() -> list[dict]:
-    return read_jsonl(ASSESSMENTS[0])
+    return read_jsonl(ASSESSMENTS[0], resolver=state_path)
 
 
 def assessments_head() -> dict | None:
-    return _head(ASSESSMENTS[0])
+    return _head(ASSESSMENTS[0], resolver=state_path)
 
 
 def assessment_exists(assessment_id: str) -> bool:
-    return _exists(ASSESSMENTS[0], ASSESSMENTS[1], assessment_id)
+    return _exists(ASSESSMENTS[0], ASSESSMENTS[1], assessment_id, resolver=state_path)
 
 
 def get_assessment(assessment_id: str) -> dict | None:
@@ -107,19 +108,19 @@ def get_assessment(assessment_id: str) -> dict | None:
 
 
 def append_factor(rec: dict) -> None:
-    _append(FACTORS[0], rec)
+    _append(FACTORS[0], rec, resolver=state_path)
 
 
 def read_factors() -> list[dict]:
-    return read_jsonl(FACTORS[0])
+    return read_jsonl(FACTORS[0], resolver=state_path)
 
 
 def factors_head() -> dict | None:
-    return _head(FACTORS[0])
+    return _head(FACTORS[0], resolver=state_path)
 
 
 def factor_exists(factor_id: str) -> bool:
-    return _exists(FACTORS[0], FACTORS[1], factor_id)
+    return _exists(FACTORS[0], FACTORS[1], factor_id, resolver=state_path)
 
 
 def get_factor(factor_id: str) -> dict | None:
@@ -137,35 +138,35 @@ def factors_for(risk_ref: str) -> list[dict]:
 
 
 def append_report(rec: dict) -> None:
-    _append(REPORTS[0], rec)
+    _append(REPORTS[0], rec, resolver=state_path)
 
 
 def read_reports() -> list[dict]:
-    return read_jsonl(REPORTS[0])
+    return read_jsonl(REPORTS[0], resolver=state_path)
 
 
 def reports_head() -> dict | None:
-    return _head(REPORTS[0])
+    return _head(REPORTS[0], resolver=state_path)
 
 
 def report_exists(report_id: str) -> bool:
-    return _exists(REPORTS[0], REPORTS[1], report_id)
+    return _exists(REPORTS[0], REPORTS[1], report_id, resolver=state_path)
 
 
 # ── Artifacts (계보) ──
 
 
 def append_artifact(rec: dict) -> None:
-    _append(ARTIFACTS[0], rec)
+    _append(ARTIFACTS[0], rec, resolver=state_path)
 
 
 def read_artifacts() -> list[dict]:
-    return read_jsonl(ARTIFACTS[0])
+    return read_jsonl(ARTIFACTS[0], resolver=state_path)
 
 
 def artifacts_head() -> dict | None:
-    return _head(ARTIFACTS[0])
+    return _head(ARTIFACTS[0], resolver=state_path)
 
 
 def artifact_exists(artifact_id: str) -> bool:
-    return _exists(ARTIFACTS[0], ARTIFACTS[1], artifact_id)
+    return _exists(ARTIFACTS[0], ARTIFACTS[1], artifact_id, resolver=state_path)

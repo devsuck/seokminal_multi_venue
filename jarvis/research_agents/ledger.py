@@ -46,7 +46,7 @@ AGENT_DEFAULT_SOURCE = {
 
 
 def _get(filename: str, id_field: str, rid: str) -> dict | None:
-    for r in read_jsonl(filename):
+    for r in read_jsonl(filename, resolver=state_path):
         if r.get(id_field) == rid:
             return r
     return None
@@ -61,7 +61,7 @@ def source_exists(filename: str) -> bool:
 
 def read_source(filename: str) -> list[dict]:
     """Research OS 소스 원장을 읽기 전용으로 로드. 절대 쓰지 않는다."""
-    return read_jsonl(filename)
+    return read_jsonl(filename, resolver=state_path)
 
 
 def read_role(role: str) -> list[dict]:
@@ -73,19 +73,19 @@ def read_role(role: str) -> list[dict]:
 
 
 def append_agent(rec: dict) -> None:
-    _append(AGENTS[0], rec)
+    _append(AGENTS[0], rec, resolver=state_path)
 
 
 def read_agents() -> list[dict]:
-    return read_jsonl(AGENTS[0])
+    return read_jsonl(AGENTS[0], resolver=state_path)
 
 
 def agents_head() -> dict | None:
-    return _head(AGENTS[0])
+    return _head(AGENTS[0], resolver=state_path)
 
 
 def agent_exists(agent_id: str) -> bool:
-    return _exists(AGENTS[0], AGENTS[1], agent_id)
+    return _exists(AGENTS[0], AGENTS[1], agent_id, resolver=state_path)
 
 
 def get_agent(agent_id: str) -> dict | None:
@@ -96,19 +96,19 @@ def get_agent(agent_id: str) -> dict | None:
 
 
 def append_profile(rec: dict) -> None:
-    _append(PROFILES[0], rec)
+    _append(PROFILES[0], rec, resolver=state_path)
 
 
 def read_profiles() -> list[dict]:
-    return read_jsonl(PROFILES[0])
+    return read_jsonl(PROFILES[0], resolver=state_path)
 
 
 def profiles_head() -> dict | None:
-    return _head(PROFILES[0])
+    return _head(PROFILES[0], resolver=state_path)
 
 
 def profile_exists(profile_id: str) -> bool:
-    return _exists(PROFILES[0], PROFILES[1], profile_id)
+    return _exists(PROFILES[0], PROFILES[1], profile_id, resolver=state_path)
 
 
 def get_profile(profile_id: str) -> dict | None:
@@ -119,19 +119,19 @@ def get_profile(profile_id: str) -> dict | None:
 
 
 def append_task(rec: dict) -> None:
-    _append(TASKS[0], rec)
+    _append(TASKS[0], rec, resolver=state_path)
 
 
 def read_tasks() -> list[dict]:
-    return read_jsonl(TASKS[0])
+    return read_jsonl(TASKS[0], resolver=state_path)
 
 
 def tasks_head() -> dict | None:
-    return _head(TASKS[0])
+    return _head(TASKS[0], resolver=state_path)
 
 
 def task_event_exists(task_event_id: str) -> bool:
-    return _exists(TASKS[0], TASKS[1], task_event_id)
+    return _exists(TASKS[0], TASKS[1], task_event_id, resolver=state_path)
 
 
 def task_events(task_id: str) -> list[dict]:
@@ -142,19 +142,19 @@ def task_events(task_id: str) -> list[dict]:
 
 
 def append_message(rec: dict) -> None:
-    _append(MESSAGES[0], rec)
+    _append(MESSAGES[0], rec, resolver=state_path)
 
 
 def read_messages() -> list[dict]:
-    return read_jsonl(MESSAGES[0])
+    return read_jsonl(MESSAGES[0], resolver=state_path)
 
 
 def messages_head() -> dict | None:
-    return _head(MESSAGES[0])
+    return _head(MESSAGES[0], resolver=state_path)
 
 
 def message_exists(message_id: str) -> bool:
-    return _exists(MESSAGES[0], MESSAGES[1], message_id)
+    return _exists(MESSAGES[0], MESSAGES[1], message_id, resolver=state_path)
 
 
 def get_message(message_id: str) -> dict | None:
@@ -165,19 +165,19 @@ def get_message(message_id: str) -> dict | None:
 
 
 def append_report(rec: dict) -> None:
-    _append(REPORTS[0], rec)
+    _append(REPORTS[0], rec, resolver=state_path)
 
 
 def read_reports() -> list[dict]:
-    return read_jsonl(REPORTS[0])
+    return read_jsonl(REPORTS[0], resolver=state_path)
 
 
 def reports_head() -> dict | None:
-    return _head(REPORTS[0])
+    return _head(REPORTS[0], resolver=state_path)
 
 
 def report_exists(report_id: str) -> bool:
-    return _exists(REPORTS[0], REPORTS[1], report_id)
+    return _exists(REPORTS[0], REPORTS[1], report_id, resolver=state_path)
 
 
 def get_report(report_id: str) -> dict | None:
@@ -188,16 +188,16 @@ def get_report(report_id: str) -> dict | None:
 
 
 def append_activity(rec: dict) -> None:
-    _append(ACTIVITY[0], rec)
+    _append(ACTIVITY[0], rec, resolver=state_path)
 
 
 def read_activity() -> list[dict]:
-    return read_jsonl(ACTIVITY[0])
+    return read_jsonl(ACTIVITY[0], resolver=state_path)
 
 
 def activity_head() -> dict | None:
-    return _head(ACTIVITY[0])
+    return _head(ACTIVITY[0], resolver=state_path)
 
 
 def activity_exists(activity_id: str) -> bool:
-    return _exists(ACTIVITY[0], ACTIVITY[1], activity_id)
+    return _exists(ACTIVITY[0], ACTIVITY[1], activity_id, resolver=state_path)

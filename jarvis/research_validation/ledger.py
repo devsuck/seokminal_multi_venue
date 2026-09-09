@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 
+from jarvis.config import state_path
 from jarvis.ledger_io import append as _append, read_jsonl, head as _head, exists as _exists
 
 # (파일명, id 필드) — 본 레이어 소유 원장 (rv_ 접두사)
@@ -37,26 +38,26 @@ SOURCE_LEDGERS = {
 
 def read_source(filename: str) -> list[dict]:
     """상위 레이어 원장을 읽기 전용으로 로드. 절대 쓰지 않는다."""
-    return read_jsonl(filename)
+    return read_jsonl(filename, resolver=state_path)
 
 
 # ── Validations (event-sourced) ──
 
 
 def append_validation_event(rec: dict) -> None:
-    _append(VALIDATIONS[0], rec)
+    _append(VALIDATIONS[0], rec, resolver=state_path)
 
 
 def read_validation_events() -> list[dict]:
-    return read_jsonl(VALIDATIONS[0])
+    return read_jsonl(VALIDATIONS[0], resolver=state_path)
 
 
 def validations_head() -> dict | None:
-    return _head(VALIDATIONS[0])
+    return _head(VALIDATIONS[0], resolver=state_path)
 
 
 def validation_event_exists(event_id: str) -> bool:
-    return _exists(VALIDATIONS[0], VALIDATIONS[1], event_id)
+    return _exists(VALIDATIONS[0], VALIDATIONS[1], event_id, resolver=state_path)
 
 
 def validation_events_for(validation_id: str) -> list[dict]:
@@ -76,130 +77,130 @@ def distinct_validations() -> list[dict]:
 
 
 def append_session(rec: dict) -> None:
-    _append(SESSIONS[0], rec)
+    _append(SESSIONS[0], rec, resolver=state_path)
 
 
 def read_sessions() -> list[dict]:
-    return read_jsonl(SESSIONS[0])
+    return read_jsonl(SESSIONS[0], resolver=state_path)
 
 
 def sessions_head() -> dict | None:
-    return _head(SESSIONS[0])
+    return _head(SESSIONS[0], resolver=state_path)
 
 
 def session_exists(session_id: str) -> bool:
-    return _exists(SESSIONS[0], SESSIONS[1], session_id)
+    return _exists(SESSIONS[0], SESSIONS[1], session_id, resolver=state_path)
 
 
 # ── Checklists ──
 
 
 def append_checklist(rec: dict) -> None:
-    _append(CHECKLISTS[0], rec)
+    _append(CHECKLISTS[0], rec, resolver=state_path)
 
 
 def read_checklists() -> list[dict]:
-    return read_jsonl(CHECKLISTS[0])
+    return read_jsonl(CHECKLISTS[0], resolver=state_path)
 
 
 def checklists_head() -> dict | None:
-    return _head(CHECKLISTS[0])
+    return _head(CHECKLISTS[0], resolver=state_path)
 
 
 def checklist_exists(checklist_id: str) -> bool:
-    return _exists(CHECKLISTS[0], CHECKLISTS[1], checklist_id)
+    return _exists(CHECKLISTS[0], CHECKLISTS[1], checklist_id, resolver=state_path)
 
 
 # ── Evidence ──
 
 
 def append_evidence(rec: dict) -> None:
-    _append(EVIDENCE[0], rec)
+    _append(EVIDENCE[0], rec, resolver=state_path)
 
 
 def read_evidence() -> list[dict]:
-    return read_jsonl(EVIDENCE[0])
+    return read_jsonl(EVIDENCE[0], resolver=state_path)
 
 
 def evidence_head() -> dict | None:
-    return _head(EVIDENCE[0])
+    return _head(EVIDENCE[0], resolver=state_path)
 
 
 def evidence_exists(evidence_id: str) -> bool:
-    return _exists(EVIDENCE[0], EVIDENCE[1], evidence_id)
+    return _exists(EVIDENCE[0], EVIDENCE[1], evidence_id, resolver=state_path)
 
 
 # ── Replay reports ──
 
 
 def append_replay(rec: dict) -> None:
-    _append(REPLAY_REPORTS[0], rec)
+    _append(REPLAY_REPORTS[0], rec, resolver=state_path)
 
 
 def read_replay_reports() -> list[dict]:
-    return read_jsonl(REPLAY_REPORTS[0])
+    return read_jsonl(REPLAY_REPORTS[0], resolver=state_path)
 
 
 def replay_head() -> dict | None:
-    return _head(REPLAY_REPORTS[0])
+    return _head(REPLAY_REPORTS[0], resolver=state_path)
 
 
 def replay_exists(replay_id: str) -> bool:
-    return _exists(REPLAY_REPORTS[0], REPLAY_REPORTS[1], replay_id)
+    return _exists(REPLAY_REPORTS[0], REPLAY_REPORTS[1], replay_id, resolver=state_path)
 
 
 # ── Lineage reports ──
 
 
 def append_lineage_report(rec: dict) -> None:
-    _append(LINEAGE_REPORTS[0], rec)
+    _append(LINEAGE_REPORTS[0], rec, resolver=state_path)
 
 
 def read_lineage_reports() -> list[dict]:
-    return read_jsonl(LINEAGE_REPORTS[0])
+    return read_jsonl(LINEAGE_REPORTS[0], resolver=state_path)
 
 
 def lineage_head() -> dict | None:
-    return _head(LINEAGE_REPORTS[0])
+    return _head(LINEAGE_REPORTS[0], resolver=state_path)
 
 
 def lineage_report_exists(lineage_report_id: str) -> bool:
-    return _exists(LINEAGE_REPORTS[0], LINEAGE_REPORTS[1], lineage_report_id)
+    return _exists(LINEAGE_REPORTS[0], LINEAGE_REPORTS[1], lineage_report_id, resolver=state_path)
 
 
 # ── Scores ──
 
 
 def append_score(rec: dict) -> None:
-    _append(SCORES[0], rec)
+    _append(SCORES[0], rec, resolver=state_path)
 
 
 def read_scores() -> list[dict]:
-    return read_jsonl(SCORES[0])
+    return read_jsonl(SCORES[0], resolver=state_path)
 
 
 def scores_head() -> dict | None:
-    return _head(SCORES[0])
+    return _head(SCORES[0], resolver=state_path)
 
 
 def score_exists(score_id: str) -> bool:
-    return _exists(SCORES[0], SCORES[1], score_id)
+    return _exists(SCORES[0], SCORES[1], score_id, resolver=state_path)
 
 
 # ── Artifacts ──
 
 
 def append_artifact(rec: dict) -> None:
-    _append(ARTIFACTS[0], rec)
+    _append(ARTIFACTS[0], rec, resolver=state_path)
 
 
 def read_artifacts() -> list[dict]:
-    return read_jsonl(ARTIFACTS[0])
+    return read_jsonl(ARTIFACTS[0], resolver=state_path)
 
 
 def artifacts_head() -> dict | None:
-    return _head(ARTIFACTS[0])
+    return _head(ARTIFACTS[0], resolver=state_path)
 
 
 def artifact_exists(artifact_id: str) -> bool:
-    return _exists(ARTIFACTS[0], ARTIFACTS[1], artifact_id)
+    return _exists(ARTIFACTS[0], ARTIFACTS[1], artifact_id, resolver=state_path)

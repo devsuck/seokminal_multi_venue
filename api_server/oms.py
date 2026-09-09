@@ -85,17 +85,19 @@ def record_event(venue: str, result: dict, *, symbol: str | None = None, side: s
         if price is not None:
             entry["price"] = price
 
+    history_entry = {"ts": now, "status": status, "filled": filled, "remaining": remaining}
+
     if already_terminal:
         # 종결 상태 이후 들어오는 업데이트는 상태/체결량을 덮어쓰지 않음(브로커 쪽
         # 지연/모순 응답 방어) — history에만 남겨서 무슨 일이 있었는지는 보이게 한다.
-        entry["history"].append({"ts": now, "status": status, "filled": filled, "remaining": remaining})
+        entry["history"].append(history_entry)
         return
 
     entry["status"] = status
     entry["filled"] = filled
     entry["remaining"] = remaining
     entry["updated_ts"] = now
-    entry["history"].append({"ts": now, "status": status, "filled": filled, "remaining": remaining})
+    entry["history"].append(history_entry)
 
 
 def get_order(venue: str, order_id: str) -> dict | None:

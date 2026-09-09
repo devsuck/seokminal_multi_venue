@@ -1,5 +1,6 @@
 """Black-Scholes option pricer: price, Greeks, IV, chain, IV surface."""
 import math
+import statistics
 import numpy as np
 from scipy.stats import norm
 
@@ -151,9 +152,7 @@ def realized_vol(closes: list[float], window: int = 20) -> float | None:
     log_rets = [math.log(tail[i] / tail[i - 1]) for i in range(1, len(tail)) if tail[i - 1] > 0]
     if len(log_rets) < 2:
         return None
-    mean = sum(log_rets) / len(log_rets)
-    var = sum((x - mean) ** 2 for x in log_rets) / (len(log_rets) - 1)
-    return math.sqrt(var) * math.sqrt(252)
+    return statistics.stdev(log_rets) * math.sqrt(252)
 
 
 def vrp_spread(atm_iv: float, closes: list[float], window: int = 20) -> dict | None:

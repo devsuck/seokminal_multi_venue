@@ -6,9 +6,9 @@ P10.5 KG·P20 Research Memory 소유권 불변. 진화는 과거 메모리 변�
 """
 from __future__ import annotations
 
-import json
 import os
 
+from jarvis.ledger_io import append as _append, read_jsonl, head as _head, exists as _exists
 from jarvis.config import state_path
 
 MEMORIES = ("rmi_memories.jsonl", "memory_event_id")             # 지식 메모리 생애주기(ES)
@@ -39,41 +39,9 @@ SOURCE_LAYERS = {
     "agent_coordination": ("racd_consensus.jsonl", "consensus_id"),      # P26
 }
 
-
-def _append(filename, record) -> None:
-    p = state_path(filename)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "a") as f:
-        f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
-
-
-def read_jsonl(filename) -> list[dict]:
-    p = state_path(filename)
-    if not os.path.exists(p):
-        return []
-    out: list[dict] = []
-    with open(p) as f:
-        for ln in f:
-            ln = ln.strip()
-            if not ln:
-                continue
-            try:
-                out.append(json.loads(ln))
-            except (ValueError, json.JSONDecodeError):
-                continue
-    return out
-
-
-def _head(filename):
-    recs = read_jsonl(filename)
-    return recs[-1] if recs else None
-
-
-def _exists(filename, id_field, rid) -> bool:
-    return any(r.get(id_field) == rid for r in read_jsonl(filename))
-
-
 # ── 관측 대상 READ ONLY ──
+
+
 def source_count(layer) -> int:
     spec = SOURCE_LAYERS.get(layer)
     if not spec:
@@ -100,6 +68,8 @@ def all_source_counts() -> dict:
 
 
 # ── helper 팩토리 ──
+
+
 def _readers(spec):
     fname, idf = spec
 
@@ -130,6 +100,8 @@ append_artifact, read_artifacts, artifacts_head, artifact_exists = _readers(ARTI
 
 
 # ── 그룹 조회 ──
+
+
 def memory_events(mem) -> list[dict]:
     return [r for r in read_memory_events() if r.get("memory_id") == mem]
 

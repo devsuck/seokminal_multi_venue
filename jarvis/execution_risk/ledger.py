@@ -5,27 +5,18 @@ report_hash·previous_hash·timestamp. 평가 기록만 — 주문/집행/브로
 """
 from __future__ import annotations
 
-import json
-import os
-
 from jarvis.config import state_path
+from jarvis.ledger_io import append, read_jsonl
 
 _EVENTS = "execution_risk_reports.jsonl"
 
 
 def append_event(event: dict) -> None:
-    p = state_path(_EVENTS)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "a") as f:
-        f.write(json.dumps(event, ensure_ascii=False, default=str) + "\n")
+    append(_EVENTS, event, resolver=state_path)
 
 
 def read_events() -> list[dict]:
-    p = state_path(_EVENTS)
-    if not os.path.exists(p):
-        return []
-    with open(p) as f:
-        return [json.loads(ln) for ln in f if ln.strip()]
+    return read_jsonl(_EVENTS, resolver=state_path)
 
 
 def event_exists(event_id: str) -> bool:

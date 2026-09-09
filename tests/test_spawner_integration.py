@@ -2,7 +2,7 @@ from nautilus_trader.backtest.engine import BacktestEngine
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.objects import Price, Quantity
 
-from condition_engine.parser import ConditionParser
+from condition_engine.parser import parse
 from strategy_spawner.spawner import StrategySpawner
 from strategy_spawner.spawner_parser import SpawnRule
 from tests.fixtures.dummy_strategy import DummyStrategy
@@ -24,7 +24,7 @@ def _bar(price: float, ts: int) -> Bar:
 
 
 def test_spawned_strategy_is_registered_on_real_backtest_engine():
-    condition_set = ConditionParser.parse(
+    condition_set = parse(
         {
             "combinator": "AND",
             "conditions": [

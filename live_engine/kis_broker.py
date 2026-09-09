@@ -9,12 +9,6 @@ from backends.kis.ws_auth import get_approval_key
 from backends.kis.ws_client import KISWebSocketClient
 from live_engine.broker_interface import BrokerInterface, OrderResult, Position, PriceTick
 
-_TRADE_FIELD_MAP = {
-    "stck_prpr": "price",   # 주식현재가
-    "stck_cntg_hour": "time",
-}
-
-
 def _instrument_to_code(instrument_id: str) -> str:
     """'005930.XKRX' → '005930'"""
     return instrument_id.split(".")[0]
@@ -66,8 +60,6 @@ class KISBroker(BrokerInterface):
             base_url=base_url,
         )
         self._ws_approval_key: str | None = None
-        self._app_key = app_key
-        self._app_secret = app_secret
 
     async def place_order(
         self,

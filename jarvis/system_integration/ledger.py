@@ -5,10 +5,8 @@
 """
 from __future__ import annotations
 
-import json
-import os
 
-from jarvis.config import state_path
+from jarvis.ledger_io import append as _append, read_jsonl, head as _head, exists as _exists
 
 VALIDATIONS = ("sysint_validations.jsonl", "validation_id")      # 검증 실행 기록
 FINDINGS = ("sysint_findings.jsonl", "finding_id")              # 개별 발견
@@ -16,39 +14,6 @@ REPORTS = ("sysint_reports.jsonl", "report_id")                # 시스템 리�
 ARTIFACTS = ("sysint_artifacts.jsonl", "artifact_id")         # 계보
 
 ALL_LEDGERS = (VALIDATIONS, FINDINGS, REPORTS, ARTIFACTS)
-
-
-def _append(filename, record) -> None:
-    p = state_path(filename)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "a") as f:
-        f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
-
-
-def read_jsonl(filename) -> list[dict]:
-    p = state_path(filename)
-    if not os.path.exists(p):
-        return []
-    out: list[dict] = []
-    with open(p) as f:
-        for ln in f:
-            ln = ln.strip()
-            if not ln:
-                continue
-            try:
-                out.append(json.loads(ln))
-            except (ValueError, json.JSONDecodeError):
-                continue
-    return out
-
-
-def _head(filename):
-    recs = read_jsonl(filename)
-    return recs[-1] if recs else None
-
-
-def _exists(filename, id_field, rid) -> bool:
-    return any(r.get(id_field) == rid for r in read_jsonl(filename))
 
 
 def _readers(spec):

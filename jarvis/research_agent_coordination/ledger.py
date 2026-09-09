@@ -6,9 +6,9 @@ previous_hash · record_hash. 협업 조정 기록만 — 실행·거래·배포
 """
 from __future__ import annotations
 
-import json
 import os
 
+from jarvis.ledger_io import append as _append, read_jsonl, head as _head, exists as _exists
 from jarvis.config import state_path
 
 AGENTS = ("racd_agents.jsonl", "agent_id")                     # 연구 에이전트 레지스트리
@@ -35,41 +35,9 @@ SOURCE_LAYERS = {
     "autonomous_research": ("ar_cycles.jsonl", "cycle_event_id"),      # P25
 }
 
-
-def _append(filename, record) -> None:
-    p = state_path(filename)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "a") as f:
-        f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
-
-
-def read_jsonl(filename) -> list[dict]:
-    p = state_path(filename)
-    if not os.path.exists(p):
-        return []
-    out: list[dict] = []
-    with open(p) as f:
-        for ln in f:
-            ln = ln.strip()
-            if not ln:
-                continue
-            try:
-                out.append(json.loads(ln))
-            except (ValueError, json.JSONDecodeError):
-                continue
-    return out
-
-
-def _head(filename):
-    recs = read_jsonl(filename)
-    return recs[-1] if recs else None
-
-
-def _exists(filename, id_field, rid) -> bool:
-    return any(r.get(id_field) == rid for r in read_jsonl(filename))
-
-
 # ── 관측 대상 READ ONLY ──
+
+
 def source_count(layer) -> int:
     spec = SOURCE_LAYERS.get(layer)
     if not spec:
@@ -96,6 +64,8 @@ def all_source_counts() -> dict:
 
 
 # ── helper 팩토리 ──
+
+
 def _readers(spec):
     fname, idf = spec
 
@@ -126,6 +96,8 @@ append_artifact, read_artifacts, artifacts_head, artifact_exists = _readers(ARTI
 
 
 # ── 그룹 조회 ──
+
+
 def session_events(sess) -> list[dict]:
     return [r for r in read_session_events() if r.get("session_id") == sess]
 

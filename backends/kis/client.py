@@ -32,72 +32,51 @@ class KISClient:
         self._request_delay_seconds = request_delay_seconds
 
     def get_daily_price(self, code: str, start: str, end: str) -> list[dict]:
-        all_rows: list[dict] = []
-        window_end = end
-
-        while True:
-            page = self._fetch_page(code, start, window_end)
-            if not page:
-                break
-
-            all_rows.extend(page)
-
-            oldest_date_in_page = page[0]["stck_bsop_date"]
-            if len(page) < PAGE_SIZE or oldest_date_in_page <= start:
-                break
-
-            window_end = _previous_day(oldest_date_in_page)
-            time.sleep(self._request_delay_seconds)
-
-        all_rows.sort(key=lambda row: row["stck_bsop_date"])
-        return [row for row in all_rows if start <= row["stck_bsop_date"] <= end]
-
-    def _fetch_page(self, code: str, start: str, end: str) -> list[dict]:
-        try:
-            response = self._request_page(code, start, end)
-        except requests.HTTPError as exc:
-            if exc.response is None or exc.response.status_code != 401:
-                raise
-            self._auth.invalidate()
-            response = self._request_page(code, start, end)
-
-        payload = response.json()
-        rt_cd = payload.get("rt_cd")
-        if rt_cd != "0":
-            raise RuntimeError(f"KIS API error rt_cd={rt_cd}: {payload.get('msg1')}")
-        rows = payload.get("output2", [])
-        non_blank = [row for row in rows if row.get("stck_bsop_date")]
-        non_blank.sort(key=lambda row: row["stck_bsop_date"])
-        return non_blank
-
-    def _request_page(self, code: str, start: str, end: str) -> requests.Response:
-        token = self._auth.get_access_token()
-        response = self._session.get(
-            f"{self._base_url}{DAILY_PRICE_PATH}",
-            headers={
-                "authorization": f"Bearer {token}",
-                "appkey": self._app_key,
-                "appsecret": self._app_secret,
-                "tr_id": DAILY_PRICE_TR_ID,
-            },
-            params={
-                "FID_COND_MRKT_DIV_CODE": "J",
-                "FID_INPUT_ISCD": code,
-                "FID_INPUT_DATE_1": start,
-                "FID_INPUT_DATE_2": end,
-                "FID_PERIOD_DIV_CODE": "D",
-                "FID_ORG_ADJ_PRC": "0",
-            },
+        return self._paginate(
+            start,
+            end,
+            lambda s, e: (
+                DAILY_PRICE_PATH,
+                DAILY_PRICE_TR_ID,
+                {
+                    "FID_COND_MRKT_DIV_CODE": "J",
+                    "FID_INPUT_ISCD": code,
+                    "FID_INPUT_DATE_1": s,
+                    "FID_INPUT_DATE_2": e,
+                    "FID_PERIOD_DIV_CODE": "D",
+                    "FID_ORG_ADJ_PRC": "0",
+                },
+            ),
         )
-        response.raise_for_status()
-        return response
 
     def get_daily_index_price(self, index_code: str, start: str, end: str) -> list[dict]:
+        return self._paginate(
+            start,
+            end,
+            lambda s, e: (
+                DAILY_INDEX_PRICE_PATH,
+                DAILY_INDEX_PRICE_TR_ID,
+                {
+                    "FID_COND_MRKT_DIV_CODE": "U",
+                    "FID_INPUT_ISCD": index_code,
+                    # Index endpoint inverts the stock endpoint's convention:
+                    # DATE_1 is the anchor/latest date (paginated backward from
+                    # it), DATE_2 is the lower bound. Confirmed live against
+                    # the real KIS API -- don't "fix" this back to DATE_1=start
+                    # by analogy with get_daily_price.
+                    "FID_INPUT_DATE_1": e,
+                    "FID_INPUT_DATE_2": s,
+                    "FID_PERIOD_DIV_CODE": "D",
+                },
+            ),
+        )
+
+    def _paginate(self, start: str, end: str, page_request) -> list[dict]:
         all_rows: list[dict] = []
         window_end = end
 
         while True:
-            page = self._fetch_index_page(index_code, start, window_end)
+            page = self._fetch(*page_request(start, window_end))
             if not page:
                 break
 
@@ -113,14 +92,14 @@ class KISClient:
         all_rows.sort(key=lambda row: row["stck_bsop_date"])
         return [row for row in all_rows if start <= row["stck_bsop_date"] <= end]
 
-    def _fetch_index_page(self, index_code: str, start: str, end: str) -> list[dict]:
+    def _fetch(self, path: str, tr_id: str, params: dict) -> list[dict]:
         try:
-            response = self._request_index_page(index_code, start, end)
+            response = self._request(path, tr_id, params)
         except requests.HTTPError as exc:
             if exc.response is None or exc.response.status_code != 401:
                 raise
             self._auth.invalidate()
-            response = self._request_index_page(index_code, start, end)
+            response = self._request(path, tr_id, params)
 
         payload = response.json()
         rt_cd = payload.get("rt_cd")
@@ -131,32 +110,20 @@ class KISClient:
         non_blank.sort(key=lambda row: row["stck_bsop_date"])
         return non_blank
 
-    def _request_index_page(self, index_code: str, start: str, end: str) -> requests.Response:
+    def _request(self, path: str, tr_id: str, params: dict) -> requests.Response:
         token = self._auth.get_access_token()
         response = self._session.get(
-            f"{self._base_url}{DAILY_INDEX_PRICE_PATH}",
+            f"{self._base_url}{path}",
             headers={
                 "authorization": f"Bearer {token}",
                 "appkey": self._app_key,
                 "appsecret": self._app_secret,
-                "tr_id": DAILY_INDEX_PRICE_TR_ID,
+                "tr_id": tr_id,
             },
-            params={
-                "FID_COND_MRKT_DIV_CODE": "U",
-                "FID_INPUT_ISCD": index_code,
-                # Index endpoint inverts the stock endpoint's convention:
-                # DATE_1 is the anchor/latest date (paginated backward from
-                # it), DATE_2 is the lower bound. Confirmed live against
-                # the real KIS API -- don't "fix" this back to DATE_1=start
-                # by analogy with get_daily_price.
-                "FID_INPUT_DATE_1": end,
-                "FID_INPUT_DATE_2": start,
-                "FID_PERIOD_DIV_CODE": "D",
-            },
+            params=params,
         )
         response.raise_for_status()
         return response
-
 
 
 def _previous_day(date_str: str) -> str:

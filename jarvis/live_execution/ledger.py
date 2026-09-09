@@ -5,53 +5,36 @@ request_hash · response_hash 포함. 사람 게이트 전용·자율 트리거 
 """
 from __future__ import annotations
 
-import json
-import os
-
 from jarvis.config import state_path
+from jarvis.ledger_io import append, read_jsonl
 
 _REQUESTS = "live_execution_requests.jsonl"
 _RESPONSES = "live_execution_responses.jsonl"
 _EVENTS = "execution_audit_events.jsonl"
 
 
-def _read(name: str) -> list[dict]:
-    p = state_path(name)
-    if not os.path.exists(p):
-        return []
-    with open(p) as f:
-        return [json.loads(ln) for ln in f if ln.strip()]
-
-
-def _append(name: str, row: dict) -> None:
-    p = state_path(name)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "a") as f:
-        f.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
-
-
 def append_request(row: dict) -> None:
-    _append(_REQUESTS, row)
+    append(_REQUESTS, row, resolver=state_path)
 
 
 def append_response(row: dict) -> None:
-    _append(_RESPONSES, row)
+    append(_RESPONSES, row, resolver=state_path)
 
 
 def append_event(row: dict) -> None:
-    _append(_EVENTS, row)
+    append(_EVENTS, row, resolver=state_path)
 
 
 def read_requests() -> list[dict]:
-    return _read(_REQUESTS)
+    return read_jsonl(_REQUESTS, resolver=state_path)
 
 
 def read_responses() -> list[dict]:
-    return _read(_RESPONSES)
+    return read_jsonl(_RESPONSES, resolver=state_path)
 
 
 def read_events() -> list[dict]:
-    return _read(_EVENTS)
+    return read_jsonl(_EVENTS, resolver=state_path)
 
 
 def last_response() -> dict | None:

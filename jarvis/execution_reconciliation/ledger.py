@@ -5,44 +5,27 @@ execution_validation_reports.jsonl · execution_reconciliation_events.jsonl.
 """
 from __future__ import annotations
 
-import json
-import os
-
 from jarvis.config import state_path
+from jarvis.ledger_io import append, read_jsonl
 
 _REPORTS = "execution_validation_reports.jsonl"
 _EVENTS = "execution_reconciliation_events.jsonl"
 
 
-def _read(name: str) -> list[dict]:
-    p = state_path(name)
-    if not os.path.exists(p):
-        return []
-    with open(p) as f:
-        return [json.loads(ln) for ln in f if ln.strip()]
-
-
-def _append(name: str, row: dict) -> None:
-    p = state_path(name)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "a") as f:
-        f.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
-
-
 def append_report(report: dict) -> None:
-    _append(_REPORTS, report)
+    append(_REPORTS, report, resolver=state_path)
 
 
 def append_event(event: dict) -> None:
-    _append(_EVENTS, event)
+    append(_EVENTS, event, resolver=state_path)
 
 
 def read_reports() -> list[dict]:
-    return _read(_REPORTS)
+    return read_jsonl(_REPORTS, resolver=state_path)
 
 
 def read_events() -> list[dict]:
-    return _read(_EVENTS)
+    return read_jsonl(_EVENTS, resolver=state_path)
 
 
 def last_report() -> dict | None:

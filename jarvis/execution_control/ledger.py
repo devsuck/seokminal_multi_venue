@@ -5,53 +5,36 @@ execution_intents.jsonl · execution_decisions.jsonl · execution_control_events
 """
 from __future__ import annotations
 
-import json
-import os
-
 from jarvis.config import state_path
+from jarvis.ledger_io import append, read_jsonl
 
 _INTENTS = "execution_intents.jsonl"
 _DECISIONS = "execution_decisions.jsonl"
 _EVENTS = "execution_control_events.jsonl"
 
 
-def _read(name: str) -> list[dict]:
-    p = state_path(name)
-    if not os.path.exists(p):
-        return []
-    with open(p) as f:
-        return [json.loads(ln) for ln in f if ln.strip()]
-
-
-def _append(name: str, row: dict) -> None:
-    p = state_path(name)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "a") as f:
-        f.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
-
-
 def append_intent(intent: dict) -> None:
-    _append(_INTENTS, intent)
+    append(_INTENTS, intent, resolver=state_path)
 
 
 def append_decision(decision: dict) -> None:
-    _append(_DECISIONS, decision)
+    append(_DECISIONS, decision, resolver=state_path)
 
 
 def append_event(event: dict) -> None:
-    _append(_EVENTS, event)
+    append(_EVENTS, event, resolver=state_path)
 
 
 def read_intents() -> list[dict]:
-    return _read(_INTENTS)
+    return read_jsonl(_INTENTS, resolver=state_path)
 
 
 def read_decisions() -> list[dict]:
-    return _read(_DECISIONS)
+    return read_jsonl(_DECISIONS, resolver=state_path)
 
 
 def read_events() -> list[dict]:
-    return _read(_EVENTS)
+    return read_jsonl(_EVENTS, resolver=state_path)
 
 
 def intent_exists(source_proposal_id: str) -> bool:

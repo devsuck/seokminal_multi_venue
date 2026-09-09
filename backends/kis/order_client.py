@@ -128,9 +128,8 @@ class KISOrderClient:
         )
         return {"order_id": order_no, "status": "CANCELLED", "filled": 0.0, "remaining": 0.0}
 
-    def get_balance(self) -> dict:
-        """예수금/총평가/순자산 조회 (inquire-balance). 모의: VTTC8434R."""
-        payload = self._call(
+    def _fetch_balance_payload(self) -> dict:
+        return self._call(
             "GET", BALANCE_PATH, self._tr(BALANCE_TR_ID),
             params={
                 "CANO": self._cano, "ACNT_PRDT_CD": self._acnt_prdt_cd,
@@ -140,6 +139,10 @@ class KISOrderClient:
                 "CTX_AREA_FK100": "", "CTX_AREA_NK100": "",
             },
         )
+
+    def get_balance(self) -> dict:
+        """예수금/총평가/순자산 조회 (inquire-balance). 모의: VTTC8434R."""
+        payload = self._fetch_balance_payload()
         out2 = payload.get("output2") or []
         s = out2[0] if isinstance(out2, list) and out2 else {}
         return {
@@ -150,16 +153,7 @@ class KISOrderClient:
 
     def get_holdings(self) -> list[dict]:
         """보유 종목 리스트 (inquire-balance output1): 코드/수량/평단/현재가."""
-        payload = self._call(
-            "GET", BALANCE_PATH, self._tr(BALANCE_TR_ID),
-            params={
-                "CANO": self._cano, "ACNT_PRDT_CD": self._acnt_prdt_cd,
-                "AFHR_FLPR_YN": "N", "OFL_YN": "", "INQR_DVSN": "02",
-                "UNPR_DVSN": "01", "FUND_STTL_ICLD_YN": "N",
-                "FNCG_AMT_AUTO_RDPT_YN": "N", "PRCS_DVSN": "00",
-                "CTX_AREA_FK100": "", "CTX_AREA_NK100": "",
-            },
-        )
+        payload = self._fetch_balance_payload()
         out = []
         for r in payload.get("output1", []) or []:
             qty = float(r.get("hldg_qty", 0) or 0)

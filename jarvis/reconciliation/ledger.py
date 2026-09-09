@@ -6,9 +6,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 
 from jarvis.config import state_path
+from jarvis.ledger_io import append, read_jsonl
 from jarvis.reconciliation.models import ReconciliationReport
 
 _LEDGER = "reconciliation_events.jsonl"
@@ -25,19 +25,12 @@ def record_report(report: ReconciliationReport) -> dict:
               for e in report.control_events]
     row = {"report_hash": report_hash(report), "timestamp": report.timestamp,
            "severity": report.severity, "detected_issues": issues}
-    p = state_path(_LEDGER)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "a") as f:
-        f.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
+    append(_LEDGER, row, resolver=state_path)
     return row
 
 
 def read_events() -> list[dict]:
-    p = state_path(_LEDGER)
-    if not os.path.exists(p):
-        return []
-    with open(p) as f:
-        return [json.loads(ln) for ln in f if ln.strip()]
+    return read_jsonl(_LEDGER, resolver=state_path)
 
 
 def last_event() -> dict | None:

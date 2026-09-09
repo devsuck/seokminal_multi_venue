@@ -1,10 +1,8 @@
 """Paper Execution 원장 (P6.2) — append-only. 삭제/재작성 없음. capital=paper."""
 from __future__ import annotations
 
-import json
-import os
-
 from jarvis.config import state_path
+from jarvis.ledger_io import append, read_jsonl
 
 _ORDERS = "paper_orders.jsonl"
 _FILLS = "paper_fills.jsonl"
@@ -12,19 +10,12 @@ _POSITIONS = "paper_positions.jsonl"
 _REPORTS = "paper_execution_reports.jsonl"
 
 
-def _read(name: str) -> list[dict]:
-    p = state_path(name)
-    if not os.path.exists(p):
-        return []
-    with open(p) as f:
-        return [json.loads(ln) for ln in f if ln.strip()]
-
-
 def _append(name: str, row: dict) -> None:
-    p = state_path(name)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "a") as f:
-        f.write(json.dumps({**row, "capital": "paper"}, ensure_ascii=False, default=str) + "\n")
+    append(name, {**row, "capital": "paper"}, resolver=state_path)
+
+
+def _read(name: str) -> list[dict]:
+    return read_jsonl(name, resolver=state_path)
 
 
 def append_order(o: dict) -> None:

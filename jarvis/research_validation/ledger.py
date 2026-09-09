@@ -5,10 +5,8 @@
 """
 from __future__ import annotations
 
-import json
-import os
 
-from jarvis.config import state_path
+from jarvis.ledger_io import append as _append, read_jsonl, head as _head, exists as _exists
 
 # (파일명, id 필드) — 본 레이어 소유 원장 (rv_ 접두사)
 VALIDATIONS = ("rv_validations.jsonl", "event_id")      # 이벤트 소싱
@@ -34,47 +32,17 @@ SOURCE_LEDGERS = {
     "simulation_environment": ("sim_scenarios.jsonl", "sim_artifacts.jsonl"),
 }
 
-
-def _append(filename: str, record: dict) -> None:
-    p = state_path(filename)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "a") as f:
-        f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
-
-
-def read_jsonl(filename: str) -> list[dict]:
-    p = state_path(filename)
-    if not os.path.exists(p):
-        return []
-    out: list[dict] = []
-    with open(p) as f:
-        for ln in f:
-            ln = ln.strip()
-            if not ln:
-                continue
-            try:
-                out.append(json.loads(ln))
-            except (ValueError, json.JSONDecodeError):
-                continue
-    return out
-
-
-def _head(filename: str) -> dict | None:
-    recs = read_jsonl(filename)
-    return recs[-1] if recs else None
-
-
-def _exists(filename: str, id_field: str, rid: str) -> bool:
-    return any(r.get(id_field) == rid for r in read_jsonl(filename))
-
-
 # ── 상위 레이어 READ ONLY 소스 ──
+
+
 def read_source(filename: str) -> list[dict]:
     """상위 레이어 원장을 읽기 전용으로 로드. 절대 쓰지 않는다."""
     return read_jsonl(filename)
 
 
 # ── Validations (event-sourced) ──
+
+
 def append_validation_event(rec: dict) -> None:
     _append(VALIDATIONS[0], rec)
 
@@ -105,6 +73,8 @@ def distinct_validations() -> list[dict]:
 
 
 # ── Sessions ──
+
+
 def append_session(rec: dict) -> None:
     _append(SESSIONS[0], rec)
 
@@ -122,6 +92,8 @@ def session_exists(session_id: str) -> bool:
 
 
 # ── Checklists ──
+
+
 def append_checklist(rec: dict) -> None:
     _append(CHECKLISTS[0], rec)
 
@@ -139,6 +111,8 @@ def checklist_exists(checklist_id: str) -> bool:
 
 
 # ── Evidence ──
+
+
 def append_evidence(rec: dict) -> None:
     _append(EVIDENCE[0], rec)
 
@@ -156,6 +130,8 @@ def evidence_exists(evidence_id: str) -> bool:
 
 
 # ── Replay reports ──
+
+
 def append_replay(rec: dict) -> None:
     _append(REPLAY_REPORTS[0], rec)
 
@@ -173,6 +149,8 @@ def replay_exists(replay_id: str) -> bool:
 
 
 # ── Lineage reports ──
+
+
 def append_lineage_report(rec: dict) -> None:
     _append(LINEAGE_REPORTS[0], rec)
 
@@ -190,6 +168,8 @@ def lineage_report_exists(lineage_report_id: str) -> bool:
 
 
 # ── Scores ──
+
+
 def append_score(rec: dict) -> None:
     _append(SCORES[0], rec)
 
@@ -207,6 +187,8 @@ def score_exists(score_id: str) -> bool:
 
 
 # ── Artifacts ──
+
+
 def append_artifact(rec: dict) -> None:
     _append(ARTIFACTS[0], rec)
 

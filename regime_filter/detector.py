@@ -8,6 +8,7 @@ Regimes:
 """
 import math
 import statistics
+from collections import Counter
 
 
 def detect_regime(
@@ -79,9 +80,7 @@ def detect_regime(
         r["regime"] = f"{trend}_{vol_state}"
         result_regimes.append(r)
 
-    regime_counts: dict[str, int] = {}
-    for r in result_regimes:
-        regime_counts[r["regime"]] = regime_counts.get(r["regime"], 0) + 1
+    regime_counts = Counter(r["regime"] for r in result_regimes)
     total = len(result_regimes) or 1
 
     return {

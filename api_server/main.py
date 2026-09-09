@@ -70,7 +70,7 @@ from backends.kis.client import KISClient
 from backends.kis.order_client import KISOrderClient
 from backends.ib.order_client import IBOrderClient
 from kr_universe.client import search_universe, get_universe as _get_kr_universe
-from condition_engine.parser import ConditionParser
+from condition_engine.parser import parse
 from condition_engine.evaluator import ConditionEvaluator
 from condition_engine.indicator_registry import IndicatorRegistry, _BUILDERS as _INDICATOR_BUILDERS
 from api_server import idempotency
@@ -2940,7 +2940,7 @@ def validate_spawn_rules(req: SpawnValidateRequest) -> SpawnValidateResponse:
     for i, rule in enumerate(req.spawn_rules):
         try:
             condition_dict = rule.get("condition", {})
-            condition_set = ConditionParser.parse(condition_dict)
+            condition_set = parse(condition_dict)
             # Verify each indicator operand has a registry builder (catches
             # cases where SUPPORTED_INDICATORS and _BUILDERS are out of sync)
             for comparison in condition_set.comparisons:
@@ -2978,7 +2978,7 @@ def evaluate_spawn_rules(req: SpawnEvaluateRequest) -> SpawnEvaluateResponse:
     condition_sets = []
     for i, rule in enumerate(req.spawn_rules):
         try:
-            condition_sets.append(ConditionParser.parse(rule.get("condition", {})))
+            condition_sets.append(parse(rule.get("condition", {})))
         except (ValueError, KeyError) as exc:
             raise HTTPException(status_code=422, detail=f"rule {i}: {exc}") from exc
 
@@ -3250,18 +3250,20 @@ def get_realized_pnl() -> dict:
     return {"venues": [dataclasses.asdict(r) for r in results]}
 
 
+def _kis_creds(mock: bool) -> tuple[str, str, str, str]:
+    """모의(KIS_MOCK_*) 또는 실전(KIS_*) 자격증명 4종 읽기. 검증은 호출부에서."""
+    prefix = "KIS_MOCK_" if mock else "KIS_"
+    app_key = os.environ.get(f"{prefix}APP_KEY", "")
+    app_secret = os.environ.get(f"{prefix}APP_SECRET", "")
+    cano = os.environ.get(f"{prefix}CANO", "")
+    acnt_prdt_cd = os.environ.get("KIS_ACNT_PRDT_CD", "")
+    return app_key, app_secret, cano, acnt_prdt_cd
+
+
 @app.post("/orders/kr", response_model=KROrderResponse)
 def place_kr_order(req: KROrderRequest) -> KROrderResponse:
     # Route to 모의(KIS_MOCK) or 실전(KIS) creds + server by the paper flag.
-    if req.paper:
-        app_key = os.environ.get("KIS_MOCK_APP_KEY", "")
-        app_secret = os.environ.get("KIS_MOCK_APP_SECRET", "")
-        cano = os.environ.get("KIS_MOCK_CANO", "")
-    else:
-        app_key = os.environ.get("KIS_APP_KEY", "")
-        app_secret = os.environ.get("KIS_APP_SECRET", "")
-        cano = os.environ.get("KIS_CANO", "")
-    acnt_prdt_cd = os.environ.get("KIS_ACNT_PRDT_CD", "")
+    app_key, app_secret, cano, acnt_prdt_cd = _kis_creds(mock=req.paper)
     if not all([app_key, app_secret, cano, acnt_prdt_cd]):
         raise HTTPException(status_code=503, detail=f"KIS {'모의' if req.paper else '실전'} credentials not configured")
     if req.side not in ("BUY", "SELL"):
@@ -3293,10 +3295,7 @@ def place_kr_order(req: KROrderRequest) -> KROrderResponse:
 
 @app.post("/orders/kr/{order_no}/cancel", response_model=KROrderResponse)
 def cancel_kr_order(order_no: str, req: KRCancelRequest) -> KROrderResponse:
-    app_key = os.environ.get("KIS_APP_KEY", "")
-    app_secret = os.environ.get("KIS_APP_SECRET", "")
-    cano = os.environ.get("KIS_CANO", "")
-    acnt_prdt_cd = os.environ.get("KIS_ACNT_PRDT_CD", "")
+    app_key, app_secret, cano, acnt_prdt_cd = _kis_creds(mock=False)
     if not all([app_key, app_secret, cano, acnt_prdt_cd]):
         raise HTTPException(status_code=503, detail="KIS credentials not configured")
     try:
@@ -3315,10 +3314,7 @@ def get_kr_order_status(
     order_no: str,
     date: str = Query(..., description="Order date YYYYMMDD"),
 ) -> KROrderResponse:
-    app_key = os.environ.get("KIS_APP_KEY", "")
-    app_secret = os.environ.get("KIS_APP_SECRET", "")
-    cano = os.environ.get("KIS_CANO", "")
-    acnt_prdt_cd = os.environ.get("KIS_ACNT_PRDT_CD", "")
+    app_key, app_secret, cano, acnt_prdt_cd = _kis_creds(mock=False)
     if not all([app_key, app_secret, cano, acnt_prdt_cd]):
         raise HTTPException(status_code=503, detail="KIS credentials not configured")
     try:
@@ -3337,10 +3333,11 @@ def get_kr_order_status(
 _ib_order_clients: dict[tuple[str, int, int], IBOrderClient] = {}
 
 
-def _get_ib_order_client(host: str, port: int, client_id: int) -> IBOrderClient:
+def _get_ib_order_client(port: int, client_id: int) -> IBOrderClient:
     """(host, port, client_id)별 풀링된 IBOrderClient. TWS 핸드셰이크는 최초
     1회만 — 이후 요청은 기존 연결 재사용(`_ensure_connected`가 이미 연결돼
     있으면 no-op). 매 요청 connect/disconnect 제거."""
+    host = os.environ.get("IB_HOST", "127.0.0.1")
     key = (host, port, client_id)
     client = _ib_order_clients.get(key)
     if client is None:
@@ -3390,7 +3387,6 @@ async def place_us_order(req: USOrderRequest) -> USOrderResponse:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     ib_client = _get_ib_order_client(
-        host=os.environ.get("IB_HOST", "127.0.0.1"),
         port=7496,  # live TWS
         client_id=int(os.environ.get("IB_MANUAL_ORDER_CLIENT_ID", "10")),
     )
@@ -3413,7 +3409,6 @@ async def place_us_order(req: USOrderRequest) -> USOrderResponse:
 @app.post("/orders/us/{order_id}/cancel", response_model=USOrderResponse)
 async def cancel_us_order(order_id: int) -> USOrderResponse:
     ib_client = _get_ib_order_client(
-        host=os.environ.get("IB_HOST", "127.0.0.1"),
         port=int(os.environ.get("IB_PORT", "7497")),
         client_id=int(os.environ.get("IB_MANUAL_ORDER_CLIENT_ID", "10")),
     )
@@ -3430,7 +3425,6 @@ async def cancel_us_order(order_id: int) -> USOrderResponse:
 @app.get("/orders/us/{order_id}/status", response_model=USOrderResponse)
 async def get_us_order_status(order_id: int) -> USOrderResponse:
     ib_client = _get_ib_order_client(
-        host=os.environ.get("IB_HOST", "127.0.0.1"),
         port=int(os.environ.get("IB_PORT", "7497")),
         client_id=int(os.environ.get("IB_MANUAL_ORDER_CLIENT_ID", "10")),
     )
@@ -3465,7 +3459,6 @@ async def place_option_order(req: OptionOrderRequest) -> OptionOrderResponse:
                 option_expiry=req.expiry)
 
     ib_client = _get_ib_order_client(
-        host=os.environ.get("IB_HOST", "127.0.0.1"),
         port=7497 if req.paper else 7496,
         client_id=int(os.environ.get("IB_OPTION_ORDER_CLIENT_ID", "12")),
     )
@@ -3490,7 +3483,6 @@ async def place_option_order(req: OptionOrderRequest) -> OptionOrderResponse:
 @app.post("/orders/options/{order_id}/cancel", response_model=OptionOrderResponse)
 async def cancel_option_order(order_id: int) -> OptionOrderResponse:
     ib_client = _get_ib_order_client(
-        host=os.environ.get("IB_HOST", "127.0.0.1"),
         port=int(os.environ.get("IB_PORT", "7497")),
         client_id=int(os.environ.get("IB_OPTION_ORDER_CLIENT_ID", "12")),
     )
@@ -3507,7 +3499,6 @@ async def cancel_option_order(order_id: int) -> OptionOrderResponse:
 @app.get("/orders/options/{order_id}/status", response_model=OptionOrderResponse)
 async def get_option_order_status(order_id: int) -> OptionOrderResponse:
     ib_client = _get_ib_order_client(
-        host=os.environ.get("IB_HOST", "127.0.0.1"),
         port=int(os.environ.get("IB_PORT", "7497")),
         client_id=int(os.environ.get("IB_OPTION_ORDER_CLIENT_ID", "12")),
     )
@@ -4245,18 +4236,23 @@ class MirrorRequest(BaseModel):
     notional: float = 500.0  # 미러 1건당 페이퍼 매수 금액 (USD)
 
 
-@app.post("/copytrade/mirror")
-def copytrade_mirror(body: MirrorRequest) -> dict:
-    """페이퍼 계좌에 notional 시장가 매수 (Alpaca paper). 실계좌 아님.
-    paper=True 하드코딩, 요청 필드로 못 바꿈 — test_execution_chokepoint AST 예외 처리."""
+def _alpaca_paper_client():
+    """ALPACA_API_KEY/SECRET_KEY 읽어 paper TradingClient 생성. 키 없으면 503."""
+    from alpaca.trading.client import TradingClient
     key = os.environ.get("ALPACA_API_KEY", "")
     sec = os.environ.get("ALPACA_SECRET_KEY", "")
     if not key or not sec:
         raise HTTPException(status_code=503, detail="ALPACA 키 없음")
-    from alpaca.trading.client import TradingClient
+    return TradingClient(api_key=key, secret_key=sec, paper=True)
+
+
+@app.post("/copytrade/mirror")
+def copytrade_mirror(body: MirrorRequest) -> dict:
+    """페이퍼 계좌에 notional 시장가 매수 (Alpaca paper). 실계좌 아님.
+    paper=True 하드코딩, 요청 필드로 못 바꿈 — test_execution_chokepoint AST 예외 처리."""
     from alpaca.trading.requests import MarketOrderRequest
     from alpaca.trading.enums import OrderSide, TimeInForce
-    client = TradingClient(api_key=key, secret_key=sec, paper=True)
+    client = _alpaca_paper_client()
     try:
         order = client.submit_order(MarketOrderRequest(
             symbol=body.ticker.strip().upper(), notional=round(body.notional, 2),
@@ -4384,12 +4380,7 @@ def copytrade_traders(limit: int = Query(120, ge=20, le=300)) -> list[TraderCard
 @app.get("/copytrade/positions")
 def copytrade_positions() -> list[dict]:
     """페이퍼 계좌 보유 포지션 (미러 성과 확인용)."""
-    key = os.environ.get("ALPACA_API_KEY", "")
-    sec = os.environ.get("ALPACA_SECRET_KEY", "")
-    if not key or not sec:
-        raise HTTPException(status_code=503, detail="ALPACA 키 없음")
-    from alpaca.trading.client import TradingClient
-    client = TradingClient(api_key=key, secret_key=sec, paper=True)
+    client = _alpaca_paper_client()
     try:
         out = []
         for p in client.get_all_positions():
@@ -4409,12 +4400,7 @@ def copytrade_positions() -> list[dict]:
 def copytrade_close(ticker: str) -> dict:
     """페이퍼 포지션 전량 시장가 청산. paper=True 하드코딩+청산 전용 —
     test_execution_chokepoint AST 예외 처리."""
-    key = os.environ.get("ALPACA_API_KEY", "")
-    sec = os.environ.get("ALPACA_SECRET_KEY", "")
-    if not key or not sec:
-        raise HTTPException(status_code=503, detail="ALPACA 키 없음")
-    from alpaca.trading.client import TradingClient
-    client = TradingClient(api_key=key, secret_key=sec, paper=True)
+    client = _alpaca_paper_client()
     try:
         order = client.close_position(ticker.strip().upper())
         return {"ticker": ticker.upper(), "status": str(getattr(order, "status", "submitted"))}
@@ -4435,14 +4421,9 @@ def copytrade_auto_exit(body: CopyAutoExitRequest) -> dict:
     프론트 오토파일럿이 주기적으로 호출해 예산을 회수한다.
     paper=True 하드코딩+청산 전용 — test_execution_chokepoint AST 예외 처리.
     """
-    key = os.environ.get("ALPACA_API_KEY", "")
-    sec = os.environ.get("ALPACA_SECRET_KEY", "")
-    if not key or not sec:
-        raise HTTPException(status_code=503, detail="ALPACA 키 없음")
     tp = max(float(body.tp_pct), 0.1)
     sl = max(float(body.sl_pct), 0.1)
-    from alpaca.trading.client import TradingClient
-    client = TradingClient(api_key=key, secret_key=sec, paper=True)
+    client = _alpaca_paper_client()
     closed: list[dict] = []
     try:
         for p in client.get_all_positions():
@@ -4671,12 +4652,8 @@ class PerfSummary(BaseModel):
 def performance_portfolio(period: str = Query("1M")) -> PerfSummary:
     """Alpaca 페이퍼 계좌 equity curve + 수익률/MDD/Sharpe + SPY 매수보유 벤치마크."""
     import datetime as _d
-    key = os.environ.get("ALPACA_API_KEY", ""); sec = os.environ.get("ALPACA_SECRET_KEY", "")
-    if not key or not sec:
-        raise HTTPException(status_code=503, detail="ALPACA 키 없음")
-    from alpaca.trading.client import TradingClient
     from alpaca.trading.requests import GetPortfolioHistoryRequest
-    c = TradingClient(key, sec, paper=True)
+    c = _alpaca_paper_client()
     try:
         h = c.get_portfolio_history(GetPortfolioHistoryRequest(period=period, timeframe="1D"))
     except Exception as exc:  # noqa: BLE001

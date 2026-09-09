@@ -6,6 +6,7 @@ from nautilus_trader.model.objects import Money
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 from backtest_runner.gated_strategy import make_gated_strategy_class
+from risk_analysis.metrics import compute_risk_metrics
 from strategy_spawner.spawner_parser import SpawnerParser
 
 
@@ -102,14 +103,9 @@ def run_backtest(
     sortino: float | None = None
     volatility: float | None = None
     if len(bar_returns) >= 2:
-        import math, statistics as _st
-        vol_daily = _st.stdev(bar_returns)
-        volatility = vol_daily * math.sqrt(252)
-        downside = [r for r in bar_returns if r < 0]
-        if len(downside) >= 2:
-            dd_std = _st.stdev(downside)
-            mean_r = _st.mean(bar_returns)
-            sortino = (mean_r / dd_std * math.sqrt(252)) if dd_std > 1e-10 else None
+        _m = compute_risk_metrics(bar_returns)
+        volatility = _m["volatility"]
+        sortino = _m["sortino_ratio"]
 
     return {
         "instrument_id": instrument_id,

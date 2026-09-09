@@ -2,17 +2,17 @@ import pytest
 
 from condition_engine.parser import (
     Comparison,
-    ConditionParser,
     ConditionSet,
     IndicatorOperand,
     LiteralOperand,
+    parse,
 )
 
 BAR_TYPE = "AAPL.NASDAQ-1-MINUTE-LAST-EXTERNAL"
 
 
 def test_parse_literal_comparison():
-    result = ConditionParser.parse(
+    result = parse(
         {
             "combinator": "AND",
             "conditions": [
@@ -38,7 +38,7 @@ def test_parse_literal_comparison():
 
 
 def test_parse_indicator_vs_indicator_comparison():
-    result = ConditionParser.parse(
+    result = parse(
         {
             "combinator": "OR",
             "conditions": [
@@ -65,7 +65,7 @@ def test_parse_indicator_vs_indicator_comparison():
 
 
 def test_parse_multiple_conditions_in_one_set():
-    result = ConditionParser.parse(
+    result = parse(
         {
             "combinator": "AND",
             "conditions": [
@@ -88,7 +88,7 @@ def test_parse_multiple_conditions_in_one_set():
 
 def test_parse_rejects_unknown_combinator():
     with pytest.raises(ValueError, match="combinator"):
-        ConditionParser.parse(
+        parse(
             {
                 "combinator": "XOR",
                 "conditions": [],
@@ -98,7 +98,7 @@ def test_parse_rejects_unknown_combinator():
 
 def test_parse_rejects_unknown_indicator():
     with pytest.raises(ValueError, match="indicator"):
-        ConditionParser.parse(
+        parse(
             {
                 "combinator": "AND",
                 "conditions": [
@@ -114,7 +114,7 @@ def test_parse_rejects_unknown_indicator():
 
 def test_parse_rejects_unsupported_op():
     with pytest.raises(ValueError, match="op"):
-        ConditionParser.parse(
+        parse(
             {
                 "combinator": "AND",
                 "conditions": [
@@ -130,7 +130,7 @@ def test_parse_rejects_unsupported_op():
 
 def test_parse_rejects_missing_required_param():
     with pytest.raises(ValueError, match="period"):
-        ConditionParser.parse(
+        parse(
             {
                 "combinator": "AND",
                 "conditions": [
@@ -146,7 +146,7 @@ def test_parse_rejects_missing_required_param():
 
 def test_parse_rejects_invalid_bar_type():
     with pytest.raises(ValueError, match="bar_type"):
-        ConditionParser.parse(
+        parse(
             {
                 "combinator": "AND",
                 "conditions": [
@@ -166,7 +166,7 @@ def test_parse_rejects_invalid_bar_type():
 
 def test_parse_rejects_invalid_bb_band():
     with pytest.raises(ValueError, match="band"):
-        ConditionParser.parse(
+        parse(
             {
                 "combinator": "AND",
                 "conditions": [

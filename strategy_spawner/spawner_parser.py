@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 from nautilus_trader.trading.strategy import Strategy
 
-from condition_engine.parser import ConditionParser, ConditionSet
+from condition_engine.parser import ConditionSet, parse
 
 
 @dataclass(frozen=True)
@@ -30,7 +30,7 @@ class SpawnerParser:
         except KeyError as exc:
             raise ValueError("missing required key 'strategy' in spawn rule") from exc
 
-        condition_set = ConditionParser.parse(condition_dict)
+        condition_set = parse(condition_dict)
 
         try:
             class_path = strategy_dict["class"]

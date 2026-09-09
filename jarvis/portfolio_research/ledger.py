@@ -5,10 +5,8 @@
 """
 from __future__ import annotations
 
-import json
-import os
 
-from jarvis.config import state_path
+from jarvis.ledger_io import append as _append, read_jsonl, head as _head, exists as _exists
 
 # (파일명, id 필드)
 PORTFOLIOS = ("pr_portfolios.jsonl", "portfolio_hash")
@@ -23,41 +21,9 @@ ARTIFACTS = ("pr_artifacts.jsonl", "artifact_id")
 ALL_LEDGERS = (PORTFOLIOS, PORTFOLIO_VERSIONS, HYPOTHESES, CONSTRUCTION_STUDIES, BACKTESTS,
                RISK_ANALYSES, COMPARISONS, ARTIFACTS)
 
-
-def _append(filename: str, record: dict) -> None:
-    p = state_path(filename)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "a") as f:
-        f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
-
-
-def read_jsonl(filename: str) -> list[dict]:
-    p = state_path(filename)
-    if not os.path.exists(p):
-        return []
-    out: list[dict] = []
-    with open(p) as f:
-        for ln in f:
-            ln = ln.strip()
-            if not ln:
-                continue
-            try:
-                out.append(json.loads(ln))
-            except (ValueError, json.JSONDecodeError):
-                continue
-    return out
-
-
-def _head(filename: str) -> dict | None:
-    recs = read_jsonl(filename)
-    return recs[-1] if recs else None
-
-
-def _exists(filename: str, id_field: str, rid: str) -> bool:
-    return any(r.get(id_field) == rid for r in read_jsonl(filename))
-
-
 # ── Portfolios ──
+
+
 def append_portfolio(rec: dict) -> None:
     _append(PORTFOLIOS[0], rec)
 
@@ -75,6 +41,8 @@ def portfolio_hash_exists(h: str) -> bool:
 
 
 # ── Portfolio versions (event-sourced) ──
+
+
 def append_version(rec: dict) -> None:
     _append(PORTFOLIO_VERSIONS[0], rec)
 
@@ -96,6 +64,8 @@ def version_events_for(vkey: str) -> list[dict]:
 
 
 # ── Hypotheses ──
+
+
 def append_hypothesis(rec: dict) -> None:
     _append(HYPOTHESES[0], rec)
 
@@ -113,6 +83,8 @@ def hypothesis_exists(hypothesis_id: str) -> bool:
 
 
 # ── Construction studies ──
+
+
 def append_study(rec: dict) -> None:
     _append(CONSTRUCTION_STUDIES[0], rec)
 
@@ -137,6 +109,8 @@ def get_study(study_id: str) -> dict | None:
 
 
 # ── Backtests ──
+
+
 def append_backtest(rec: dict) -> None:
     _append(BACKTESTS[0], rec)
 
@@ -158,6 +132,8 @@ def backtests_for_portfolio(portfolio_id: str) -> list[dict]:
 
 
 # ── Risk analyses ──
+
+
 def append_risk(rec: dict) -> None:
     _append(RISK_ANALYSES[0], rec)
 
@@ -175,6 +151,8 @@ def risk_exists(analysis_id: str) -> bool:
 
 
 # ── Comparisons ──
+
+
 def append_comparison(rec: dict) -> None:
     _append(COMPARISONS[0], rec)
 
@@ -192,6 +170,8 @@ def comparison_exists(comparison_id: str) -> bool:
 
 
 # ── Artifacts ──
+
+
 def append_artifact(rec: dict) -> None:
     _append(ARTIFACTS[0], rec)
 

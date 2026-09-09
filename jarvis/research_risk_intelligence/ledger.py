@@ -5,10 +5,8 @@
 """
 from __future__ import annotations
 
-import json
-import os
 
-from jarvis.config import state_path
+from jarvis.ledger_io import append as _append, read_jsonl, head as _head, exists as _exists
 
 # (파일명, id 필드) — 본 레이어 소유 원장 (rr_ 접두사)
 RISKS = ("rr_risks.jsonl", "event_id")                    # 이벤트 소싱
@@ -28,41 +26,9 @@ SOURCE_LEDGERS = {
     "simulation_environment": ("sim_scenarios.jsonl", "scenario_id"),
 }
 
-
-def _append(filename: str, record: dict) -> None:
-    p = state_path(filename)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "a") as f:
-        f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
-
-
-def read_jsonl(filename: str) -> list[dict]:
-    p = state_path(filename)
-    if not os.path.exists(p):
-        return []
-    out: list[dict] = []
-    with open(p) as f:
-        for ln in f:
-            ln = ln.strip()
-            if not ln:
-                continue
-            try:
-                out.append(json.loads(ln))
-            except (ValueError, json.JSONDecodeError):
-                continue
-    return out
-
-
-def _head(filename: str) -> dict | None:
-    recs = read_jsonl(filename)
-    return recs[-1] if recs else None
-
-
-def _exists(filename: str, id_field: str, rid: str) -> bool:
-    return any(r.get(id_field) == rid for r in read_jsonl(filename))
-
-
 # ── 상위 소스 READ ONLY ──
+
+
 def read_source(filename: str) -> list[dict]:
     """상위 소스 원장을 읽기 전용으로 로드. 절대 쓰지 않는다."""
     return read_jsonl(filename)
@@ -76,6 +42,8 @@ def source_count(layer: str) -> int:
 
 
 # ── Risks (event-sourced) ──
+
+
 def append_risk_event(rec: dict) -> None:
     _append(RISKS[0], rec)
 
@@ -110,6 +78,8 @@ def risk_exists(risk_id: str) -> bool:
 
 
 # ── Assessments (불변) ──
+
+
 def append_assessment(rec: dict) -> None:
     _append(ASSESSMENTS[0], rec)
 
@@ -134,6 +104,8 @@ def get_assessment(assessment_id: str) -> dict | None:
 
 
 # ── Factors (불변) ──
+
+
 def append_factor(rec: dict) -> None:
     _append(FACTORS[0], rec)
 
@@ -162,6 +134,8 @@ def factors_for(risk_ref: str) -> list[dict]:
 
 
 # ── Reports ──
+
+
 def append_report(rec: dict) -> None:
     _append(REPORTS[0], rec)
 
@@ -179,6 +153,8 @@ def report_exists(report_id: str) -> bool:
 
 
 # ── Artifacts (계보) ──
+
+
 def append_artifact(rec: dict) -> None:
     _append(ARTIFACTS[0], rec)
 

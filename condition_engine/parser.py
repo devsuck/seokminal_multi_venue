@@ -45,55 +45,51 @@ class ConditionSet:
     comparisons: list[Comparison]
 
 
-class ConditionParser:
-    @staticmethod
-    def parse(json_dict: dict) -> ConditionSet:
-        combinator = json_dict.get("combinator")
-        if combinator not in SUPPORTED_COMBINATORS:
-            raise ValueError(f"unknown combinator: {combinator!r}")
+def parse(json_dict: dict) -> ConditionSet:
+    combinator = json_dict.get("combinator")
+    if combinator not in SUPPORTED_COMBINATORS:
+        raise ValueError(f"unknown combinator: {combinator!r}")
 
-        comparisons = [
-            ConditionParser._parse_comparison(c) for c in json_dict.get("conditions", [])
-        ]
-        return ConditionSet(combinator=combinator, comparisons=comparisons)
+    comparisons = [_parse_comparison(c) for c in json_dict.get("conditions", [])]
+    return ConditionSet(combinator=combinator, comparisons=comparisons)
 
-    @staticmethod
-    def _parse_comparison(comparison_dict: dict) -> Comparison:
-        left = ConditionParser._parse_operand(comparison_dict["left"])
-        op = comparison_dict["op"]
-        if op not in SUPPORTED_OPS:
-            raise ValueError(f"unsupported op: {op!r}")
-        right = ConditionParser._parse_operand(comparison_dict["right"])
-        return Comparison(left=left, op=op, right=right)
 
-    @staticmethod
-    def _parse_operand(operand_dict: dict) -> Operand:
-        if "value" in operand_dict:
-            return LiteralOperand(value=operand_dict["value"])
+def _parse_comparison(comparison_dict: dict) -> Comparison:
+    left = _parse_operand(comparison_dict["left"])
+    op = comparison_dict["op"]
+    if op not in SUPPORTED_OPS:
+        raise ValueError(f"unsupported op: {op!r}")
+    right = _parse_operand(comparison_dict["right"])
+    return Comparison(left=left, op=op, right=right)
 
-        indicator = operand_dict.get("indicator")
-        if indicator not in SUPPORTED_INDICATORS:
-            raise ValueError(f"unknown indicator: {indicator!r}")
 
-        bar_type = operand_dict["bar_type"]
-        try:
-            BarType.from_str(bar_type)
-        except ValueError as exc:
-            raise ValueError(f"invalid bar_type: {bar_type!r}") from exc
+def _parse_operand(operand_dict: dict) -> Operand:
+    if "value" in operand_dict:
+        return LiteralOperand(value=operand_dict["value"])
 
-        params = operand_dict.get("params", {})
-        missing = REQUIRED_PARAMS[indicator] - params.keys()
-        if missing:
+    indicator = operand_dict.get("indicator")
+    if indicator not in SUPPORTED_INDICATORS:
+        raise ValueError(f"unknown indicator: {indicator!r}")
+
+    bar_type = operand_dict["bar_type"]
+    try:
+        BarType.from_str(bar_type)
+    except ValueError as exc:
+        raise ValueError(f"invalid bar_type: {bar_type!r}") from exc
+
+    params = operand_dict.get("params", {})
+    missing = REQUIRED_PARAMS[indicator] - params.keys()
+    if missing:
+        raise ValueError(
+            f"{indicator} missing required params: {sorted(missing)}"
+        )
+
+    # Validate BB band parameter
+    if indicator == "BB":
+        band = params.get("band")
+        if band not in {"upper", "middle", "lower"}:
             raise ValueError(
-                f"{indicator} missing required params: {sorted(missing)}"
+                f"invalid BB band: {band!r}, expected one of upper/middle/lower"
             )
 
-        # Validate BB band parameter
-        if indicator == "BB":
-            band = params.get("band")
-            if band not in {"upper", "middle", "lower"}:
-                raise ValueError(
-                    f"invalid BB band: {band!r}, expected one of upper/middle/lower"
-                )
-
-        return IndicatorOperand(indicator=indicator, bar_type=bar_type, params=params)
+    return IndicatorOperand(indicator=indicator, bar_type=bar_type, params=params)

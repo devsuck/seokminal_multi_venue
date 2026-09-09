@@ -6,9 +6,9 @@
 """
 from __future__ import annotations
 
-import json
 import os
 
+from jarvis.ledger_io import append as _append, read_jsonl, head as _head, exists as _exists
 from jarvis.config import state_path
 
 # (파일명, id 필드) — 본 레이어 소유 원장 (ragt_ 접두사)
@@ -45,39 +45,6 @@ AGENT_DEFAULT_SOURCE = {
 }
 
 
-def _append(filename: str, record: dict) -> None:
-    p = state_path(filename)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "a") as f:
-        f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
-
-
-def read_jsonl(filename: str) -> list[dict]:
-    p = state_path(filename)
-    if not os.path.exists(p):
-        return []
-    out: list[dict] = []
-    with open(p) as f:
-        for ln in f:
-            ln = ln.strip()
-            if not ln:
-                continue
-            try:
-                out.append(json.loads(ln))
-            except (ValueError, json.JSONDecodeError):
-                continue
-    return out
-
-
-def _head(filename: str) -> dict | None:
-    recs = read_jsonl(filename)
-    return recs[-1] if recs else None
-
-
-def _exists(filename: str, id_field: str, rid: str) -> bool:
-    return any(r.get(id_field) == rid for r in read_jsonl(filename))
-
-
 def _get(filename: str, id_field: str, rid: str) -> dict | None:
     for r in read_jsonl(filename):
         if r.get(id_field) == rid:
@@ -86,6 +53,8 @@ def _get(filename: str, id_field: str, rid: str) -> dict | None:
 
 
 # ── Research OS READ ONLY ──
+
+
 def source_exists(filename: str) -> bool:
     return os.path.exists(state_path(filename))
 
@@ -101,6 +70,8 @@ def read_role(role: str) -> list[dict]:
 
 
 # ── Agents (Registry) ──
+
+
 def append_agent(rec: dict) -> None:
     _append(AGENTS[0], rec)
 
@@ -122,6 +93,8 @@ def get_agent(agent_id: str) -> dict | None:
 
 
 # ── Profiles ──
+
+
 def append_profile(rec: dict) -> None:
     _append(PROFILES[0], rec)
 
@@ -143,6 +116,8 @@ def get_profile(profile_id: str) -> dict | None:
 
 
 # ── Tasks (lifecycle events) ──
+
+
 def append_task(rec: dict) -> None:
     _append(TASKS[0], rec)
 
@@ -164,6 +139,8 @@ def task_events(task_id: str) -> list[dict]:
 
 
 # ── Messages ──
+
+
 def append_message(rec: dict) -> None:
     _append(MESSAGES[0], rec)
 
@@ -185,6 +162,8 @@ def get_message(message_id: str) -> dict | None:
 
 
 # ── Reports ──
+
+
 def append_report(rec: dict) -> None:
     _append(REPORTS[0], rec)
 
@@ -206,6 +185,8 @@ def get_report(report_id: str) -> dict | None:
 
 
 # ── Activity (audit trail) ──
+
+
 def append_activity(rec: dict) -> None:
     _append(ACTIVITY[0], rec)
 

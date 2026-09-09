@@ -3,7 +3,7 @@ from nautilus_trader.model.objects import Price, Quantity
 
 from condition_engine.evaluator import ConditionEvaluator
 from condition_engine.indicator_registry import IndicatorRegistry
-from condition_engine.parser import ConditionParser
+from condition_engine.parser import parse
 
 BAR_TYPE_AAPL = "AAPL.NASDAQ-1-MINUTE-LAST-EXTERNAL"
 BAR_TYPE_MSFT = "MSFT.NASDAQ-1-MINUTE-LAST-EXTERNAL"
@@ -23,7 +23,7 @@ def _bar(bar_type_str: str, price: float, ts: int) -> Bar:
 
 
 def test_uninitialized_indicator_evaluates_as_false_not_error():
-    condition_set = ConditionParser.parse(
+    condition_set = parse(
         {
             "combinator": "AND",
             "conditions": [
@@ -41,7 +41,7 @@ def test_uninitialized_indicator_evaluates_as_false_not_error():
 
 
 def test_and_combinator_requires_all_true():
-    condition_set = ConditionParser.parse(
+    condition_set = parse(
         {
             "combinator": "AND",
             "conditions": [
@@ -65,7 +65,7 @@ def test_and_combinator_requires_all_true():
 
 
 def test_or_combinator_requires_any_true():
-    condition_set = ConditionParser.parse(
+    condition_set = parse(
         {
             "combinator": "OR",
             "conditions": [
@@ -89,7 +89,7 @@ def test_or_combinator_requires_any_true():
 
 
 def test_indicator_vs_indicator_golden_cross():
-    condition_set = ConditionParser.parse(
+    condition_set = parse(
         {
             "combinator": "AND",
             "conditions": [
@@ -117,7 +117,7 @@ def test_indicator_vs_indicator_golden_cross():
 
 
 def test_multi_instrument_evaluates_using_last_known_value():
-    condition_set = ConditionParser.parse(
+    condition_set = parse(
         {
             "combinator": "AND",
             "conditions": [

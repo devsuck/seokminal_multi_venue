@@ -5,31 +5,18 @@ order_lifecycle_events.jsonl. 각 이벤트: event_hash · previous_hash · time
 """
 from __future__ import annotations
 
-import json
-import os
-
 from jarvis.config import state_path
+from jarvis.ledger_io import append, read_jsonl
 
 _EVENTS = "order_lifecycle_events.jsonl"
 
 
-def _read(name: str) -> list[dict]:
-    p = state_path(name)
-    if not os.path.exists(p):
-        return []
-    with open(p) as f:
-        return [json.loads(ln) for ln in f if ln.strip()]
-
-
 def append_event(event: dict) -> None:
-    p = state_path(_EVENTS)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "a") as f:
-        f.write(json.dumps(event, ensure_ascii=False, default=str) + "\n")
+    append(_EVENTS, event, resolver=state_path)
 
 
 def read_events() -> list[dict]:
-    return _read(_EVENTS)
+    return read_jsonl(_EVENTS, resolver=state_path)
 
 
 def events_for(order_id: str) -> list[dict]:

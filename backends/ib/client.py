@@ -78,48 +78,51 @@ class IBClient:
             if self._ib.isConnected():
                 self._ib.disconnect()
 
-    async def get_daily_bars(
-        self, symbol: str, end_date: str, duration: str, bar_size: str = DEFAULT_BAR_SIZE
+    async def _fetch_bars(
+        self, contract, end_date: str, duration: str, bar_size: str,
+        what_to_show: str, use_rth: bool, err_label: str,
+        suffix: str = "check IB market data permissions",
     ) -> list[BarData]:
         await self._ib.connectAsync(self._host, self._port, self._client_id, timeout=15)
-        contract = Stock(symbol, "SMART", "USD")
         await self._ib.qualifyContractsAsync(contract)
+        return await self._request_historical(
+            contract, end_date, duration, bar_size, what_to_show, use_rth, err_label, suffix
+        )
+
+    async def _request_historical(
+        self, contract, end_date: str, duration: str, bar_size: str,
+        what_to_show: str, use_rth: bool, err_label: str,
+        suffix: str = "check IB market data permissions",
+    ) -> list[BarData]:
         bars = await self._ib.reqHistoricalDataAsync(
             contract,
             endDateTime=end_date,
             durationStr=duration,
             barSizeSetting=bar_size,
-            whatToShow=DAILY_WHAT_TO_SHOW,
-            useRTH=True,
+            whatToShow=what_to_show,
+            useRTH=use_rth,
         )
         if not bars:
-            raise ValueError(
-                f"no historical bars returned for {symbol} "
-                f"(end_date={end_date!r}, duration={duration!r}, bar_size={bar_size!r}) -- "
-                "check IB market data permissions"
-            )
+            raise ValueError(f"no historical bars returned for {err_label} -- {suffix}")
         return bars
+
+    async def get_daily_bars(
+        self, symbol: str, end_date: str, duration: str, bar_size: str = DEFAULT_BAR_SIZE
+    ) -> list[BarData]:
+        contract = Stock(symbol, "SMART", "USD")
+        return await self._fetch_bars(
+            contract, end_date, duration, bar_size, DAILY_WHAT_TO_SHOW, True,
+            f"{symbol} (end_date={end_date!r}, duration={duration!r}, bar_size={bar_size!r})",
+        )
 
     async def get_daily_bars_forex(
         self, pair: str, end_date: str, duration: str, bar_size: str = DEFAULT_BAR_SIZE
     ) -> list[BarData]:
-        await self._ib.connectAsync(self._host, self._port, self._client_id, timeout=15)
         contract = Forex(pair)
-        await self._ib.qualifyContractsAsync(contract)
-        bars = await self._ib.reqHistoricalDataAsync(
-            contract,
-            endDateTime=end_date,
-            durationStr=duration,
-            barSizeSetting=bar_size,
-            whatToShow="MIDPOINT",
-            useRTH=False,
+        return await self._fetch_bars(
+            contract, end_date, duration, bar_size, "MIDPOINT", False,
+            f"{pair!r} forex pair",
         )
-        if not bars:
-            raise ValueError(
-                f"no historical bars returned for {pair!r} forex pair -- "
-                "check IB market data permissions"
-            )
-        return bars
 
     async def get_daily_bars_future(
         self, symbol: str, exchange: str, expiry: str, end_date: str, duration: str,
@@ -139,21 +142,10 @@ class IBClient:
                 (d.contract for d in candidates if d.contract.lastTradeDateOrContractMonth >= today),
                 candidates[-1].contract,
             )
-        bars = await self._ib.reqHistoricalDataAsync(
-            contract,
-            endDateTime=end_date,
-            durationStr=duration,
-            barSizeSetting=bar_size,
-            whatToShow=DAILY_WHAT_TO_SHOW,
-            useRTH=True,
+        return await self._request_historical(
+            contract, end_date, duration, bar_size, DAILY_WHAT_TO_SHOW, True,
+            f"{symbol!r} future (exchange={exchange!r}, expiry={expiry!r})",
         )
-        if not bars:
-            raise ValueError(
-                f"no historical bars returned for {symbol!r} future "
-                f"(exchange={exchange!r}, expiry={expiry!r}) -- "
-                "check IB market data permissions"
-            )
-        return bars
 
     async def get_daily_bars_option(
         self,
@@ -165,7 +157,6 @@ class IBClient:
         duration: str,
         bar_size: str = DEFAULT_BAR_SIZE,
     ) -> list[BarData]:
-        await self._ib.connectAsync(self._host, self._port, self._client_id, timeout=15)
         contract = Option(
             symbol=symbol,
             lastTradeDateOrContractMonth=expiry,
@@ -174,22 +165,10 @@ class IBClient:
             exchange="SMART",
             currency="USD",
         )
-        await self._ib.qualifyContractsAsync(contract)
-        bars = await self._ib.reqHistoricalDataAsync(
-            contract,
-            endDateTime=end_date,
-            durationStr=duration,
-            barSizeSetting=bar_size,
-            whatToShow=DAILY_WHAT_TO_SHOW,
-            useRTH=True,
+        return await self._fetch_bars(
+            contract, end_date, duration, bar_size, DAILY_WHAT_TO_SHOW, True,
+            f"{symbol!r} {right} option (expiry={expiry!r}, strike={strike})",
         )
-        if not bars:
-            raise ValueError(
-                f"no historical bars returned for {symbol!r} {right} option "
-                f"(expiry={expiry!r}, strike={strike}) -- "
-                "check IB market data permissions"
-            )
-        return bars
 
     async def get_option_chain(
         self,
@@ -280,20 +259,9 @@ class IBClient:
     async def get_daily_bars_crypto(
         self, symbol: str, end_date: str, duration: str, bar_size: str = DEFAULT_BAR_SIZE
     ) -> list[BarData]:
-        await self._ib.connectAsync(self._host, self._port, self._client_id, timeout=15)
         contract = Crypto(symbol=symbol, exchange="PAXOS", currency="USD")
-        await self._ib.qualifyContractsAsync(contract)
-        bars = await self._ib.reqHistoricalDataAsync(
-            contract,
-            endDateTime=end_date,
-            durationStr=duration,
-            barSizeSetting=bar_size,
-            whatToShow=DAILY_WHAT_TO_SHOW,
-            useRTH=False,
+        return await self._fetch_bars(
+            contract, end_date, duration, bar_size, DAILY_WHAT_TO_SHOW, False,
+            f"{symbol!r} crypto",
+            suffix="check IB market data permissions (BTC/ETH/LTC/BCH/XRP/SOL supported via PAXOS)",
         )
-        if not bars:
-            raise ValueError(
-                f"no historical bars returned for {symbol!r} crypto -- "
-                "check IB market data permissions (BTC/ETH/LTC/BCH/XRP/SOL supported via PAXOS)"
-            )
-        return bars

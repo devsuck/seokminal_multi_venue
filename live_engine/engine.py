@@ -89,6 +89,10 @@ class _BotRunState:
     closed_trades: list[dict] = field(default_factory=list)  # last 200 closed trades
     signal_log: list[dict] = field(default_factory=list)     # last 100 signal changes
 
+    def record_signal(self, ts_ns: int, signal: str, price: float) -> None:
+        self.signal_log.append({"ts_ns": ts_ns, "signal": signal, "price": price})
+        self.signal_log = self.signal_log[-100:]
+
 
 # ── Engine ────────────────────────────────────────────────────────────────────
 
@@ -267,23 +271,13 @@ class LiveBotEngine:
 
                     # Record signal change (not every tick — only on change)
                     if signal != state.last_signal:
-                        state.signal_log.append({
-                            "ts_ns": tick.ts_ns,
-                            "signal": signal,
-                            "price": tick.price,
-                        })
-                        state.signal_log = state.signal_log[-100:]
+                        state.record_signal(tick.ts_ns, signal, tick.price)
 
                     state.last_signal = signal
                 else:
                     signal = "WARMING_UP"
                     if signal != state.last_signal:
-                        state.signal_log.append({
-                            "ts_ns": tick.ts_ns,
-                            "signal": signal,
-                            "price": tick.price,
-                        })
-                        state.signal_log = state.signal_log[-100:]
+                        state.record_signal(tick.ts_ns, signal, tick.price)
                     state.last_signal = signal
 
                 # Push to WebSocket subscribers

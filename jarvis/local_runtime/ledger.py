@@ -5,48 +5,13 @@
 """
 from __future__ import annotations
 
-import json
-import os
 
-from jarvis.config import state_path
+from jarvis.ledger_io import append as _append, read_jsonl, head as _head, exists as _exists
 
 EVENTS = ("lrt_events.jsonl", "event_id")     # 런타임 생애 이벤트
 LOGS = ("lrt_logs.jsonl", "log_id")          # 런타임 로그
 
 ALL_LEDGERS = (EVENTS, LOGS)
-
-
-def _append(filename, record) -> None:
-    p = state_path(filename)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "a") as f:
-        f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
-
-
-def read_jsonl(filename) -> list[dict]:
-    p = state_path(filename)
-    if not os.path.exists(p):
-        return []
-    out: list[dict] = []
-    with open(p) as f:
-        for ln in f:
-            ln = ln.strip()
-            if not ln:
-                continue
-            try:
-                out.append(json.loads(ln))
-            except (ValueError, json.JSONDecodeError):
-                continue
-    return out
-
-
-def _head(filename):
-    recs = read_jsonl(filename)
-    return recs[-1] if recs else None
-
-
-def _exists(filename, id_field, rid) -> bool:
-    return any(r.get(id_field) == rid for r in read_jsonl(filename))
 
 
 def _readers(spec):

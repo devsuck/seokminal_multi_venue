@@ -5,10 +5,7 @@
 """
 from __future__ import annotations
 
-import json
-import os
-
-from jarvis.config import state_path
+from jarvis.ledger_io import append as _append, read_jsonl, head as _head, exists as _exists
 
 # (파일명, id 필드) — 본 레이어 소유 원장 (rm_ 접두사)
 MEMORIES = ("rm_memories.jsonl", "event_id")            # 이벤트 소싱
@@ -34,46 +31,17 @@ SOURCE_LEDGERS = {
 }
 
 
-def _append(filename: str, record: dict) -> None:
-    p = state_path(filename)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "a") as f:
-        f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
-
-
-def read_jsonl(filename: str) -> list[dict]:
-    p = state_path(filename)
-    if not os.path.exists(p):
-        return []
-    out: list[dict] = []
-    with open(p) as f:
-        for ln in f:
-            ln = ln.strip()
-            if not ln:
-                continue
-            try:
-                out.append(json.loads(ln))
-            except (ValueError, json.JSONDecodeError):
-                continue
-    return out
-
-
-def _head(filename: str) -> dict | None:
-    recs = read_jsonl(filename)
-    return recs[-1] if recs else None
-
-
-def _exists(filename: str, id_field: str, rid: str) -> bool:
-    return any(r.get(id_field) == rid for r in read_jsonl(filename))
-
-
 # ── 상위 레이어 READ ONLY 소스 ──
+
+
 def read_source(filename: str) -> list[dict]:
     """상위 레이어 원장을 읽기 전용으로 로드. 절대 쓰지 않는다."""
     return read_jsonl(filename)
 
 
 # ── Memories (event-sourced) ──
+
+
 def append_memory_event(rec: dict) -> None:
     _append(MEMORIES[0], rec)
 
@@ -108,6 +76,8 @@ def memory_exists(memory_id: str) -> bool:
 
 
 # ── Lessons ──
+
+
 def append_lesson(rec: dict) -> None:
     _append(LESSONS[0], rec)
 
@@ -132,6 +102,8 @@ def get_lesson(lesson_id: str) -> dict | None:
 
 
 # ── Patterns ──
+
+
 def append_pattern(rec: dict) -> None:
     _append(PATTERNS[0], rec)
 
@@ -149,6 +121,8 @@ def pattern_exists(pattern_id: str) -> bool:
 
 
 # ── Connections ──
+
+
 def append_connection(rec: dict) -> None:
     _append(CONNECTIONS[0], rec)
 
@@ -166,6 +140,8 @@ def connection_exists(connection_id: str) -> bool:
 
 
 # ── Retrievals ──
+
+
 def append_retrieval(rec: dict) -> None:
     _append(RETRIEVALS[0], rec)
 
@@ -183,6 +159,8 @@ def retrieval_exists(retrieval_id: str) -> bool:
 
 
 # ── Clusters ──
+
+
 def append_cluster(rec: dict) -> None:
     _append(CLUSTERS[0], rec)
 
@@ -200,6 +178,8 @@ def cluster_exists(cluster_id: str) -> bool:
 
 
 # ── Reports ──
+
+
 def append_report(rec: dict) -> None:
     _append(REPORTS[0], rec)
 
@@ -217,6 +197,8 @@ def report_exists(report_id: str) -> bool:
 
 
 # ── Artifacts ──
+
+
 def append_artifact(rec: dict) -> None:
     _append(ARTIFACTS[0], rec)
 

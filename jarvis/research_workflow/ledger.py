@@ -5,10 +5,8 @@
 """
 from __future__ import annotations
 
-import json
-import os
 
-from jarvis.config import state_path
+from jarvis.ledger_io import append as _append, read_jsonl, head as _head
 
 RUNS = ("rwf_runs.jsonl", "event_id")          # 워크플로 단계 이벤트(event-sourced)
 SESSIONS = ("rwf_sessions.jsonl", "event_id")  # 연구 세션 이벤트(event-sourced)
@@ -16,37 +14,9 @@ LOOPS = ("rwf_loops.jsonl", "event_id")        # 자율 연구 루프 이터레�
 
 ALL_LEDGERS = (RUNS, SESSIONS, LOOPS)
 
-
-def _append(filename, record) -> None:
-    p = state_path(filename)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "a") as f:
-        f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
-
-
-def read_jsonl(filename) -> list[dict]:
-    p = state_path(filename)
-    if not os.path.exists(p):
-        return []
-    out: list[dict] = []
-    with open(p) as f:
-        for ln in f:
-            ln = ln.strip()
-            if not ln:
-                continue
-            try:
-                out.append(json.loads(ln))
-            except (ValueError, json.JSONDecodeError):
-                continue
-    return out
-
-
-def _head(filename):
-    recs = read_jsonl(filename)
-    return recs[-1] if recs else None
-
-
 # ── runs ──
+
+
 def append_run(rec) -> None:
     _append(RUNS[0], rec)
 
@@ -64,6 +34,8 @@ def run_events(run_id) -> list[dict]:
 
 
 # ── sessions ──
+
+
 def append_session(rec) -> None:
     _append(SESSIONS[0], rec)
 
@@ -81,6 +53,8 @@ def session_events(session_id) -> list[dict]:
 
 
 # ── loops (P72 자율 연구 루프) ──
+
+
 def append_loop(rec) -> None:
     _append(LOOPS[0], rec)
 

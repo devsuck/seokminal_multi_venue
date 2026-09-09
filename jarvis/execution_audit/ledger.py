@@ -5,27 +5,18 @@ previous_hash·timestamp. 증명 기록만 — 주문/집행/브로커/상태변
 """
 from __future__ import annotations
 
-import json
-import os
-
 from jarvis.config import state_path
+from jarvis.ledger_io import append, read_jsonl
 
 _CERTS = "execution_audit_certificates.jsonl"
 
 
 def append_certificate(cert: dict) -> None:
-    p = state_path(_CERTS)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "a") as f:
-        f.write(json.dumps(cert, ensure_ascii=False, default=str) + "\n")
+    append(_CERTS, cert, resolver=state_path)
 
 
 def read_certificates() -> list[dict]:
-    p = state_path(_CERTS)
-    if not os.path.exists(p):
-        return []
-    with open(p) as f:
-        return [json.loads(ln) for ln in f if ln.strip()]
+    return read_jsonl(_CERTS, resolver=state_path)
 
 
 def certificate_exists(certificate_id: str) -> bool:

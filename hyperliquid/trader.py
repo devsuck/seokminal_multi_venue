@@ -126,6 +126,16 @@ def _wallet(paper: bool = False):
     return Account.from_key(_private_key(paper))
 
 
+def _exchange_for(coin: str, paper: bool):
+    """Exchange client + market name, keyed off the same dex-prefix rule
+    (builder-DEX 'xyz:TSLA' vs plain crypto 'BTC')."""
+    Exchange, _ = _sdk_imports()
+    wallet = _wallet(paper)
+    name = coin if ":" in coin else coin.upper()
+    exchange = Exchange(wallet, _api_url(paper), perp_dexs=_perp_dexs(coin))
+    return exchange, name
+
+
 def get_positions(paper: bool = False) -> dict[str, Any]:
     Exchange, Info = _sdk_imports()
     url = _api_url(paper)
@@ -173,12 +183,9 @@ def place_order(
     slippage: float = 0.05,
     paper: bool = False,
 ) -> dict[str, Any]:
-    Exchange, _ = _sdk_imports()
-    wallet = _wallet(paper)
     # Builder-DEX markets (e.g. 'xyz:TSLA') need the DEX meta loaded; plain
     # crypto ('BTC') uses the standard USDC DEX. Preserve the dex-prefixed name.
-    name = coin if ":" in coin else coin.upper()
-    exchange = Exchange(wallet, _api_url(paper), perp_dexs=_perp_dexs(coin))
+    exchange, name = _exchange_for(coin, paper)
 
     if order_type == "market":
         # market_open does not accept reduce_only in this SDK; reducing/closing
@@ -202,10 +209,7 @@ def cancel_order(coin: str, oid: int, paper: bool = False) -> dict[str, Any]:
 
 def close_position(coin: str, size: float | None = None,
                    slippage: float = 0.05, paper: bool = False) -> dict[str, Any]:
-    Exchange, _ = _sdk_imports()
-    wallet = _wallet(paper)
-    name = coin if ":" in coin else coin.upper()
-    exchange = Exchange(wallet, _api_url(paper), perp_dexs=_perp_dexs(coin))
+    exchange, name = _exchange_for(coin, paper)
     return exchange.market_close(name, sz=size, slippage=slippage)
 
 
@@ -213,10 +217,7 @@ def set_leverage(coin: str, leverage: int, is_cross: bool = True,
                  paper: bool = False) -> dict[str, Any]:
     """Set leverage for a coin (cross by default). Day-trading uses this before
     sizing a leveraged position. leverage is an integer multiplier (e.g. 5)."""
-    Exchange, _ = _sdk_imports()
-    wallet = _wallet(paper)
-    name = coin if ":" in coin else coin.upper()
-    exchange = Exchange(wallet, _api_url(paper), perp_dexs=_perp_dexs(coin))
+    exchange, name = _exchange_for(coin, paper)
     return exchange.update_leverage(int(leverage), name, is_cross)
 
 

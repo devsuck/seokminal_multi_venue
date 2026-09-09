@@ -5,10 +5,8 @@ simulation_orders.jsonl · simulation_fills.jsonl · simulation_reports.jsonl.
 """
 from __future__ import annotations
 
-import json
-import os
-
 from jarvis.config import state_path
+from jarvis.ledger_io import append, read_jsonl
 
 _ORDERS = "simulation_orders.jsonl"
 _FILLS = "simulation_fills.jsonl"
@@ -17,43 +15,28 @@ _REPORTS = "simulation_reports.jsonl"
 _EPS = 1e-9
 
 
-def _read(name: str) -> list[dict]:
-    p = state_path(name)
-    if not os.path.exists(p):
-        return []
-    with open(p) as f:
-        return [json.loads(ln) for ln in f if ln.strip()]
-
-
-def _append(name: str, row: dict) -> None:
-    p = state_path(name)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "a") as f:
-        f.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
-
-
 def append_order(order: dict) -> None:
-    _append(_ORDERS, order)
+    append(_ORDERS, order, resolver=state_path)
 
 
 def append_fill(fill: dict) -> None:
-    _append(_FILLS, fill)
+    append(_FILLS, fill, resolver=state_path)
 
 
 def append_report(report: dict) -> None:
-    _append(_REPORTS, report)
+    append(_REPORTS, report, resolver=state_path)
 
 
 def read_orders() -> list[dict]:
-    return _read(_ORDERS)
+    return read_jsonl(_ORDERS, resolver=state_path)
 
 
 def read_fills() -> list[dict]:
-    return _read(_FILLS)
+    return read_jsonl(_FILLS, resolver=state_path)
 
 
 def read_reports() -> list[dict]:
-    return _read(_REPORTS)
+    return read_jsonl(_REPORTS, resolver=state_path)
 
 
 def simulation_exists(simulation_id: str) -> bool:

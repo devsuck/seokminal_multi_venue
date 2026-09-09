@@ -1,8 +1,7 @@
 """Pure-Python MACD and RSI backtester. Produces the same dict format as run_backtest."""
 from __future__ import annotations
 
-import math
-import statistics as _st
+from risk_analysis.metrics import compute_risk_metrics
 
 
 # ── EMA helper ────────────────────────────────────────────────────────────────
@@ -232,16 +231,10 @@ def _compute_stats(closes: list[float], ts_events: list[int], trades: list[dict]
     sortino: float | None = None
     volatility: float | None = None
     if len(bar_returns) >= 2:
-        vol_daily = _st.stdev(bar_returns)
-        volatility = vol_daily * math.sqrt(252)
-        mean_r = _st.mean(bar_returns)
-        if vol_daily > 1e-10:
-            sharpe = mean_r / vol_daily * math.sqrt(252)
-        downside = [r for r in bar_returns if r < 0]
-        if len(downside) >= 2:
-            dd_std = _st.stdev(downside)
-            if dd_std > 1e-10:
-                sortino = mean_r / dd_std * math.sqrt(252)
+        _m = compute_risk_metrics(bar_returns)
+        volatility = _m["volatility"]
+        sharpe = _m["sharpe_ratio"]
+        sortino = _m["sortino_ratio"]
 
     # Max drawdown from cumulative PnL series
     max_drawdown: float | None = None

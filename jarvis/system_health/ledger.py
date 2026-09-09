@@ -5,27 +5,18 @@ system_health_reports.jsonl. 각 리포트: report_id·report_hash·previous_has
 """
 from __future__ import annotations
 
-import json
-import os
-
 from jarvis.config import state_path
+from jarvis.ledger_io import append, read_jsonl
 
 _REPORTS = "system_health_reports.jsonl"
 
 
 def append_report(report: dict) -> None:
-    p = state_path(_REPORTS)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "a") as f:
-        f.write(json.dumps(report, ensure_ascii=False, default=str) + "\n")
+    append(_REPORTS, report, resolver=state_path)
 
 
 def read_reports() -> list[dict]:
-    p = state_path(_REPORTS)
-    if not os.path.exists(p):
-        return []
-    with open(p) as f:
-        return [json.loads(ln) for ln in f if ln.strip()]
+    return read_jsonl(_REPORTS, resolver=state_path)
 
 
 def report_exists(report_id: str) -> bool:

@@ -36,16 +36,7 @@ class IBOrderClient:
         await self._ensure_connected()
         contract = Stock(symbol, "SMART", "USD")
         await self._ib.qualifyContractsAsync(contract)
-
-        if order_type == "LIMIT":
-            order = LimitOrder(side, quantity, limit_price)
-        else:
-            order = MarketOrder(side, quantity)
-
-        trade = self._ib.placeOrder(contract, order)
-        if wait_fill:
-            await self._await_fill(trade)
-        return self._to_dict(trade)
+        return await self._place(contract, side, quantity, order_type, limit_price, wait_fill)
 
     async def place_option_order(
         self,
@@ -71,7 +62,12 @@ class IBOrderClient:
             currency="USD",
         )
         await self._ib.qualifyContractsAsync(contract)
+        return await self._place(contract, side, quantity, order_type, limit_price, wait_fill)
 
+    async def _place(
+        self, contract, side: str, quantity: int, order_type: str,
+        limit_price: float | None, wait_fill: bool,
+    ) -> dict:
         if order_type == "LIMIT":
             order = LimitOrder(side, quantity, limit_price)
         else:

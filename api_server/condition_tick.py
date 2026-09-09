@@ -15,7 +15,7 @@ from nautilus_trader.persistence.catalog import ParquetDataCatalog
 from adapters.data_provider import bar_type_for
 from condition_engine.evaluator import ConditionEvaluator
 from condition_engine.indicator_registry import IndicatorRegistry
-from condition_engine.parser import ConditionParser
+from condition_engine.parser import parse
 
 CATALOG_PATH = "./catalog"
 
@@ -83,7 +83,7 @@ def evaluate_agent(agent: dict) -> dict:
     slow_p = int(strategy_params.get("slow_ema_period", 20))
 
     if not spawned:
-        evaluator = ConditionEvaluator(ConditionParser.parse(rule["condition"]), IndicatorRegistry())
+        evaluator = ConditionEvaluator(parse(rule["condition"]), IndicatorRegistry())
         for b in bars:
             evaluator.on_bar(b)
         if not evaluator.evaluate():

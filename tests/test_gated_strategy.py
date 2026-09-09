@@ -3,7 +3,7 @@ from nautilus_trader.model.objects import Price, Quantity
 from nautilus_trader.trading.strategy import Strategy
 
 from backtest_runner.gated_strategy import make_gated_strategy_class
-from condition_engine.parser import ConditionParser
+from condition_engine.parser import parse
 
 BAR_TYPE = "AAPL.NASDAQ-1-DAY-LAST-EXTERNAL"
 
@@ -32,7 +32,7 @@ def _bar(price: float, ts: int) -> Bar:
 
 
 def _ma_above_80_condition():
-    return ConditionParser.parse(
+    return parse(
         {
             "combinator": "AND",
             "conditions": [

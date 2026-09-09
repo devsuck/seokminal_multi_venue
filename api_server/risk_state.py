@@ -23,13 +23,6 @@ def _max_dd_limit() -> float:
     return float(os.environ.get("MAX_DRAWDOWN_PCT", "15"))  # peak 대비 -15%면 차단
 
 
-def is_killed() -> bool:
-    try:
-        return bool(json.loads(_KILL.read_text()).get("engaged"))
-    except Exception:
-        return False
-
-
 def set_kill(engaged: bool, reason: str = "") -> None:
     _DATA.mkdir(parents=True, exist_ok=True)
     _KILL.write_text(json.dumps({
@@ -43,6 +36,10 @@ def _kill_meta() -> dict:
         return json.loads(_KILL.read_text())
     except Exception:
         return {"engaged": False, "reason": "", "ts": None}
+
+
+def is_killed() -> bool:
+    return bool(_kill_meta().get("engaged"))
 
 
 def _current_drawdown_pct() -> float | None:

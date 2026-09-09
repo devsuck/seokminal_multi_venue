@@ -8,6 +8,7 @@ from jarvis.agents import FUSION_AGENT
 from jarvis.audit import record
 from jarvis.config import state_path
 from jarvis.fusion.types import FusionSignal
+from jarvis.ledger_io import read_jsonl
 from jarvis.permissions import require
 
 _LEDGER = "fusion_signals.jsonl"
@@ -29,11 +30,7 @@ def write_signals(fusion_signals: list[FusionSignal], scheme: str) -> int:
 
 
 def read_all() -> list[dict]:
-    path = state_path(_LEDGER)
-    if not os.path.exists(path):
-        return []
-    with open(path) as f:
-        return [json.loads(ln) for ln in f if ln.strip()]
+    return read_jsonl(_LEDGER, resolver=state_path)
 
 
 def read_latest(limit: int = 50) -> list[dict]:

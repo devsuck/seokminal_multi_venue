@@ -1,9 +1,8 @@
 """CVaR (Expected Shortfall) computation."""
 import numpy as np
-from typing import Dict
 
 
-def compute_cvar(returns: list[float], confidence_levels=(0.95, 0.99)) -> Dict:
+def compute_cvar(returns: list[float], confidence_levels=(0.95, 0.99)) -> dict:
     arr = np.array(returns)
     result = {}
     for cl in confidence_levels:

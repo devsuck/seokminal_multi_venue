@@ -3,6 +3,64 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-09-09) — 단일유저 세션 로그인 추가 (클라우드 배포 대비)
+
+배경: "이제 데이터 쌓는거 말고 더 할 거 없냐"는 사용자 질문에 서비스급 여부를 검토하던 중,
+현재 원격(비-loopback) 인증이 `MOBILE_API_KEY` 공유 정적 키 하나뿐(로그인/세션/멀티유저 전무,
+127.0.0.1은 완전 무인증)이라는 갭을 발견 → 사용자가 "곧 클라우드 배포할 건데 유저는 나 하나,
+오버엔지니어링 방지하는 쪽으로" 지시 + 진행 중 확인 없이 끝까지 진행 허가.
+
+### 완료된 작업
+- `api_server/auth.py` 신규: `ADMIN_PASSWORD` env 비밀번호 1개 + HMAC-SHA256 서명 쿠키.
+  유저 테이블/DB/새 의존성 없음(stdlib `hmac`/`secrets`만 사용 — itsdangerous/jwt 미설치 확인 후 결정).
+  `POST /auth/login`(비번 검증→세션 쿠키 발급), `POST /auth/logout`, `GET /auth/me`.
+- `api_server/main.py`의 `_require_key_for_remote` 미들웨어 수정: 원격 요청이 X-Api-Key **또는**
+  유효 세션 쿠키 중 하나면 통과(OR, 대체 아님 — 기존 iOS 앱의 X-Api-Key 인증 그대로 유지).
+  `/auth/*` 경로는 게이트 자체를 우회(안 그러면 원격에서 로그인 자체가 닭-달걀로 불가능).
+  CORS `allow_credentials=True` 추가(쿠키가 cross-origin fetch에 실리려면 필요).
+- `.env.example`에 `ADMIN_PASSWORD`/`SESSION_SECRET`/`COOKIE_SECURE` 문서화.
+- `tests/test_session_auth.py` 신규(9건): 쿠키 서명/검증/만료/변조, 로그인 성공/실패, 미들웨어 게이트
+  통합 테스트. **주의**: 최초 `tests/test_auth.py`로 Write했다가 기존 KIS OAuth 토큰 테스트 파일을
+  덮어쓴 걸 뒤늦게 발견 — `git checkout`으로 원복하고 새 파일명(`test_session_auth.py`)으로 이동.
+  파일 새로 쓸 때 동명 기존 파일 존재 여부 먼저 확인 안 한 게 원인(Write 전 Read 안 함).
+- 프론트(`seokminal-dashboard`): `app/login/page.tsx` 신규, `lib/api.ts` 전역 fetch 패치에
+  `credentials:'include'`(쿠키 전송) + 401 응답 시 `/login` 리다이렉트 추가.
+- 수동 검증: 디스포저블 포트(8099)에 `--host 0.0.0.0`로 백엔드 띄우고 LAN IP로 curl —
+  무인증 401, 오답 401, 정답 로그인+쿠키 200, 쿠키로 재요청 200, 레거시 X-Api-Key 200, 로그아웃
+  후 401 전부 기대대로 확인. `npx tsc --noEmit` 0 errors, `npm test` 33/33, 백엔드 `pytest tests/ -q`
+  1998 passed(기존 1989 + KIS auth 3 + session auth 9 - 3 겹침... 정확히는 1966→1989(포폴빌더)
+  →1998(session auth 9건 추가)).
+
+### 변경된 파일 (커밋)
+- 백엔드: `cdd6ec0`(세션 로그인 구현: `api_server/auth.py` 신규, `api_server/main.py` 미들웨어/CORS,
+  `.env.example`, `tests/test_session_auth.py`), `104edbd`(이전 세션 AI 포폴빌더 progress.md 기록 누락분).
+- 프론트: `7ccbda8`(`app/login/page.tsx` 신규, `lib/api.ts` 세션 쿠키+401 리다이렉트).
+
+### 선택지 기록 (사용자 요청: "어떤 선택지 중 뭘 골랐는지 요약")
+- **세션 방식**: 쿠키(HMAC 서명, httpOnly) 채택 — JWT/itsdangerous 등 새 의존성 대신 stdlib. 이유:
+  둘 다 설치 안 돼 있었고, 단일유저·페이로드 1개(만료시각)뿐이라 라이브러리 이점이 없음.
+- **비밀번호 저장**: 평문 env var(`ADMIN_PASSWORD`) 채택 — bcrypt 해시 대신. 이유: 이미 env가
+  진실 소스라(`MOBILE_API_KEY`도 평문 env) 해싱해도 노출 수준 동일, 해싱 인프라만 추가됨.
+- **기존 X-Api-Key**: 유지(대체 안 함) — 이유: 제거하면 iOS 앱이 즉시 로그인 불가로 깨짐. "OR" 조건으로
+  세션 쿠키를 추가만 함. 웹 전용 취약점(JS 번들 노출)은 세션 쿠키가 그 경로만 회피.
+- **SESSION_SECRET 미설정 시 동작**: 프로세스 기동마다 랜덤 생성(재시작=재로그인) 채택 — 이유: 단일
+  유저라 재로그인 비용 낮음, env 설정 강제 안 해 로컬 개발 마찰 최소화. 영속 원하면 env로 고정 가능.
+- **SameSite 쿠키 정책**: `Lax` 채택(`None`+`Secure` 아님) — 이유: 프론트/백엔드가 같은 site(localhost
+  포트만 다름)라 Lax로 충분. 클라우드에서 서브도메인 분리 배포(api.x.com vs app.x.com) 시엔 `None`+
+  `Secure`로 업그레이드 필요 — 아직 배포 토폴로지 미정이라 지금은 안 함(ponytail).
+- **로그인 페이지 레이아웃**: 별도 route-group/레이아웃 안 만들고 기존 `app/login/page.tsx`가 루트
+  레이아웃(CommandRail 등 콘솔 셸) 그대로 물려받게 둠 — 비로그인 상태에서도 사이드바가 보이는 미관상
+  흠은 있지만, 레이아웃 트리 분리는 이 작업 스코프 밖(오버엔지니어링 방지 지시에 따름).
+
+### 다음 할 일 / 막힌 부분
+- 사용자가 자리 비운 동안 진행 허가받은 작업 완료. 클라우드 배포 시점에 실제로 `ADMIN_PASSWORD`/
+  `SESSION_SECRET`/`COOKIE_SECURE=true` env 설정 필요(로컬은 설정 안 해도 127.0.0.1 무인증이라 무관).
+- 브라우저로 실제 로그인 폼 클릭 테스트는 안 함(로컬은 loopback이라 게이트가 안 걸려 트리거 불가 —
+  curl로 원격 시뮬레이션 검증만 함). 클라우드 배포 후 실브라우저 확인 권장.
+- 서브도메인 분리 배포 결정되면 SameSite=None+Secure로 전환 필요(위 선택지 기록 참고).
+
+---
+
 ## 세션 로그 (2026-09-09) — AI 포트폴리오 빌더 SDD 완료 (스펙→계획→구현 6태스크 전체)
 
 배경: 사용자 요청 "autopilot 에이전트들처럼 AI가 포트폴리오 짜는 기능" → brainstorming(architectural) →

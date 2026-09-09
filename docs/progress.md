@@ -3,6 +3,55 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-09-09) — AI 포트폴리오 빌더 SDD 완료 (스펙→계획→구현 6태스크 전체)
+
+배경: 사용자 요청 "autopilot 에이전트들처럼 AI가 포트폴리오 짜는 기능" → brainstorming(architectural) →
+spec(`docs/superpowers/specs/2026-09-09-ai-portfolio-builder-design.md`) → plan(`docs/superpowers/plans/2026-09-09-ai-portfolio-builder.md`)
+→ subagent-driven-development로 6태스크 전부 구현+리뷰+최종 whole-branch 리뷰(opus)까지 완료.
+
+기능: 주 1회 launchd가 Claude CLI 호출해 등록 전략(paper_active+) 대상 배분 비중 추천 생성.
+**항상 advisory-only**(`is_advisory=True`, `is_decision=False`) — 실행 안 함, 사람이 결정. Claude CLI
+실패/파싱실패 시 항상 `portfolio_construction.py`의 룰 기반 폴백으로 떨어짐, 예외로 안 죽음.
+
+### 완료된 작업
+- Task1: `api_server/claude_cli.py` 분리(`lv5_agent.py`에서 공용 로직 추출)
+- Task2: `api_server/ai_portfolio.py` — `generate_ai_recommendation()`/`latest_recommendation()`/`history()`
+- Task3: `api_server/console_api.py` — `/console/investment-os/ai-portfolio/latest`+`/history` 읽기전용 엔드포인트
+- Task4: `~/Library/LaunchAgents/com.seokminal.ai-portfolio.plist` 생성(`launchctl load` 미실행 — 사용자가 직접)
+- Task5(프론트): `lib/console-api.ts` — `getAiPortfolioLatest`/`getAiPortfolioHistory` + 타입
+- Task6(프론트): `app/(console)/investment-os/ai-portfolio/page.tsx` 신규 페이지 + 진입 링크
+- 최종 whole-branch 리뷰(opus, 백엔드/프론트 각각) → fix round 1회씩 → 재리뷰 승인, 둘 다 클린
+
+### 변경된 파일 (커밋)
+- 백엔드(`seokminal-multi-venue`, main 직접커밋): `8905ea7`(Task1), `f0edbc8`+`ec8effd`(Task2+fix),
+  `8ee2130`(Task3), `7da9d33`(최종리뷰 fix — 음수/NaN 가중치 검증, state_path, history 엔벨로프,
+  MAX_WEIGHT 상수 통합). 테스트 1989 passed.
+- 프론트(`seokminal-dashboard`, main 직접커밋): `4359fe6`(Task5), `dbf0863`(Task6),
+  `87ecc85`(최종리뷰 fix — 에러/빈 상태 구분, disclaimer 배너, 타입 보강). tsc 0 errors, 33/33 passed.
+
+### 주요 판정(rulings)
+- Task2: `_parse_response` non-dict weights로 uncaught AttributeError 크래시 — global constraint(폴백 필수)
+  위반이라 fix 처리(isinstance guard 추가).
+- 최종리뷰 백엔드 HIGH: 음수/NaN/Infinity 가중치가 cap 검증 통과(NaN 비교는 항상 False) → fix
+  (`math.isfinite(v) and v>=0` 가드 추가). 나머지 5건 중 4건 fix, 1건(fallback 시 weight-sum≠1.0,
+  n≤2 candidates)은 원인이 `portfolio_construction.py` 기존 water-filling 로직(이 플랜 범위 밖)이라 park.
+- 최종리뷰 프론트 MEDIUM: 에러 상태가 빈 상태와 구분 안 됨(백엔드 다운이 "아직 없음"으로 보임) → fix.
+  나머지 5건 중 4건 fix, 1건(`PageHeader` 컴포넌트 재사용 안 함)은 구조적 nit이라 park.
+
+### 다음 할 일 / 막힌 부분
+- **사용자 액션 필요**: `launchctl load ~/Library/LaunchAgents/com.seokminal.ai-portfolio.plist` 직접 실행해야
+  주간 잡 실제 등록됨(자동 실행 안 함, 의도적).
+- park된 항목(당장 조치 없음, 후속 후보):
+  - 프론트: `app/(console)/investment-os/page.tsx`에 죽은 CSS 클래스 `c-panel-2`(bare, 7곳) — 실제
+    `.c-panel-2` 룰 없음(`--c-panel-2` 커스텀 프로퍼티만 존재). `research-os/validation/page.tsx`도 동일
+    패턴(9곳). 이번 플랜 범위 밖, 재리뷰어가 확인만 함.
+  - 백엔드: fallback 시 n≤2 candidates일 때 weight-sum≠1.0 (`portfolio_construction.py` 기존 로직,
+    현재 14개 live candidates라 잠재적 문제일 뿐 실제 발현 안 함).
+  - `call_claude`가 `--dangerously-skip-permissions` 플래그 유지(Task1에서 `lv5_agent.py`에서 그대로
+    이관, 이번 플랜 범위 밖) — 이제 주간 무인 실행에도 쓰이게 됨, 정보성 기록만.
+
+---
+
 ## 세션 로그 (2026-09-09) — 텔레그램 스팸 원인: 테스트가 진짜 알림 쏘던 버그
 
 배경: 사용자가 "텔레그램 자꾸 메세지 오는거 어떻게 진행되고있냐" 질문 → 조사 결과 실거래/헬스체크

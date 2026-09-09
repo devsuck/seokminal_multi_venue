@@ -107,12 +107,15 @@ app.add_middleware(
     allow_origin_regex=r"http://(192\.168|10|172\.(1[6-9]|2\d|3[01])|100)\.[0-9.]+:3000",
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
+    allow_credentials=True,  # 세션 쿠키가 cross-origin(프론트:3000→백엔드:8000) fetch에 실리려면 필요
 )
 
 # 로컬(127.0.0.1)은 그대로 무인증 — 대시보드 dev 흐름 안 건드림. 0.0.0.0 바인딩으로
-# LAN/Tailscale에서 오는 요청만 X-Api-Key 요구 (주문 라우트까지 열려있어서 실거래 리스크 있음).
-# ponytail: 단일 정적 키. 앱/기기 여러 개로 늘어나면 per-device 키로 승격.
+# LAN/Tailscale/클라우드에서 오는 요청만 인증 요구 (주문 라우트까지 열려있어서 실거래 리스크 있음).
+# 세션 쿠키(웹 로그인) 또는 X-Api-Key(기존 iOS 앱 등 기기용, 하위호환 유지) 둘 중 하나면 통과.
 _MOBILE_API_KEY = os.environ.get("MOBILE_API_KEY", "")
+
+from api_server.auth import SESSION_COOKIE_NAME, verify_session
 
 
 @app.middleware("http")
@@ -122,10 +125,16 @@ async def _require_key_for_remote(request, call_next):
     # 실제 요청(GET/POST)이 브라우저 단에서 CORS 에러로 영원히 안 나감(2026-09-04, 폰 무한로딩).
     if request.method == "OPTIONS":
         return await call_next(request)
+    # /auth/* 는 자체적으로 비번 검증(login) — 여기서 막으면 원격에서 로그인 자체가
+    # 불가능해짐(닭-달걀). logout/me는 무해(쿠키 없으면 그냥 비인증 응답).
+    if request.url.path.startswith("/auth/"):
+        return await call_next(request)
     if request.client and request.client.host not in ("127.0.0.1", "::1"):
-        if not _MOBILE_API_KEY or request.headers.get("x-api-key") != _MOBILE_API_KEY:
+        has_key = _MOBILE_API_KEY and request.headers.get("x-api-key") == _MOBILE_API_KEY
+        has_session = verify_session(request.cookies.get(SESSION_COOKIE_NAME))
+        if not has_key and not has_session:
             from fastapi.responses import JSONResponse
-            return JSONResponse(status_code=401, content={"detail": "missing/invalid X-Api-Key"})
+            return JSONResponse(status_code=401, content={"detail": "missing/invalid X-Api-Key or session"})
     return await call_next(request)
 
 
@@ -5490,6 +5499,9 @@ app.include_router(options_flow_router)
 # ── AI Hedge Fund Operations Console (read-only 거버넌스/집행 파이프라인 표면) ──────
 from api_server.console_api import router as console_router
 app.include_router(console_router)
+
+from api_server.auth import router as auth_router
+app.include_router(auth_router)
 
 
 def _revive_agents() -> None:

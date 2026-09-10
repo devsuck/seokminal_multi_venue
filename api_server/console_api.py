@@ -2326,6 +2326,89 @@ def ai_portfolio_history(limit: int = 20) -> dict:
             "disclaimer": "AI 포트폴리오 추천 이력 · 실배분 아님. 모든 결정은 사람."}
 
 
+# ── 자본 청구 — 배정 장부(bookkeeping)만. 브로커 자금이동/주문 없음 ──
+# 설계: docs/superpowers/specs/2026-09-11-capital-claim-model-design.md
+# human 액션은 기존 세션/X-Api-Key 인증 미들웨어(api_server/main.py)로 이미 게이트된 호출자 —
+# 신규 Principal 인증체계 안 만들고 HUMAN_ADMIN 고정 사용. AI 청구는 LIVE_PROPOSAL_AGENT 고정
+# (jarvis.permissions.policy의 submit_capital_claim=LIVE_PROPOSAL_ONLY 요구와 일치).
+def _capital_claim_error(exc: Exception) -> dict:
+    from jarvis.permissions import PermissionDenied
+    if isinstance(exc, PermissionDenied):
+        return {"error": "permission_denied", "detail": str(exc)}
+    return {"error": "invalid_request", "detail": str(exc)}
+
+
+@router.post("/capital-claims")
+def submit_capital_claim(strategy_id: str, requested_amount: float | None = None,
+                          total_capital_basis: float = 0.0) -> dict:
+    """전략 자본 청구 제출. 엔벨로프 내면 AI 자율승인, 초과면 대기열. **배정 장부만 —
+    브로커 자금이동/주문 없음.**"""
+    from jarvis.agents import LIVE_PROPOSAL_AGENT
+    from jarvis.execution import capital_claims as cc
+
+    def _run():
+        return cc.submit_claim(strategy_id, LIVE_PROPOSAL_AGENT,
+                                requested_amount=requested_amount,
+                                total_capital_basis=total_capital_basis)
+    try:
+        return _run()
+    except Exception as e:  # noqa: BLE001
+        return _capital_claim_error(e)
+
+
+@router.get("/capital-claims/queue")
+def capital_claim_queue() -> dict:
+    """대기열 — 엔벨로프 초과로 사람 승인 대기 중인 청구."""
+    from jarvis.execution import capital_claims as cc
+    rows = _safe(lambda: cc.pending_queue(), []) or []
+    return {"queue": rows, "count": len(rows),
+            "is_advisory": False, "is_decision": True,
+            "note": "대기열 청구는 사람 승인 전까지 자본 0. 배정 장부만 — 실집행 없음."}
+
+
+@router.post("/capital-claims/{claim_id}/decide")
+def decide_capital_claim(claim_id: str, approve: bool, note: str = "") -> dict:
+    """대기열 청구 사람 승인/거부. **사람 전용** — AI 호출 불가(ADMIN_HUMAN_ONLY)."""
+    from jarvis.agents import HUMAN_ADMIN
+    from jarvis.execution import capital_claims as cc
+    try:
+        return cc.approve_queued(claim_id, HUMAN_ADMIN, approve=approve, note=note)
+    except Exception as e:  # noqa: BLE001
+        return _capital_claim_error(e)
+
+
+@router.get("/capital-claims/history")
+def capital_claim_history(strategy_id: str = "", limit: int = 50) -> dict:
+    """청구 이력(전략별 필터 가능)."""
+    from jarvis.execution import capital_claims as cc
+    rows = _safe(lambda: cc.claim_history(strategy_id or None, limit), []) or []
+    return {"records": rows, "count": len(rows)}
+
+
+@router.get("/capital-envelope")
+def get_capital_envelope() -> dict:
+    """현재 자본 청구 엔벨로프(전체 풀 한도 + PAPER 전략별/기본 한도). LIVE 한도는 arm.py
+    capital_limit 재사용이라 여기 없음."""
+    from jarvis.execution import capital_envelope as ce
+    return _safe(lambda: ce.get_envelope(), {}) or {}
+
+
+@router.post("/capital-envelope")
+def set_capital_envelope(pool_limit: float, default_paper_limit: float = 0.0,
+                          per_strategy_paper_limit_json: str = "") -> dict:
+    """엔벨로프 설정. **사람 전용.** per_strategy_paper_limit_json: `{"S1": 500}` 형식 JSON 문자열(선택)."""
+    import json as _json
+    from jarvis.agents import HUMAN_ADMIN
+    from jarvis.execution import capital_envelope as ce
+    try:
+        per_strategy = _json.loads(per_strategy_paper_limit_json) if per_strategy_paper_limit_json else {}
+        return ce.set_envelope(HUMAN_ADMIN, pool_limit=pool_limit,
+                                default_paper_limit=default_paper_limit,
+                                per_strategy_paper_limit=per_strategy)
+    except Exception as e:  # noqa: BLE001
+        return _capital_claim_error(e)
+
+
 # ── Forward Learning — thesis vs 실제 결과 (READ ONLY) ──
 @router.get("/forward-learning")
 def forward_learning() -> dict:

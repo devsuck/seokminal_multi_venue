@@ -57,8 +57,12 @@ ACTION_PERMISSIONS: dict[str, str] = {
     "submit_production_proposal": "LIVE_PROPOSAL_ONLY",
     "execute_micro_live_order": "MICRO_LIVE_EXECUTION",
     "execute_constrained_live_order": "CONSTRAINED_LIVE_EXECUTION",
+    "submit_capital_claim": "LIVE_PROPOSAL_ONLY",
+    "auto_fulfill_capital_claim": "LIVE_PROPOSAL_ONLY",
     # 사람만 —
     "modify_risk_limit": "ADMIN_HUMAN_ONLY",
+    "approve_capital_claim": "ADMIN_HUMAN_ONLY",
+    "modify_capital_envelope": "ADMIN_HUMAN_ONLY",
     "modify_live_config": "ADMIN_HUMAN_ONLY",
     "modify_frozen_config": "ADMIN_HUMAN_ONLY",
     "raise_autonomy_level": "ADMIN_HUMAN_ONLY",

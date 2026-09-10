@@ -3,6 +3,151 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-09-11) — 자본 청구 모델 브레인스토밍 → 스펙 → 구현 완료
+
+배경: docs/progress.md에 남아있던 미착수 항목("라이브/페이퍼 이분법 폐지 → 전략이 필요 금액
+청구 → 배정금액 기준 PnL, AI 개입, 실계좌 자금이동 걸린 설계라 구현 전 사용자 승인 필수")을
+유저가 "자금구조 모델 브레인스토밍 시작해줘"로 명시 지시. brainstorming(architectural) 7라운드
+질의응답으로 설계 확정 → 스펙 작성 → 유저가 "나 잘거니까 작업 마칠 때까지 다 해줘, 선택한 거
+있으면 보고해줘" → 곧바로 "실계좌 자금연결은 나중, 설계+코드 작성은 지금 다 해도 됨"으로
+명확화 → 백엔드+API+프론트 전부 구현, 유저 부재중 자율 진행.
+
+### 설계 핵심 (스펙: `docs/superpowers/specs/2026-09-11-capital-claim-model-design.md`)
+- 18개월 군복무 무인운영 전제 — 사람이 하루 한 번도 체크 못 할 수 있음. "사전 엔벨로프(한도액)
+  설정 → 그 안에서는 AI 자율승인, 초과분은 대기열(부분충족 없음, 사람 올 때까지 자본 0)" 모델.
+  이는 프로젝트의 "AUTO_EXECUTION 영구 비활성" 철학에 대한 유저의 명시적·의도적 예외 승인.
+- **배정 장부(bookkeeping)만** — 브로커 자금이동/주문 실행 없음. 실행 게이트는 기존
+  `arm.py`+`AUTONOMY_LEVEL`+`broker_bridge.py` 그대로, 완전 무변경.
+- 상향식 청구(전략별) + 기존 하향식 AI Portfolio Builder(비중 추천)는 순차 연결 — 포트폴리오
+  구성 먼저, 그 비중을 참고치(ceiling_ref, 연성/정보용, 14일 지나면 stale)로 삼아 전략이 이벤트
+  트리거로(주기 아님) 자본 청구.
+- 중요 발견(설계 단순화): `jarvis/execution/arm.py`의 기존 `arm(capital_limit=...)`가 이미
+  "사람이 사전에 한도를 정하고 그 안에서 시스템이 움직이는" 패턴을 LIVE 자본에 대해 구현하고
+  있었음 — 그대로 재사용, 중복 메커니즘 안 만듦. 새 엔벨로프(`capital_envelope.py`)는 PAPER
+  전략 한도 + 전체 풀 상한만 담당.
+- 엔벨로프 단위: 전략별 한도 + 전체 풀 한도 둘 다(유저 선택). 초과 시: 대기열, 부분충족 없음
+  (유저 선택). 범위: 백엔드+프론트 한 스펙(유저 선택).
+
+### 완료된 작업
+- `docs/superpowers/specs/2026-09-11-capital-claim-model-design.md` — 전체 아키텍처 스펙(커밋 `3a1e3a0`).
+- `jarvis/execution/capital_envelope.py` — 엔벨로프 get/set(사람 전용), PAPER 한도 조회.
+- `jarvis/execution/capital_claims.py` — `submit_claim`(AI, 엔벨로프 내 자율승인/초과 대기열),
+  `approve_queued`(사람), `pending_queue`, `claim_history`, `allocated_capital`. 청구는
+  누적이 아니라 그 시점 절대 배정액 — 새 approved 청구가 이전 배정을 대체(이중계산 방지).
+- `jarvis/permissions/policy.py` — `submit_capital_claim`/`auto_fulfill_capital_claim`
+  (LIVE_PROPOSAL_ONLY), `approve_capital_claim`/`modify_capital_envelope`(ADMIN_HUMAN_ONLY) 추가.
+- `api_server/console_api.py` — 5개 엔드포인트: `POST /capital-claims`, `GET .../queue`,
+  `POST .../{id}/decide`, `GET .../history`, `GET`/`POST /capital-envelope`. 기존 파일의
+  query-param POST 컨벤션(`/session/{action}`, `/investment-os/advance`) 그대로 따름 —
+  Pydantic body 없음. human/AI Principal은 세션/X-Api-Key 미들웨어로 이미 게이트된 단일
+  운영자 호출로 간주해 엔드포인트 내부 고정(HUMAN_ADMIN/LIVE_PROPOSAL_AGENT) — 신규 인증체계
+  안 만듦(스펙 명시 요구사항).
+- 프론트(`seokminal-dashboard`): `lib/console-api.ts` 타입드 클라이언트 6개 함수,
+  `app/(console)/investment-os/capital-claims/page.tsx` 신규(엔벨로프 설정/청구 제출/
+  대기열 승인·거부/이력), `investment-os/page.tsx` 탭 링크 연결.
+- 테스트: `tests/test_capital_claims.py`(15개), `tests/test_console_api_capital_claims.py`(8개).
+  전체 백엔드 `pytest tests/ -q` 2021 passed(회귀 없음). 프론트 `tsc --noEmit` 0 errors,
+  `npm test` 33 passed.
+- 커밋: 백엔드 `3a1e3a0`(스펙) → `bf2859e`(청구/엔벨로프 모듈+테스트) → `87925d4`(API
+  엔드포인트+테스트). 프론트 `9a07311`.
+
+### 자는 동안 처리한 판단 (유저 요청에 따른 보고)
+- **절대값 vs 누적 배정 버그**(자가발견, 구현 전 로직 재검토 중): 초기 설계는 "전략별/풀별
+  누적 승인액 합산"으로 한도 체크했으나, `allocated_capital()`이 최신 청구 1건만 반환하는
+  설계 의도와 모순 → "새 청구가 이전 배정을 대체"로 정정.
+- **타임스탬프 동률 버그**(테스트 실패로 발견): 초 단위 타임스탬프라 같은 초에 청구 2건
+  제출 시 문자열 비교로 "최신" 판정이 실패 → JSONL append 순서(딕셔너리 삽입순서 보존)로
+  판정하도록 수정, 타임스탬프 비교 완전 제거.
+- **console_api.py 모듈 독스트링이 "읽기전용" 명시**하지만 기존에도 `POST /investment-os/advance`,
+  `POST /session/{action}` 같은 자문성 상태전이 POST가 이미 있었음 → 신규 5개 POST도 같은
+  카테고리(배정 장부 기록, 실행 아님)로 판단해 그 전례 따라 추가. 독스트링 자체는 안 건드림
+  (이번 스코프 밖 — 필요하면 별도 후속으로 "읽기전용" 표현을 "실행 없음"으로 정정 고려).
+- **API 레벨 "권한거부" 테스트가 설계상 도달 불가**: 5개 엔드포인트 모두 요청에서 Principal을
+  안 받고 내부 고정 — 권한 체크는 항상 통과. 스펙의 "happy-path + 권한거부 각 1개" 요구를
+  "happy-path + 비즈니스 레벨 거부(미등록 전략/존재하지 않는 claim_id)"로 실용적으로 대체.
+- **첫 두 커밋(`3a1e3a0`, `bf2859e`)의 Co-Authored-By에 모델명("Claude Sonnet 5") 포함** —
+  전역 CLAUDE.md 규칙("Co-Authored-By 라인에 모델명 넣지 말 것") 위반, 뒤늦게 발견. 이후
+  커밋(`87925d4`, 프론트 `9a07311`)부터는 정정함. 과거 두 커밋은 유저 승인 없이 히스토리
+  재작성(amend)하지 않고 그대로 둠.
+
+### 다음 할 일
+- 실계좌 자금이동 wiring(broker_bridge.py 연결) — 명시적으로 범위 밖, 유저 승인 전까지 착수 안 함.
+- 원하면 첫 두 커밋의 Co-Authored-By 라인 정정(amend or rebase) — 유저 지시 있을 때만.
+- 콘솔 페이지 실브라우저 스모크 테스트는 미실시(무인 진행 중이라 서버 기동/클릭 확인 생략) —
+  다음 세션에서 `bash scripts/restart_api.sh` + `npm run dev`로 확인 권장.
+
+---
+
+## 세션 로그 (2026-09-09) — ponytail-review 전체 프로젝트 정리 + 저위험/jarvis ledger 수정
+
+배경: `/ponytail:ponytail-review` 스킬로 "전체 프로젝트 코드 최적화" 요청 → 처음엔 내 auth 커밋
+diff만 스코프로 잡는 실수(사용자가 "전체 프로젝트라고 했는데 벌써 끝남?"으로 지적) →
+양쪽 레포 전체를 8개 존으로 나눠 fork 서브에이전트 병렬 리뷰. 이후 사용자가 "수정하는 게
+낫지 않아?" → 저위험(main.py 헬퍼, backends 중복, 퀀트 stdlib 교체, 프론트 dedup)은 즉시 수정,
+jarvis ledger.py 38개 파일 통합은 별도 취급(고위험, 실거래 감사로그)으로 진행하기로 합의.
+
+### 완료된 작업
+- `api_server/main.py`: Alpaca paper client / KIS creds / IB order client 생성 반복 코드
+  `_alpaca_paper_client()`/`_kis_creds()`/`_get_ib_order_client()` 헬퍼로 추출(3건, ~14곳).
+- `backends/kis/client.py`, `backends/ib/client.py`, `backends/ib/order_client.py`,
+  `hyperliquid/trader.py`, `backends/kis/order_client.py`: 조회/주문 메서드 중복 로직 통합.
+- **jarvis ledger 통합**: `jarvis/ledger_io.py` 신규 — append/read_jsonl/head/exists 4개
+  저수준 JSONL I/O 함수. `jarvis/*/ledger.py` 36개 파일이 이걸 위임하도록 전환.
+  - **중요 스코프 조정**: 최초 review fork는 "38개 파일 → Ledger 클래스 하나로 통합, -2500줄"
+    이라고 추정했으나, 직접 파일들 열어보니 파일 크기가 42~234줄로 편차 크고 큰 파일들
+    (research_memory 등)은 레코드타입 여러 개 + `memory_events_for`/`distinct_memories` 같은
+    진짜 도메인 로직이 섞여있어서 하나의 범용 클래스로 억지로 합치면 위험하다고 판단.
+    → 대신 "저수준 파일 I/O(open/json.dumps/os.makedirs 부분)만" 공용 모듈로 추출하고 공개
+    함수명/시그니처는 전부 그대로 유지하는 안전한 방식으로 스코프 축소. 실제 절감분은
+    약 -875줄(단순 16개 -186줄 + 복잡 20개 -689줄) — 처음 추정치(-2500)보다 작지만
+    호출부(전 코드베이스) 하나도 안 건드리는 무위험 리팩터.
+  - **버그 발견/수정**: 위임 후 pytest에서 테스트가 `monkeypatch.setattr(".../ledger.state_path", ...)`
+    로 파일 I/O를 tmp_path 격리하는데, `ledger_io.py`가 자체 `state_path` 참조를 쓰면 도메인
+    모듈 쪽 patch가 무시되는 문제 발견 → `ledger_io.py`의 4개 함수에 `resolver=state_path`
+    키워드 인자 추가(하위호환), 각 도메인 ledger.py가 자기 모듈의 `state_path`를 명시 전달하도록
+    수정해서 해결.
+- `condition_engine/parser.py`: staticmethod만 있던 `ConditionParser` 클래스 → 모듈 함수로
+  축소, 호출부 9개 파일(api_server/main.py, condition_tick.py, strategy_spawner/spawner_parser.py,
+  테스트 5개) 전부 업데이트.
+- `live_engine/kis_broker.py`(죽은 필드맵/이중할당 삭제), `live_engine/engine.py`(signal_log
+  중복 블록 헬퍼화), `api_server/risk_state.py`(is_killed 재구현 제거), `api_server/oms.py`
+  (status dict 중복 hoist).
+- `options/pricer.py`(stdlib statistics), `regime_filter/detector.py`(collections.Counter),
+  `backtest_runner/runner.py`+`simple_runner.py`(sharpe/sortino/volatility 3중 구현 →
+  기존 `risk_analysis/metrics.compute_risk_metrics()` 호출로 통합), `risk_analysis/cvar.py`
+  (typing.Dict → dict).
+- 프론트(`seokminal-dashboard`): `useAbortableRun` 훅 + `TabBar` 컴포넌트 신규
+  (`components/console/widgets.tsx`) — research-os governance/validation 4곳 중복 제거.
+  `PositionRow`/`PositionList` 공용화(portfolio/page.tsx, 3개 벤더 컴포넌트 통합).
+  `violationHref()` 삭제(hud/page.tsx, 호출부 1곳뿐). `lib/api.ts` 4개 함수
+  (login/createAlertRule/getAlertRules/getWalkForward) `handleResponse<T>()` 위임으로 중복 제거.
+
+### 변경된 파일
+- 백엔드 커밋 `2f0d038`: 59개 파일(jarvis ledger 36개 포함), +469/-1304줄.
+- 프론트 커밋 `c719cda`(seokminal-dashboard): 6개 파일, +134/-182줄.
+- 검증: 백엔드 `pytest tests/ -q` 1998 passed. 프론트 `tsc --noEmit` 0 errors, `npm test` 33 passed.
+
+### 추가 수정 (같은 날, 커밋 `57b549d`)
+- 위 resolver 버그가 `research_strategy_generation/ledger.py` 1개만 고쳐진 채 나머지 19개
+  "복잡" ledger.py(experiment_tracking, local_runtime, local_automation, portfolio_research,
+  research_agent_coordination, research_agents, research_assistant, research_ingestion,
+  research_loop, research_memory, research_memory_intelligence, research_monitoring,
+  research_reliability, research_resource_manager, research_risk_intelligence,
+  research_validation, research_workflow, security_audit, system_integration)에는
+  안 고쳐져 있던 것 발견 → 사용자 지시로 전부 스크립트 일괄 수정(`resolver=state_path`
+  명시 + 필요 시 `from jarvis.config import state_path` import 추가). pytest 1998 passed.
+
+### 다음 할 일 / 참고
+- jarvis ledger 36개 중 미전환 3개 있음(의도적): `fusion/ledger.py`의 `write_signals()`
+  (배치쓰기+권한체크 결합이라 per-record append 위임 시 관측 가능한 변화 우려), `paper/ledger.py`
+  (클래스 기반, 테스트용 경로 오버라이드 기능이 resolver 방식으로 못 커버됨),
+  `reconciliation/ledger.py`/`paper_execution/ledger.py`는 행 구성 로직만 원본 유지하고
+  write만 위임(부분 전환). 필요시 나중에 개별 검토.
+- `jarvis/*/__main__.py`(50개)+`verify.py`(32개) 스캐폴드 반복은 리뷰에서 지적됐지만 이번엔
+  스코프 밖(CLI entry point라 위험도 다름, 손 안 댐).
+- 이번 세션 중 무관한 변경 발견(건드리지 않음): `jarvis/_state/*.jsonl`(라이브 서버가 쓰는 중),
+  `research/data/*`(리서치 데이터 아카이빙 파이프라인이 concurrent하게 .jsonl→.jsonl.gz 압축 중).
+
 ## 세션 로그 (2026-09-09) — 단일유저 세션 로그인 추가 (클라우드 배포 대비)
 
 배경: "이제 데이터 쌓는거 말고 더 할 거 없냐"는 사용자 질문에 서비스급 여부를 검토하던 중,

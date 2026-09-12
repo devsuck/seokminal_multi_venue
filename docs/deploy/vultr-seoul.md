@@ -35,8 +35,14 @@ VM 생성 → 코드 배포 → nginx+HTTPS → systemd로 API/대시보드 상�
 - `app.<도메인>` → 대시보드(3000)
 
 서브도메인 분리 이유: `api_server/auth.py`의 세션쿠키가 `SameSite=Lax`(같은 사이트 전제)로
-돼있어 — 서브도메인 분리하면 `SameSite=None; Secure`로 바꿔야 함(별도 서브프로젝트, 지금은
-DNS만 걸어두고 코드는 3단계 세션인증 작업 때 고침).
+돼있어 — 서브도메인 분리하면 `SameSite=None; Secure`로 바꿔야 함. **(서브프로젝트3 완료:
+`COOKIE_SAMESITE`/`COOKIE_SECURE` env로 오버라이드 가능해짐.)** VM `.env`에 추가:
+```
+COOKIE_SAMESITE=none
+COOKIE_SECURE=true
+CORS_ORIGINS=https://app.<도메인>
+```
+(`CORS_ORIGINS`는 이미 env화돼있던 기존 기능 — 서브3에서 새로 안 만듦, 여기서만 값 채움.)
 
 ## 3단계 — 코드 + 셋업 (VM에서)
 
@@ -100,9 +106,9 @@ journalctl -u seokminal-api -f
 
 ## 다음 (별도 서브프로젝트)
 
-- launchd 9개 → systemd timer/cron 이전
-- 세션인증 SameSite=None+Secure 전환
+- ~~launchd 9개 → systemd timer/cron 이전~~ 서브2 완료(`docs/deploy/vultr-seoul-jobs.md`)
+- ~~세션인증 SameSite=None+Secure 전환~~ 서브3 완료(위 2단계 `.env` 참고)
+- 시크릿 관리(서브4)
 - `data/`·`jarvis/_state/`·`research/data/` 마이그레이션(`docs/deploy/oracle-pilot.md` 5단계
-  런북 그대로, VM 주소만 교체)
-- 백업 전략(원장 파일 디스크장애 대비)
-- 컷오버 + 며칠 드라이런, 맥 종료
+  런북 그대로, VM 주소만 교체) + 백업 전략(서브5)
+- 컷오버 + 며칠 드라이런, 맥 종료(서브6) — VM 실제 생성 후에만 진행 가능

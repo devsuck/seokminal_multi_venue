@@ -23,6 +23,10 @@ _SESSION_MAX_AGE_SEC = 30 * 24 * 3600  # 30일
 _ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 _SESSION_SECRET = os.environ.get("SESSION_SECRET") or secrets.token_hex(32)
 _COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "").lower() in ("1", "true", "yes")
+# 로컬은 기본 lax(같은 사이트). 클라우드에서 api.<도메인>/app.<도메인> 서브도메인
+# 분리하면 cross-site 취급이라 Lax 쿠키가 credentials:include fetch에 안 실림 —
+# COOKIE_SAMESITE=none으로 오버라이드(브라우저 스펙상 Secure 필수라 COOKIE_SECURE=true도 같이).
+_COOKIE_SAMESITE = os.environ.get("COOKIE_SAMESITE", "lax")
 
 
 def _sign(exp: int) -> str:
@@ -59,7 +63,7 @@ def login(body: LoginRequest, response: Response):
         _sign(exp),
         max_age=_SESSION_MAX_AGE_SEC,
         httponly=True,
-        samesite="lax",
+        samesite=_COOKIE_SAMESITE,
         secure=_COOKIE_SECURE,
     )
     return {"ok": True}

@@ -3,6 +3,32 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-09-13) — 클라우드 이전 서브프로젝트5: 백업/재해복구 (커밋 예정)
+
+배경: 유저 "나 잘테니까 그냥 끝까지 다 해줄래?" — 서브3(세션인증/CORS, `854aec3`),
+서브4(시크릿관리, `cf3c10e`) 완료 후 이어서 자율 진행. 6개 서브프로젝트 중 5번째.
+
+- **백업 스코프**: 재생성 불가한 것만 — `jarvis/_state/`(3MB), `catalog/`(1MB),
+  `data/order_audit.jsonl`, `data/agents.db`(에이전트 메모리), `data/graph_history.jsonl`.
+  재수집 가능한 시장데이터 캐시(`data/krx` 등 550MB+, `research/data/` — 이미 90일
+  prune 정책 있음)는 제외. YAGNI: 이 규모(1인 운영, 원장 10MB대)엔 오프사이트(S3 등)
+  3중 백업 과함 — 로컬 rotate + Vultr 대시보드 볼륨스냅샷(사람이 직접) 2단계로 충분.
+- `scripts/backup_state.sh` 생성 — 매일 tar.gz 스냅샷, 7일 보관(`find -mtime` 삭제).
+  맥에서 dry-run 확인(`SEOKMINAL_BACKUP_DIR` 오버라이드로 임시경로 백업 → tar 내용 검증 →
+  삭제), 1.2MB 정상 생성.
+- `scripts/deploy/systemd/seokminal-backup-state.{service,timer}` 생성 — 매일 03:00
+  (prune-research-data 04:00보다 먼저, 관례상), 서브2 패턴 그대로.
+- `docs/deploy/vultr-seoul-backup.md` 신규 — 스코프/제외 근거, 설치, 검증, 복구절차,
+  Vultr 볼륨스냅샷 안내(대행 불가 명시).
+- `.gitignore`에 `/backups/` 추가(로컬 백업 tarball에 원장/PnL 들어있어 커밋 금지).
+- `docs/deploy/vultr-seoul.md` "다음" 목록 갱신 — 서브5 완료 표시, 최초 데이터 마이그레이션
+  (`oracle-pilot.md` 5단계, VM 생성 후에만 가능)만 남김.
+- `pytest tests/ -q` 2028 passed, 회귀 없음.
+
+**남은 것**: 서브6(컷오버+드라이런) — VM이 아직 실제로 생성 안 됨(결제/SSH키 필요,
+대행 불가) + 며칠 단위 실제 경과시간 필요한 드라이런이라 오늘밤 완결 불가능. 컷오버
+런북 정리 정도만 자율로 가능, 실행은 유저 복귀 후 VM 생성부터.
+
 ## 세션 로그 (2026-09-11~12) — Co-Authored-By 커밋 이력 재작성 + 원격 강제 push
 
 배경: 자본 청구 모델 작업 중 첫 두 커밋("docs: add capital claim model design spec",

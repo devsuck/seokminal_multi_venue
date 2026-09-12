@@ -1,0 +1,13 @@
+# 원장/상태 파일 로컬 스냅샷 — scripts/backup_state.sh 실행.
+# <REPO_USER>/<REPO_PATH> 치환 후
+#   sudo cp seokminal-backup-state.service seokminal-backup-state.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now seokminal-backup-state.timer
+[Unit]
+Description=seokminal 원장/상태 파일 백업
+
+[Service]
+Type=oneshot
+User=<REPO_USER>
+WorkingDirectory=<REPO_PATH>
+Environment=SEOKMINAL_REPO=<REPO_PATH>
+ExecStart=/bin/bash <REPO_PATH>/scripts/backup_state.sh

@@ -1,0 +1,10 @@
+# 매일 03:00 — prune-research-data(04:00)보다 먼저 돌게 배치(순서 의존 없지만 관례상).
+[Unit]
+Description=seokminal 백업 스케줄 (매일 03:00)
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

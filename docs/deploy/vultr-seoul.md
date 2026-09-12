@@ -122,6 +122,8 @@ journalctl -u seokminal-api -f
 - ~~launchd 9개 → systemd timer/cron 이전~~ 서브2 완료(`docs/deploy/vultr-seoul-jobs.md`)
 - ~~세션인증 SameSite=None+Secure 전환~~ 서브3 완료(위 2단계 `.env` 참고)
 - ~~시크릿 관리~~ 서브4 완료(위 3단계, `.env.example` 최신화)
-- `data/`·`jarvis/_state/`·`research/data/` 마이그레이션(`docs/deploy/oracle-pilot.md` 5단계
-  런북 그대로, VM 주소만 교체) + 백업 전략(서브5)
+- `data/`·`jarvis/_state/`·`research/data/` 최초 마이그레이션(`docs/deploy/oracle-pilot.md`
+  5단계 런북 그대로, VM 주소만 교체) — 여전히 VM 생성 후 진행
+- ~~지속 백업 전략~~ 서브5 완료(`docs/deploy/vultr-seoul-backup.md`) — 로컬 rotate
+  스냅샷(`scripts/backup_state.sh`, 매일) + Vultr 볼륨 스냅샷(사람이 대시보드에서 별도 설정)
 - 컷오버 + 며칠 드라이런, 맥 종료(서브6) — VM 실제 생성 후에만 진행 가능

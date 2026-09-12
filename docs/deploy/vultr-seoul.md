@@ -52,7 +52,20 @@ cd ~/seokminal-multi-venue
 bash scripts/deploy/setup_server.sh   # ARM 전용처럼 써있지만 실제론 python>=3.11만 체크 — x86도 그대로 동작
 ```
 
-`.env` 재구성 — 맥에서 `.env` 내용 복사(scp 또는 직접 입력). gitignore라 GitHub엔 없음.
+`.env` 재구성(서브프로젝트4 — 시크릿 관리) — gitignore라 GitHub엔 없음, 최신 키
+목록은 `.env.example` 참고. 별도 시크릿 매니저는 이 규모(1인 운영, 단일 VM)엔
+과함(YAGNI) — SSH(이미 암호화 채널) 경유 scp면 충분:
+
+```bash
+# 맥에서
+scp .env root@<VM-공인IP>:~/seokminal-multi-venue/.env
+ssh root@<VM-공인IP> "chmod 600 ~/seokminal-multi-venue/.env"
+```
+
+VM에서 새로 채울 값(맥 값 그대로 재사용해도 되지만 별도 머신이니 새로 발급 권장):
+- `SESSION_SECRET`: `python -c "import secrets; print(secrets.token_hex(32))"`로 VM 전용 새 값
+- `COOKIE_SAMESITE=none`, `COOKIE_SECURE=true`, `CORS_ORIGINS=https://app.<도메인>` (2단계 참고)
+- `SEOKMINAL_RSS_LIMIT_MB=400` (1GB VM 기준, `docs/deploy/vultr-seoul-jobs.md` 참고)
 
 대시보드도 같은 VM에 clone+build:
 ```bash
@@ -108,7 +121,7 @@ journalctl -u seokminal-api -f
 
 - ~~launchd 9개 → systemd timer/cron 이전~~ 서브2 완료(`docs/deploy/vultr-seoul-jobs.md`)
 - ~~세션인증 SameSite=None+Secure 전환~~ 서브3 완료(위 2단계 `.env` 참고)
-- 시크릿 관리(서브4)
+- ~~시크릿 관리~~ 서브4 완료(위 3단계, `.env.example` 최신화)
 - `data/`·`jarvis/_state/`·`research/data/` 마이그레이션(`docs/deploy/oracle-pilot.md` 5단계
   런북 그대로, VM 주소만 교체) + 백업 전략(서브5)
 - 컷오버 + 며칠 드라이런, 맥 종료(서브6) — VM 실제 생성 후에만 진행 가능

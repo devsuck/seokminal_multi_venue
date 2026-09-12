@@ -1,0 +1,19 @@
+# Next.js 대시보드 상시구동(production build). <REPO_USER>/<DASHBOARD_PATH> 치환 후
+#   sudo cp seokminal-dashboard.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now seokminal-dashboard
+[Unit]
+Description=seokminal dashboard (next start)
+After=network.target seokminal-api.service
+
+[Service]
+Type=simple
+User=<REPO_USER>
+WorkingDirectory=<DASHBOARD_PATH>
+ExecStart=/usr/bin/npm run start
+Restart=always
+RestartSec=5
+Environment=PORT=3000
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target

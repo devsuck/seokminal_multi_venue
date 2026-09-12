@@ -1,0 +1,19 @@
+# uvicorn API 상시구동 — launchd com.seokminal.api.plist의 systemd 버전.
+# 설치: docs/deploy/vultr-seoul.md 6단계. <REPO_USER>/<REPO_PATH> 치환 후
+#   sudo cp seokminal-api.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now seokminal-api
+[Unit]
+Description=seokminal API (uvicorn)
+After=network.target
+
+[Service]
+Type=simple
+User=<REPO_USER>
+WorkingDirectory=<REPO_PATH>
+EnvironmentFile=<REPO_PATH>/.env
+ExecStart=<REPO_PATH>/.venv/bin/python -m uvicorn api_server.main:app --host 0.0.0.0 --port 8000 --timeout-graceful-shutdown 10
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -2879,3 +2879,105 @@ timeout은 여전히 유효(read 단계 방어)지만 그것만으론 불충분�
   버전관리에 넣을지는 아직 안 물어봄(관찰만 함).
 - `com.seokminal.autoresearch` launchd job 마지막 종료코드 137(SIGKILL) 미조사 — 주간배치라 당장
   급한 daily 패턴은 아님, YAGNI로 보류.
+
+## 2026-09-12: research_agents(P11.1) Data Analyst 스케줄러 배선 (ARCHIVED→REVIVED)
+
+브레인스토밍(bounded, superpowers:brainstorming)으로 유저 승인 받은 설계 그대로 구현:
+`jarvis/research_agents`(P11.1, READ ONLY 연구보조 에이전트 프레임워크, 5종 중 Data Analyst만)에
+외부 호출자가 0개라 실제로 안 돌던 걸 `research/lab/service.py`의 기존 `_tick()` 24h/6h 스로틀
+패턴에 얹어서 최초로 가동시킴. LLM 없음, 결정론적. 데이터소스는 원래 의도된
+`AGENT_DEFAULT_SOURCE["DATA_ANALYST"]="data"`(`dg_datasets.jsonl`) 대신 실라이브 데이터
+(`StrategyRegistry().all_current()` + `_compute_readiness()`) — 전자는 Research-OS 소스 원장
+9종 전부 디스크에 파일 자체가 없어(P9.x 계열 미착수) 빈 값만 리턴했을 것.
+
+**변경:**
+- `api_server/lab_api.py`: `execution_readiness()` 라우트의 계산부를 `_compute_readiness()`로
+  추출(라우트와 스케줄러 tick이 공유, 로직 중복 없음).
+- `research/lab/service.py`: `_last_data_analyst_ts` 필드 + `_data_analyst_report()` 메서드
+  추가, `_tick()`에 배선. Data Analyst 에이전트 등록→프로파일(READ/ANALYZE/REPORT)→
+  create_task→assign→start→submit_report→complete, 전부 `commit=True`. **주의**: task_id/
+  report_id는 (agent, action, target/scope) 콘텐츠해시라 불변 — target/scope에 오늘 날짜
+  문자열을 넣어야 매일 새 레코드 생성(안 넣으면 이튿날 findings 달라지는 순간
+  `ImmutableReportError`). findings는 리스트여야 함(`submit_report` 내부가 `list(findings)`
+  호출 — dict 넘기면 키만 리스트화되어 값 다 날아감, 구현 중 직접 잡음).
+- `jarvis/research_agents/__init__.py`: `ARCHIVED (Phase1 STEP3-B, 2026-07-31)` 마커를
+  `REVIVED 2026-09-12`로 교체(2026-08-20 `research_strategy_generation`(P29) 부활 때 세운
+  컨벤션 그대로 따름). `jarvis/research_agent_coordination`(P26)은 이번 범위 밖 — 안 건드림.
+- 신규: `tests/test_lab_service_data_analyst_report.py`(4건 — 최초등록+리포트제출, 24h스로틀,
+  예외삼킴, findings 내용 검증).
+
+**검증**: `pytest tests/ -q` 2025 passed, 회귀 없음.
+
+### 다음 할 일
+- Strategy Research/Backtest/Risk/Reviewer 4종 에이전트, `research_agent_coordination`(P26)은
+  이번에 손 안 댐 — 필요해지면 각각 별도 브레인스토밍.
+
+**추가(같은 날 후속)**: 서버 재기동해서 라이브 검증함 — `now` 파라미터 누락으로 전
+레코드 `occurred_at`/`registered_at`/`created_at`이 빈 문자열로 찍히는 버그 발견,
+`now=_now()` 명시적으로 넘기게 고침. 오늘 첫 커밋분(빈 타임스탬프)은 불변 원장이라
+수정 불가로 남음 — 내일부터 새 날짜 레코드는 정상. ledger 파일 직접 까서
+(`ragt_agents.jsonl` 등) 실데이터(`registry {...}, readiness 3건`) 확인함.
+
+## 2026-09-12: 출시 준비(10/19 군입대 전) — 무인운영 강화 착수
+
+유저가 "현재 구조 유지 + 무인운영 강화"로 범위 확정(대안: 에이전틱 자율성 확장 — 선택 안 함).
+실측 갭 확인 후 처리:
+
+- `com.seokminal.ai-portfolio` launchd job(09-09 구현, `launchctl load` 안 해서 미가동 상태였음)
+  — `launchctl load` 완료. 다음 월요일 07:00 첫 실행.
+- capital envelope(09-11 구현된 자본청구 자율승인 시스템, `pool_limit`/`default_paper_limit`
+  전부 0이라 뭘 청구해도 무조건 초과판정→대기열행이었음) — `POST /console/capital-envelope`로
+  풀 3000만원 / 전략당 기본 1000만원 세팅. `first_tranche_krw_max`(실계좌 첫 arm 상한,
+  `arm_criteria.py`)와 스케일 맞춤 — 페이퍼 단계 자율배분 규모가 나중 실계좌 규모랑 비슷해야
+  경험치가 의미있다는 판단.
+- **신규**: `research/lab/service.py`에 `_disk_alert()` 추가(6h 스로틀) — 디스크 여유공간
+  warn/critical이면 텔레그램 push. `fleet_health.classify_disk`+`lab_api._disk_free_total_gb`
+  계산 자체는 이미 있었으나 pull-only(콘솔 안 열면 안 보임)라 무인운영 대비 push로 승격.
+  `_tick()`에 배선, `status()`에 `last_disk_check` 추가. 신규 테스트
+  `tests/test_lab_service_disk_alert.py`(3건 — ok시 무발송, critical시 발송, 6h 스로틀).
+- **검증**: `pytest tests/ -q` 2028 passed, 회귀 없음. 서버엔 아직 미반영(재기동 필요).
+
+### 출시 준비 스코프 정리 (전건 확인은 위 세션에서)
+
+- 남은 것: capital-claims/ai-portfolio 콘솔 페이지 브라우저 스모크테스트 미실시,
+  `com.seokminal.autoresearch` 마지막 종료코드 137(SIGKILL) 미조사, 무인 드라이런(며칠~1주
+  손 안 대고 관찰) 미실시.
+- arm() 호출주체 이슈는 기각 — 3전략 다 페이퍼 관찰기간(6개월) 미달이라 10/19 전 arm 대상
+  자체가 없음, 이번 범위에서 신경 안 써도 됨.
+
+## 2026-09-12: 클라우드 이전(Vultr Seoul) — 서브프로젝트 1 "VPS 프로비저닝+기본배포" 설계+킷
+
+10/19까지 맥을 상시 켜둘 수 없어(군입대) 진짜 클라우드 이전 필요 — 브레인스토밍(architectural,
+`superpowers:brainstorming`)으로 전체를 6개 서브프로젝트로 분해:
+1) VPS 프로비저닝+기본배포(이번 처리분), 2) launchd→systemd/cron 이전, 3) 세션인증/CORS 수정,
+4) 시크릿 관리, 5) 백업/재해복구, 6) 컷오버+드라이런.
+
+**중요 발견**: 예전에 오라클 클라우드 이전을 이미 검토했다가 접은 적 있음(2026-09-08 근방,
+커밋 `e0a9dba` — "호스트=맥 로컬 유지"로 결정, 당시 이유는 "발열 급한 불 아님", 군입대 제약
+없었을 때 판단). 그때 파킹해둔 이관킷(`docs/deploy/oracle-pilot.md`, `scripts/deploy/setup_server.sh`,
+`scripts/deploy/test_kis_connectivity.py`)이 프로바이더 무관하게 80% 재사용 가능 — ARM 전용처럼
+써있지만 실제론 python>=3.11만 체크하는 범용 스크립트.
+
+그 문서의 최대 리스크였던 **KIS 해외IP 차단 게이트**를 확인: `jarvis/execution/live_router.py`의
+`route_all()`이 `armed_backers`(line 111-115) 체크를 KIS 호출(`_build_order`)보다 먼저 해서,
+지금 3전략 다 unarmed면 KIS 네트워크 호출 자체가 0건 — 당장 이관에 게이트 아님. Vultr **Seoul**
+리전 고른 것도 이 게이트를 약화시킴(국내 IP).
+
+**선택**: Vultr Seoul(ICN), $6~12/월. 오라클 무료티어는 제외(예고없는 계정정지/자원회수 사례
+많아 무인 5주+엔 부적합).
+
+**산출물** (전부 신규 파일, 코드 로직 없는 설정/문서 — 회귀 테스트 대상 아님):
+- `docs/deploy/vultr-seoul.md` — oracle-pilot.md 각색 런북. VM생성→도메인/DNS(서브도메인
+  분리: `api.<도메인>`/`app.<도메인>` — `auth.py` 세션쿠키 `SameSite=Lax`가 서브도메인
+  분리 전제라 원래 코드 주석에 예견돼있던 방향, `SameSite=None+Secure` 전환은 서브프로젝트3)
+  →코드배포→KIS게이트확인→nginx+Let's Encrypt→systemd 등록까지.
+- `scripts/deploy/nginx/seokminal.conf` — api/app 서브도메인 2개 서버블록, 리버스프록시.
+- `scripts/deploy/systemd/seokminal-api.service`, `seokminal-dashboard.service` — launchd
+  `com.seokminal.api.plist`/대시보드의 systemd 버전, `Restart=always`.
+
+**미착수**: VM 실제 생성(결제/SSH키라 대행 불가, 유저가 직접), KIS 게이트 실측(스크립트는
+있지만 VM 없어서 아직 못 돌림), 서브프로젝트 2~6.
+
+### 다음 할 일
+- 유저가 Vultr 가입+VM 생성하면 `docs/deploy/vultr-seoul.md` 따라 진행.
+- 서브프로젝트 2(launchd→systemd 이전)부터 순서대로 각각 브레인스토밍.

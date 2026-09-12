@@ -64,6 +64,10 @@ class ResearchService:
         self._last_krx_pull_ts = _persisted.get("last_krx_pull_ts", 0.0)
         self.last_krx_pull: str | None = None
         self.krx_pull_saved_total = 0
+        self._last_data_analyst_ts = _persisted.get("last_data_analyst_ts", 0.0)
+        self.last_data_analyst_report: str | None = None
+        self._last_disk_alert_ts = _persisted.get("last_disk_alert_ts", 0.0)
+        self.last_disk_check: dict | None = None
 
     def _load(self) -> dict:
         p = state_path(_CFG)
@@ -285,6 +289,66 @@ class ResearchService:
         except Exception:  # noqa: BLE001
             pass
 
+    def _data_analyst_report(self) -> None:
+        """24h 스로틀 — Data Analyst 에이전트(P11.1)가 registry+readiness 실라이브 데이터를
+        읽고 보고서 제출. READ ONLY(analyze_source의 빈 Research-OS 소스 대신 실데이터 사용).
+        태스크/리포트 id는 (agent, action, target/scope) 해시라 불변 — 날짜를 target/scope에
+        넣어야 매일 새 레코드가 생긴다(안 넣으면 이튿날 findings 달라져도 ImmutableReportError)."""
+        if time.time() - self._last_data_analyst_ts < 86400:
+            return
+        self._last_data_analyst_ts = self._touch("last_data_analyst_ts")
+        try:
+            from jarvis.registry import StrategyRegistry
+            from jarvis.research_agents import ResearchAgentEngine
+            from jarvis.research_agents.models import AGENT_DATA_ANALYST, CAP_ANALYZE
+            from api_server.lab_api import _compute_readiness
+            import datetime as _dt
+
+            today = _dt.date.today().isoformat()
+            now = _now()
+            agent = "data_analyst_daily"
+            eng = ResearchAgentEngine()
+            eng.register_agent(agent, AGENT_DATA_ANALYST, "일일 registry+readiness 관찰", now, commit=True)
+            eng.create_profile(agent, ["READ", "ANALYZE", "REPORT"], now=now, commit=True)
+
+            by_status: dict[str, int] = {}
+            for row in StrategyRegistry().all_current():
+                by_status[row["status"]] = by_status.get(row["status"], 0) + 1
+            readiness = _compute_readiness()
+            findings = [{"registry_by_status": by_status, "readiness": readiness}]
+
+            target = f"registry+readiness:{today}"
+            t = eng.create_task(agent, CAP_ANALYZE, target, "일일 registry/readiness 관찰", now, commit=True)
+            eng.assign_task(t.task_id, now, commit=True)
+            eng.start_task(t.task_id, now, commit=True)
+            eng.submit_report(agent, t.task_id, f"daily:{today}", findings,
+                               summary=f"registry {by_status}, readiness {len(readiness.get('strategies', []))}건",
+                               now=now, commit=True)
+            eng.complete_task(t.task_id, now, commit=True)
+            self.last_data_analyst_report = now
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _disk_alert(self) -> None:
+        """6h 스로틀 — 디스크 여유공간 warn/critical이면 텔레그램 푸시. classify_disk 계산은
+        이미 있었으나(lab_api 헬스요약) pull-only라 콘솔 안 열어보면 안 보임 — 무인운영 대비 push로 승격."""
+        if time.time() - self._last_disk_alert_ts < 21600:
+            return
+        self._last_disk_alert_ts = self._touch("last_disk_alert_ts")
+        try:
+            from api_server.lab_api import _disk_free_total_gb
+            from api_server.fleet_health import classify_disk
+            from api_server.lv6_notify import send
+
+            free_gb, total_gb = _disk_free_total_gb()
+            verdict = classify_disk(free_gb, total_gb)
+            self.last_disk_check = verdict
+            if verdict["verdict"] != "ok":
+                icon = "🔴" if verdict["verdict"] == "critical" else "🟡"
+                send(f"{icon} <b>[디스크 경고]</b> {verdict['reason']}")
+        except Exception:  # noqa: BLE001
+            pass
+
     def _tick(self) -> None:
         self.ticks += 1
         self._pull_krx_daily()
@@ -293,6 +357,8 @@ class ResearchService:
         self._warm_edge()
         self._execution_check()
         self._warm_tsmom()
+        self._data_analyst_report()
+        self._disk_alert()
         # 데이터 pull 큐 — 세션 babysit 없이 장시간 pull 처리(재개 지원, 한 번에 하나)
         try:
             from research.data.pull_queue import tick as pull_tick
@@ -336,6 +402,8 @@ class ResearchService:
             "last_execution_check": self.last_execution_check,
             "execution_routed_total": self.execution_routed_total,
             "last_execution_result": self.last_execution_result,
+            "last_data_analyst_report": self.last_data_analyst_report,
+            "last_disk_check": self.last_disk_check,
             "watchdog": self._watchdog_summary(),
             "pull_queue": self._pull_queue_summary(),
             "note": "pending 큐 + buyback 24h 갱신 + Auto-Research 24h 배치 + lab 되먹임 + jarvis 감사큐 브릿지 + 엣지 6h 워밍 + 실행체크 6h + 감시견. 실주문 경로 있음(게이트 미달시 무동작). $0.",

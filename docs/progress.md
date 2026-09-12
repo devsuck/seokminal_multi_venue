@@ -2981,3 +2981,27 @@ timeout은 여전히 유효(read 단계 방어)지만 그것만으론 불충분�
 ### 다음 할 일
 - 유저가 Vultr 가입+VM 생성하면 `docs/deploy/vultr-seoul.md` 따라 진행.
 - 서브프로젝트 2(launchd→systemd 이전)부터 순서대로 각각 브레인스토밍.
+
+## 2026-09-13: 클라우드 이전 서브프로젝트2 — launchd 배치잡 systemd timer 이전 (bounded, 커밋 `12c6f95`)
+
+맥 launchd 잡 9개 실사 재확인(api/dashboard는 서브1서 이미 처리) 후 7개 재분류:
+- **timer 이전 4개**: ai-portfolio(월07:00), autoresearch(일05:00),
+  prune-research-data(매일04:00), research-ledger-sync(평일08:00) — 각각
+  `.service`(oneshot, 기존 wrapper 스크립트/모듈 그대로 재사용)+`.timer` 쌍.
+- **상시 service 이전 1개**: api-watchdog(uvicorn 이벤트루프 행 감지, RSS 임계치
+  넘으면 선제재기동) — `ops/api_watchdog.py`의 `RSS_LIMIT_MB` 하드코딩(4000)을
+  `SEOKMINAL_RSS_LIMIT_MB` env로 오버라이드 가능하게 고침(맥은 무변경, VM은
+  `.env`에 400 설정 — 1GB VM 기준 RAM의 40%).
+- **제외 2개**: tailscale-watchdog(맥 GUI 앱 killall+재기동 전용 로직, VM은
+  공인IP+도메인 직결이라 tailscale 자체를 안 씀 — 서브1 설계와 일치),
+  collectors(`ensure_collectors.sh`의 desired-state 배열이 09-03부로 전부
+  비활성 상태라 지금 옮겨도 no-op — 나중에 수집기 다시 켤 일 생기면 추가).
+
+산출물: `docs/deploy/vultr-seoul-jobs.md`(매핑표+설치+검증 절차),
+`scripts/deploy/systemd/seokminal-{ai-portfolio,autoresearch,prune-research-data,
+research-ledger-sync}.{service,timer}`, `seokminal-api-watchdog.service`.
+`pytest tests/ -q` 2028 passed, 회귀 없음.
+
+### 다음 할 일
+- 서브프로젝트 3(세션인증 SameSite/CORS)·4(시크릿관리) 순서 무관 병렬 가능 — 다음 브레인스토밍 대상.
+- VM 실제 생성되면 서브1+서브2 문서 순서대로 설치.

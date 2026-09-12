@@ -1,0 +1,15 @@
+# 오토리서치 배치 — launchd com.seokminal.autoresearch.plist의 systemd 버전.
+# <REPO_USER>/<REPO_PATH> 치환 후
+#   sudo cp seokminal-autoresearch.service seokminal-autoresearch.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now seokminal-autoresearch.timer
+[Unit]
+Description=seokminal 오토리서치 배치 (팩터/이벤트 후보 발굴)
+
+[Service]
+Type=oneshot
+User=<REPO_USER>
+WorkingDirectory=<REPO_PATH>
+Environment=SEOKMINAL_PYTHON=<REPO_PATH>/.venv/bin/python
+Environment=SEOKMINAL_REPO=<REPO_PATH>
+EnvironmentFile=<REPO_PATH>/.env
+ExecStart=/bin/bash <REPO_PATH>/scripts/deploy/run_autoresearch.sh

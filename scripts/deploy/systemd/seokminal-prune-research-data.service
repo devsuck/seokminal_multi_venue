@@ -1,0 +1,13 @@
+# 리서치 데이터 정리(90일 보존) — launchd com.seokminal.prune-research-data.plist의
+# systemd 버전. <REPO_USER>/<REPO_PATH> 치환 후
+#   sudo cp seokminal-prune-research-data.service seokminal-prune-research-data.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now seokminal-prune-research-data.timer
+[Unit]
+Description=seokminal 리서치 데이터 정리 (research/data 90일 보존)
+
+[Service]
+Type=oneshot
+User=<REPO_USER>
+WorkingDirectory=<REPO_PATH>
+EnvironmentFile=<REPO_PATH>/.env
+ExecStart=<REPO_PATH>/.venv/bin/python -m research.prune_old_data

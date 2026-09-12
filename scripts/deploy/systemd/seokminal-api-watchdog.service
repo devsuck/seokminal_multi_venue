@@ -1,0 +1,21 @@
+# uvicorn 헬스 워치독(이벤트루프 행 감지+선제재기동) — launchd
+# com.seokminal.api-watchdog.plist의 systemd 버전. RSS_LIMIT_MB는 VM 메모리에 맞춰
+# .env의 SEOKMINAL_RSS_LIMIT_MB로 낮춰라(1GB VM 기준 400 권장, ops/api_watchdog.py 참고).
+# <REPO_USER>/<REPO_PATH> 치환 후
+#   sudo cp seokminal-api-watchdog.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now seokminal-api-watchdog
+[Unit]
+Description=seokminal API watchdog (uvicorn 행 감지)
+After=network.target seokminal-api.service
+
+[Service]
+Type=simple
+User=<REPO_USER>
+WorkingDirectory=<REPO_PATH>
+EnvironmentFile=<REPO_PATH>/.env
+ExecStart=<REPO_PATH>/.venv/bin/python -m ops.api_watchdog
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

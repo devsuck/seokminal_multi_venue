@@ -1,0 +1,10 @@
+# 매주 일 05:00 — launchd StartCalendarInterval(Weekday=0 Hour=5 Minute=0) 이전.
+[Unit]
+Description=seokminal 오토리서치 배치 스케줄 (매주 일 05:00)
+
+[Timer]
+OnCalendar=Sun *-*-* 05:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

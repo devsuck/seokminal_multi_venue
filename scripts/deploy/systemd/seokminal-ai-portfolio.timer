@@ -1,0 +1,10 @@
+# 매주 월 07:00 — launchd StartCalendarInterval(Weekday=1 Hour=7 Minute=0) 이전.
+[Unit]
+Description=seokminal AI portfolio 추천 스케줄 (매주 월 07:00)
+
+[Timer]
+OnCalendar=Mon *-*-* 07:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

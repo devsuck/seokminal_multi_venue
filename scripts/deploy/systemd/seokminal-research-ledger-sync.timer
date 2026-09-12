@@ -1,0 +1,10 @@
+# 평일(월~금) 08:00 — launchd StartCalendarInterval(Weekday 1~5, Hour=8 Minute=0) 이전.
+[Unit]
+Description=seokminal Research Capture 스케줄 (평일 08:00)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 08:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

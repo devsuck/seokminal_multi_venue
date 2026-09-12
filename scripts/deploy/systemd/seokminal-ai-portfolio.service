@@ -1,0 +1,13 @@
+# AI 포트폴리오 추천 생성 — launchd com.seokminal.ai-portfolio.plist의 systemd 버전.
+# timer가 트리거하는 oneshot. <REPO_USER>/<REPO_PATH> 치환 후
+#   sudo cp seokminal-ai-portfolio.service seokminal-ai-portfolio.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now seokminal-ai-portfolio.timer
+[Unit]
+Description=seokminal AI portfolio 추천 생성
+
+[Service]
+Type=oneshot
+User=<REPO_USER>
+WorkingDirectory=<REPO_PATH>
+EnvironmentFile=<REPO_PATH>/.env
+ExecStart=<REPO_PATH>/.venv/bin/python -c "from api_server.ai_portfolio import generate_ai_recommendation; generate_ai_recommendation()"

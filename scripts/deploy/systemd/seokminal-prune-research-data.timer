@@ -1,0 +1,10 @@
+# 매일 04:00 — launchd StartCalendarInterval(Hour=4 Minute=0) 이전.
+[Unit]
+Description=seokminal 리서치 데이터 정리 스케줄 (매일 04:00)
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

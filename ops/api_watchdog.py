@@ -16,6 +16,7 @@ collector와 메모리 경합) → 이벤트루프가 10초 헬스체크 타임�
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import time
 import urllib.error
@@ -32,7 +33,9 @@ load_dotenv()
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 POLL_INTERVAL_S = 300.0
 PORT = 8000
-RSS_LIMIT_MB = 4000.0  # 이 넘으면 스왑 스래싱으로 행 걸리기 전에 선제 재기동
+# 이 넘으면 스왑 스래싱으로 행 걸리기 전에 선제 재기동. 맥 기본 4000MB(3GB 스왑스래싱 실측
+# 기준) — VM은 RAM 자체가 작아(1GB) .env의 SEOKMINAL_RSS_LIMIT_MB로 낮춰 오버라이드.
+RSS_LIMIT_MB = float(os.environ.get("SEOKMINAL_RSS_LIMIT_MB", 4000.0))
 
 _DOWN = False  # 직전 사이클 상태 — 복구 알림 트리거용
 

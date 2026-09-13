@@ -17,6 +17,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import sys
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -99,12 +100,19 @@ def run_batch() -> dict:
 
     ran: list[dict] = []       # p-value 나온 후보(BH 대상)
     underpowered: list[dict] = []
+    errored: list[dict] = []   # 후보 하나 예외로 배치 전체(다른 정상 후보) 유실 방지
     for c in cands:
         if c.meta.get("underpowered"):
             underpowered.append({"cid": c.cid, "category": c.category, "thesis": c.thesis,
                                  "n": c.meta.get("n", 0), "verdict": "UNDERPOWERED"})
             continue
-        res = c.run()
+        try:
+            res = c.run()
+        except Exception as e:  # noqa: BLE001
+            print(f"[autoresearch] {c.cid} 실행중 예외, 스킵: {e!r}", file=sys.stderr)
+            errored.append({"cid": c.cid, "category": c.category, "thesis": c.thesis,
+                            "n": c.meta.get("n", 0), "verdict": "ERRORED", "error": repr(e)})
+            continue
         if res is None:
             underpowered.append({"cid": c.cid, "category": c.category, "thesis": c.thesis,
                                  "n": c.meta.get("n", 0), "verdict": "UNDERPOWERED"})
@@ -155,9 +163,9 @@ def run_batch() -> dict:
     n_cand = sum(1 for e in leaderboard if e["verdict"] == "CANDIDATE")
     summary = {
         "started": started, "finished": finished,
-        "n_tested": len(ran), "n_underpowered": len(underpowered),
+        "n_tested": len(ran), "n_underpowered": len(underpowered), "n_errored": len(errored),
         "n_candidates": n_cand, "bh_alpha": BATCH_ALPHA, "bh_threshold": bh["threshold"], "bh_n_survivors": bh["n_survivors"],
-        "leaderboard": leaderboard, "underpowered": underpowered,
+        "leaderboard": leaderboard, "underpowered": underpowered, "errored": errored,
         "pending_engines": [{"category": k, "note": v, "status": "engine_pending"} for k, v in _PENDING_ENGINES],
         "honest_note": ("배치 BH-FDR(다중검정 보정)로 '몇 개 시도했는지'를 반영해 우연 후보를 걸러냄. "
                         "CANDIDATE=BH 생존+레드팀 전통제 통과. 발견은 증거 아님 → 페이퍼 OOS 재현 필요."),
@@ -177,7 +185,7 @@ def _persist(summary: dict) -> None:
 
 def load_status() -> dict:
     if not os.path.exists(STATUS):
-        return {"leaderboard": [], "underpowered": [], "n_tested": 0, "n_candidates": 0,
+        return {"leaderboard": [], "underpowered": [], "errored": [], "n_tested": 0, "n_candidates": 0,
                 "pending_engines": [{"category": k, "note": v, "status": "engine_pending"} for k, v in _PENDING_ENGINES],
                 "honest_note": "아직 배치 미실행 — /auto-research에서 실행하거나 run_autoresearch.py."}
     with open(STATUS) as f:

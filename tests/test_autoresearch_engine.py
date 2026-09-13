@@ -71,3 +71,36 @@ def test_run_batch_uses_classify_for_verdicts(monkeypatch, tmp_path):
     entry = summary["leaderboard"][0]
     assert entry["verdict"] == "WATCHLIST"       # wf 음수라 강등
     assert entry["bh_survivor"] is True
+
+
+def test_run_batch_isolates_candidate_exception(monkeypatch, tmp_path):
+    """후보 하나 run()에서 예외 던져도 다른 정상 후보 리더보드까지 유실되면 안 됨
+    (2026-09-13 발견: 기존엔 try/except 없어 후보 1개 예외 = 배치 전체 크래시)."""
+    class _Boom:
+        cid = "ev_boom"; category = "event_family"; thesis = "t"; direction = "bullish"
+        meta = {"fam_id": "boom", "n": 100}
+        def run(self):
+            raise ValueError("데이터 손상")
+
+    class _Ok:
+        cid = "ev_ok"; category = "event_family"; thesis = "t"; direction = "bullish"
+        meta = {"fam_id": "ok", "n": 100}
+        def run(self):
+            return {"n": 100, "net": 5.0, "median": 0.1, "percentile": 99.0, "p": 0.001,
+                    "wf_first": 1.0, "wf_second": 0.5,
+                    "top_tail_share": 0.2, "evidence": {}, "_spec": {"required": []}}
+
+    monkeypatch.setattr(engine, "collect_candidates", lambda: ([_Boom(), _Ok()], {}))
+    monkeypatch.setattr(engine, "benjamini_hochberg",
+                        lambda pvals, alpha: {"survivors": [True], "threshold": 0.05, "n_survivors": 1})
+    monkeypatch.setattr(engine, "review_strategy", lambda spec, ev: {"verdict": "CLEARED", "failed": [], "missing": []})
+    monkeypatch.setattr(engine, "log_experiment", lambda rec: None)
+    monkeypatch.setattr(engine, "STATUS", str(tmp_path / "s.json"))
+    monkeypatch.setattr(engine, "RESULTS", str(tmp_path / "r.jsonl"))
+
+    summary = engine.run_batch()
+    assert summary["n_errored"] == 1
+    assert summary["errored"][0]["cid"] == "ev_boom"
+    assert summary["errored"][0]["verdict"] == "ERRORED"
+    assert len(summary["leaderboard"]) == 1
+    assert summary["leaderboard"][0]["cid"] == "ev_ok"

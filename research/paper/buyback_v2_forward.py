@@ -83,11 +83,13 @@ def generate(write: bool = False) -> dict:
         net = _fwd(b, e["date"])
         if reg is not None and net is not None:
             rows.append((e["date"], reg, net))
-    regs = sorted(r for _, r, _ in rows)
-    bull_cut = regs[2 * len(regs) // 3] if regs else 0.0
 
     insample = [r for r in rows if r[0] < FROZEN_DATE]
     forward = [r for r in rows if r[0] >= FROZEN_DATE]
+    # bull_cut은 in-sample만으로 고정 — forward 누적분까지 섞으면 매 실행마다
+    # 과거 v2 라벨이 흔들려 "동결" 원칙이 깨짐(2026-09-13 발견).
+    insample_regs = sorted(r for _, r, _ in insample)
+    bull_cut = insample_regs[2 * len(insample_regs) // 3] if insample_regs else 0.0
 
     result = {
         "hypothesis_id": "kr_buyback_v2_regime_shadow", "status": "v2_shadow",

@@ -3,6 +3,65 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-09-13~14) — CB/BW v3 shadow forward 자동화 + autoresearch SIGKILL 근본수정(완료)
+
+**CB/BW v3 shadow(`kr_buyback_v3_dilution_shadow`) forward 모니터링 완료**: 2026-08-25
+등록 후 forward 체크가 수동 미실행 상태였음(line 580 stale 노트 — 이걸로 대체).
+`research/paper/buyback_v3_dilution_forward.py::main()`에 `--write` CLI 플래그 추가,
+실행해서 forward 50건 누적 확인(제외 0건 — forward `v3_improves=False`, in-sample은
+방향 일치 소폭개선 유지). 결과를 `buyback_v3_dilution_forward_ledger.jsonl`에 스냅샷
+append. 매주 월요일 08:12 자동 체크하도록 `scripts/deploy/run_buyback_v3_forward.sh`
++ `scripts/deploy/launchd/com.seokminal.buyback-v3-forward.plist` 신규 작성,
+`launchctl load` 설치 확인. 어떤 전략도 자동승격 안 함(v1 동결 그대로, discipline 유지).
+커밋 `e767e0f`.
+
+**autoresearch SIGKILL 근본원인 수정 (완료)**: 2026-09-13 배치가 물리메모리 70.6GB
+찍고 GC 스래싱 끝에 강제종료(pid 69987, `ps` RSS는 1.6GB만 보여줘 오판할 뻔함 —
+`/usr/bin/sample`의 Physical footprint로 재확인). 1차로 `SKEW_LOOKBACK_DAYS=45` 윈도
+클립을 넣었지만(56일→45일, 20%만 감소) 근본원인을 못 건드림 — 원인은
+`cross_venue_skew.load_venue_snapshots()`가 파일 1개(orderbook 레벨5 스냅샷, 압축
+46MB→해제 2.99GB, 65배 팽창)를 통째로 pandas DataFrame에 올리는 구조 자체였음.
+
+**최종 해결 — 스트리밍 집계 재설계**(스펙 `docs/superpowers/specs/2026-09-14-skew-loader-streaming-design.md`,
+계획 `docs/superpowers/plans/2026-09-14-skew-loader-streaming.md`):
+  1. `research/hypotheses/cross_venue_skew.py`(`f0713ec`) — `_imbalance_of`/`_mid_of`
+     스칼라 헬퍼 추출(기존 `build_imbalance`/`build_price_series`와 DRY 공유),
+     `stream_imbalance_and_mid()` 신설 — 파일을 줄 단위로 읽어 imbalance/mid 스칼라만
+     뽑고 bids/asks는 즉시 버림. `load_venue_snapshots()` 자체와
+     `research/run_cross_venue_skew_validate.py`(수동 스크리닝용, 풀 orderbook 필요)는
+     의도적으로 무수정.
+  2. `research/autoresearch/engines_microstructure.py`(`c6fcaa2`) — `_snapshot_cache`를
+     `(venue,coin) -> DataFrame` 대신 `(venue,coin) -> (imbalance Series, mid Series)`로
+     교체, `_daily_mid`/`_skew_divergence_result`가 스트리밍 결과를 직접 소비(basis_reversion·
+     skew_divergence_momentum 두 소스 다 커버).
+  3. `research/autoresearch/engine.py`(`5a535dd`) — 별개로 발견한 `run_batch()` 견고성
+     gap: 후보 1개 예외 던지면 배치 전체(다른 정상 후보까지) 유실되던 구조를 try/except로
+     격리, `errored` 필드 신규 노출.
+  각 커밋마다 회귀테스트(behavior-preservation 비교테스트 포함) + `tracemalloc` 기반
+  스트리밍 vs DataFrame 피크메모리 비교 sanity 테스트 동반, 전체 `pytest tests/ -q`
+  2047 passed 그린.
+
+**실배치 규모 검증 (완료, 2026-09-14)**: 실제 `research/data/cross_venue_skew/`
+데이터(6조합×45일, 335개 .jsonl.gz 파일, 기존 SIGKILL 재현 시나리오와 동일)로
+`em.microstructure_candidates()` 백그라운드 실행, `/usr/bin/sample`로 물리메모리
+주기 추적. **결과: DONE 완주, 피크 물리메모리 966.9M(<1GB)** — 이전 70.6GB 대비
+70배 이상 개선, 목표(수 GB 이내)를 크게 상회 달성. 프로세스 강제종료 없이 정상 완료.
+
+### 변경된 파일 (전부 커밋 완료)
+- `research/hypotheses/cross_venue_skew.py`, `tests/test_cross_venue_skew.py` (`f0713ec`)
+- `research/autoresearch/engines_microstructure.py`, `tests/test_engines_microstructure.py` (`c6fcaa2`)
+- `research/autoresearch/engine.py`, `tests/test_autoresearch_engine.py` (`5a535dd`)
+- 이 파일 (`docs/progress.md`)
+
+### 다음 할 일
+- line 1622의 "CB/BW negative-drift 필터 미착수" 노트도 stale — v3 shadow로 이미 등록·운영중(정리 필요).
+- `api_server/lab_api.py`, `jarvis/research_agents/__init__.py`에 이 세션과 무관한 미커밋
+  변경(Data Analyst 에이전트 revival 관련으로 보임)이 남아있음 — 이번 작업 스코프 밖이라
+  손대지 않음, 다음 세션에서 별도 확인 필요.
+- 막힌 부분/결정사항: 없음. `align_venues`의 1초 그리드 자체가 45일치 타임스탬프에 비례해
+  큰 DataFrame을 만들 가능성은 설계 스펙에서 out-of-scope 후속조사로 플래그해뒀었는데,
+  이번 실측(966.9M)으로 봤을 때 그 경로도 이미 문제없는 규모로 확인됨 — 후속조사 불필요.
+
 ## 세션 로그 (2026-09-13) — 클라우드 이전 서브프로젝트6: 컷오버 런북 작성 (실행 불가, 문서만)
 
 배경: 서브5(`271191d`) 이어서 자율 진행. 서브6(컷오버+드라이런)은 성격상 VM 실제

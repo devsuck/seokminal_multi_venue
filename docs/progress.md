@@ -3057,3 +3057,34 @@ research-ledger-sync}.{service,timer}`, `seokminal-api-watchdog.service`.
 ### 다음 할 일
 - 서브프로젝트 3(세션인증 SameSite/CORS)·4(시크릿관리) 순서 무관 병렬 가능 — 다음 브레인스토밍 대상.
 - VM 실제 생성되면 서브1+서브2 문서 순서대로 설치.
+
+## 2026-09-13: buyback v2 forward monitor 버그 수정 + Claude CLI→API 전환 (커밋 `44d2f2d`, `4d30648`)
+
+**`research/paper/buyback_v2_forward.py` 버그**: `bull_cut`(레짐 상위1/3 컷오프)이
+in-sample+forward 합친 전체에서 매 실행마다 재계산돼서, forward 데이터 쌓일수록
+이미 확정된 in-sample 이벤트의 v2 라벨이 흔들림 — "동결" 원칙 위반. in-sample만으로
+고정하도록 수정, `pytest -k buyback` 23 passed 회귀없음 확인.
+(커밋 `281771f`의 Co-Authored-By에 모델명 "Claude Sonnet 5" 들어간 것도 발견해서
+`44d2f2d`로 amend — 전역 규칙/리포 컨벤션 위반이었음.)
+
+**Claude CLI→API 전환** (`api_server/claude_cli.py`): 헤드리스 VM엔 로그인된 claude
+CLI가 없어서 `ai_portfolio`/lv5 리뷰루프가 조용히 no-op하는 문제(memory
+`project_cloud_migration_vultr` 참고) 해결. `call_claude()`가 `ANTHROPIC_API_KEY`
+있으면 API 직접호출(모델 `claude-sonnet-5`), 없으면 기존 CLI subprocess 폴백 —
+맥은 무변경(구독 유지), VM만 API. `claude_available()` 게이트 신규 추가,
+`ai_portfolio.py`/`lv5_agent.py` 호출부 2곳 gate만 교체. `.env.example`에
+`ANTHROPIC_API_KEY=` 슬롯 추가, `vultr-seoul-cutover.md` go/no-go 게이트에
+확인 항목 추가. 신규 테스트 `tests/test_claude_cli.py`(7건). `pytest tests/ -q`
+2035 passed 회귀 없음.
+
+**컷오버 날짜 결정**: 최종 컷오버(맥 종료)를 9/19 → **9/25~27**로 미루기로 확정
+(원래 9/19면 드라이런 3일뿐이라 런북 최소기준 3~4일 미달, 문제생겨도 여유 0 —
+입대 10/19까지 한달 더 있어서 급할 이유 없음). VM 생성은 아직 미착수(결제/SSH키,
+사람이 직접).
+
+### 다음 할 일
+- VM 실제 생성(사람) → 서브1(`vultr-seoul.md`)부터 순서대로. `.env`에
+  `ANTHROPIC_API_KEY` 채우는 것도 이 시점("마지막에 키 입력할게" — 유저 확인).
+- 서브프로젝트 3·4는 이미 코드/문서 완료 상태(과거 커밋) — VM 생성 후 설치만 하면 됨.
+- `kr_buyback_x_regime_v2shadow`: forward 데이터 계속 누적 중, 상승장 buyback
+  이벤트 나와야 검증 가능 — 현재로선 추가 조치 없음, 자연 누적 대기.

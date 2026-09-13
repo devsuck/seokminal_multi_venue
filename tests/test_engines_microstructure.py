@@ -6,6 +6,14 @@ import pytest
 from research.autoresearch import engines_microstructure as em
 
 
+@pytest.fixture(autouse=True)
+def _clear_snapshot_cache():
+    """_snapshot_cache는 (venue,coin) 키만 쓰므로 tmp_path가 테스트마다 바뀌어도
+    같은 venue/coin 조합이면 이전 테스트의 스냅샷을 그대로 재사용해버림 — 매 테스트 전 초기화."""
+    em._snapshot_cache.clear()
+    yield
+
+
 def _write_orderflow_day(dirpath, symbol, date, rows):
     dirpath.mkdir(parents=True, exist_ok=True)
     path = dirpath / f"{symbol}_{date}.jsonl"
@@ -321,9 +329,10 @@ def test_microstructure_candidates_n_variants_uses_actual_basis_count(monkeypatc
 
 def test_select_basis_pairs_caches_daily_mid_across_pairs(tmp_path, monkeypatch):
     """BASIS_VENUE_PAIRS의 binance/okx/hl는 각각 2개 페어에 재등장 — 캐시 없으면
-    같은 (venue,coin) 스냅샷을 배치 1회당 2번씩 중복 로드(2026-09-03 실서버:
+    같은 (venue,coin) 스냅샷을 배치 1회당 2번씩 중복 스트리밍(2026-09-03 실서버:
     3.1GB cross_venue_skew 원본을 이 경로가 중복 로드해 GC 스톨 유발 실측).
-    캐시 도입 후 distinct (venue,coin) 조합당 load_venue_snapshots 호출이 1번만 되는지 확인."""
+    캐시 도입 후 distinct (venue,coin) 조합당 stream_imbalance_and_mid 호출이
+    1번만 되는지 확인."""
     monkeypatch.setattr(em, "_SKEW_DIR", tmp_path)
     monkeypatch.setattr(cvs, "_DATA_DIR", tmp_path)
     ts0 = 1752105600.0
@@ -332,15 +341,75 @@ def test_select_basis_pairs_caches_daily_mid_across_pairs(tmp_path, monkeypatch)
             {"ts": ts0, "bids": [{"price": 100.0, "size": 1.0}], "asks": [{"price": 102.0, "size": 1.0}]}])
 
     calls = []
-    real = cvs.load_venue_snapshots
+    real = cvs.stream_imbalance_and_mid
 
-    def counting(venue, coin, dates):
+    def counting(venue, coin, dates, depth_n=cvs.IMBALANCE_DEPTH_N):
         calls.append((venue, coin))
-        return real(venue, coin, dates)
-    monkeypatch.setattr(cvs, "load_venue_snapshots", counting)
+        return real(venue, coin, dates, depth_n)
+    monkeypatch.setattr(cvs, "stream_imbalance_and_mid", counting)
 
     em._select_basis_pairs()
 
     # BASIS_VENUE_PAIRS = [(binance,okx),(binance,hl),(okx,hl)] -> 3 distinct venues,
     # 캐시 없으면 6번(각 페어가 venue_a/venue_b 둘 다 로드) 호출됨. ETH는 데이터 없어 스킵.
     assert sorted(calls) == [("binance", "BTC"), ("hl", "BTC"), ("okx", "BTC")]
+
+
+def test_load_venue_series_cached_clips_to_lookback_window(tmp_path, monkeypatch):
+    """collector가 날마다 파일 계속 쌓음(2026-09-13 I/O 폭주 원인) — 캐시가 있어도
+    로드 윈도가 무한하면 데이터 늘수록 I/O 계속 증가. 최근 SKEW_LOOKBACK_DAYS일로
+    클립되는지, _MIN_DAYS=30 통계 게이트 넘는 날짜수가 실제로 남는지 확인."""
+    monkeypatch.setattr(em, "_SKEW_DIR", tmp_path)
+    monkeypatch.setattr(cvs, "_DATA_DIR", tmp_path)
+    all_dates = [f"2025-06-{d:02d}" if d <= 30 else f"2025-07-{d - 30:02d}" for d in range(1, 61)]
+    assert len(all_dates) == 60  # _MIN_DAYS(30) + SKEW_LOOKBACK_DAYS(45) 둘 다 넉넉히 넘는 픽스처
+    for date in all_dates:
+        _write_skew_day(tmp_path, "binance", "BTC", date, [
+            {"ts": 1752105600.0, "bids": [{"price": 100.0, "size": 1.0}], "asks": [{"price": 102.0, "size": 1.0}]}])
+
+    captured = {}
+    real = cvs.stream_imbalance_and_mid
+
+    def spy(venue, coin, dates, depth_n=cvs.IMBALANCE_DEPTH_N):
+        captured["dates"] = dates
+        return real(venue, coin, dates, depth_n)
+    monkeypatch.setattr(cvs, "stream_imbalance_and_mid", spy)
+
+    em._load_venue_series_cached("binance", "BTC")
+
+    assert len(captured["dates"]) == em.SKEW_LOOKBACK_DAYS
+    assert captured["dates"] == all_dates[-em.SKEW_LOOKBACK_DAYS:]
+    assert len(captured["dates"]) >= em._MIN_DAYS  # 클립 후에도 통계 유효성 게이트 통과 가능
+
+
+def test_load_venue_series_cached_peak_memory_far_below_dataframe_snapshot(tmp_path, monkeypatch):
+    """_load_venue_series_cached가 스트리밍(스칼라만 보관)을 쓰므로, 같은 파일을
+    DataFrame으로 통째로 적재하는 경로(load_venue_snapshots+build_imbalance)보다
+    피크 메모리가 확연히 작아야 한다. 절대 바이트 임계값은 플랫폼/파이썬 버전마다
+    흔들리므로 비교로 검증(2026-09-14: okx_BTC 실측 1파일 46MB gz -> 2.99GB 해제,
+    이 배율을 테스트에서 재현할 필요는 없고 '커지지 않는다'만 확인하면 충분)."""
+    import tracemalloc
+
+    monkeypatch.setattr(em, "_SKEW_DIR", tmp_path)
+    monkeypatch.setattr(cvs, "_DATA_DIR", tmp_path)
+    rows = [
+        {"ts": float(i), "bids": [{"price": 100.0 - j, "size": 1.0} for j in range(5)],
+         "asks": [{"price": 101.0 + j, "size": 1.0} for j in range(5)]}
+        for i in range(20_000)
+    ]
+    _write_skew_day(tmp_path, "binance", "BTC", "2025-07-10", rows)
+
+    tracemalloc.start()
+    df = cvs.load_venue_snapshots("binance", "BTC", ["2025-07-10"])
+    cvs.build_imbalance(df)
+    _current, dataframe_peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    del df
+
+    em._snapshot_cache.clear()
+    tracemalloc.start()
+    em._load_venue_series_cached("binance", "BTC")
+    _current, stream_peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+
+    assert stream_peak < dataframe_peak * 0.5

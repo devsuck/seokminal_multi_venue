@@ -12,12 +12,13 @@ paper-tracking 전용, live capital 없음.
 """
 from __future__ import annotations
 
-import datetime as dt
 import json
 import logging
 import random as _random
 import statistics as _st
 from pathlib import Path
+
+import pandas as pd
 
 from research import jsonl_dates
 from research.validation.baselines import empirical_p_value
@@ -26,6 +27,7 @@ _ORDERFLOW_DIR = Path("research/data/hl_orderflow_tick")
 _SKEW_DIR = Path("research/data/cross_venue_skew")
 
 _MIN_DAYS = 30
+SKEW_LOOKBACK_DAYS = 45  # cross_venue_skew 로드 윈도 상한, 데이터 무한증가로 I/O 폭주 방지(_MIN_DAYS=30 + 버퍼)
 _MIN_EVENTS = 10
 _N_PERMS = 500
 _SEED = 42
@@ -172,49 +174,54 @@ def _ofi_candidate(symbol: str, n_variants: int):
         direction="research", run=_run, meta={})
 
 
-def _daily_mid(venue: str, coin: str, _cache: dict | None = None) -> dict:
-    """venue×coin 오더북 스냅샷 -> 날짜별 평균 mid((best_bid+best_ask)/2).
-    UTC 날짜 경계 사용(dt.timezone.utc — Python 3.14 대상, utcfromtimestamp 미사용).
+_snapshot_cache: dict = {}
 
-    _cache는 호출자(_select_basis_pairs)가 한 배치 실행 범위로만 넘기는 dict —
-    BASIS_VENUE_PAIRS에서 같은 (venue,coin)이 여러 페어에 걸쳐 재등장해(각 거래소가
-    2개 페어에 참여) 캐시 없이는 3.1GB짜리 cross_venue_skew 원본 스냅샷을 배치당
-    2배 중복 로드/파싱함(2026-09-03 실서버에서 이 경로가 json.loads에 멈춰 GC 스톨
-    -> /health 타임아웃 유발 실측). 날짜 범위·선정 로직은 그대로라 결과값 불변,
-    순수 중복 I/O 제거."""
+
+def _load_venue_series_cached(venue: str, coin: str) -> tuple[pd.Series, pd.Series] | None:
+    """venue×coin 오더북 스냅샷을 스트리밍 집계(imbalance, mid)로 로드, 프로세스
+    생존 동안 (venue,coin) 단위 캐시.
+
+    basis(_select_basis_pairs)와 skew(_skew_divergence_result)가 SKEW_VENUES/
+    BASIS_VENUE_PAIRS에서 같은 (venue,coin) 조합을 각자 따로 로드하던 것을 공유.
+    cross_venue_skew.stream_imbalance_and_mid()가 bids/asks 원본을 DataFrame에
+    안 올리고 줄마다 스칼라만 뽑아 피크 메모리를 파일 크기(GB)가 아니라 날짜수×
+    스냅샷수에 비례하는 수준으로 낮춘다(2026-09-14: 원본 DataFrame 캐시가 45일
+    윈도로도 배치 1시간 만에 물리메모리 70.6GB, GC 스래싱 — 강제종료 재현 확인).
+    dates도 최근 SKEW_LOOKBACK_DAYS일로 클립 — collector가 매일 데이터 누적해서
+    캐시만으로는 I/O가 무한 증가함(_MIN_DAYS=30 통계 유효성 게이트 위에 15일 버퍼)."""
     key = (venue, coin)
-    if _cache is not None and key in _cache:
-        return _cache[key]
-    from research.hypotheses.cross_venue_skew import load_venue_snapshots
-
-    dates = jsonl_dates.list_dates(_SKEW_DIR, glob_prefix=f"{venue}_{coin}_")
-    if not dates:
-        result = {}
-    else:
-        df = load_venue_snapshots(venue, coin, dates)
-        if df.empty:
-            result = {}
+    if key not in _snapshot_cache:
+        dates = jsonl_dates.list_dates(_SKEW_DIR, glob_prefix=f"{venue}_{coin}_")[-SKEW_LOOKBACK_DAYS:]
+        if not dates:
+            _snapshot_cache[key] = None
         else:
-            mids: dict[str, list] = {}
-            for _, row in df.iterrows():
-                if not row["bids"] or not row["asks"]:
-                    continue
-                best_bid = max(lvl["price"] for lvl in row["bids"])
-                best_ask = min(lvl["price"] for lvl in row["asks"])
-                mid = (best_bid + best_ask) / 2.0
-                date = dt.datetime.fromtimestamp(row["ts"], tz=dt.timezone.utc).strftime("%Y-%m-%d")
-                mids.setdefault(date, []).append(mid)
-            result = {d: _st.mean(vs) for d, vs in mids.items()}
-    if _cache is not None:
-        _cache[key] = result
-    return result
+            from research.hypotheses.cross_venue_skew import stream_imbalance_and_mid
+            imbalance, mid = stream_imbalance_and_mid(venue, coin, dates)
+            _snapshot_cache[key] = None if mid.empty else (imbalance, mid)
+    return _snapshot_cache[key]
 
 
-def _basis_signs_outcomes(coin: str, venue_a: str, venue_b: str, _cache: dict | None = None) -> tuple:
+def _daily_mid(venue: str, coin: str) -> dict:
+    """venue×coin 오더북 스냅샷 -> 날짜별 평균 mid((best_bid+best_ask)/2).
+    UTC 날짜 경계 사용(dt.timezone.utc 대신 pd.to_datetime(unit="s", utc=True) —
+    Python 3.14 대상, utcfromtimestamp 미사용). 출력 스키마·값은 기존과 동일."""
+    series = _load_venue_series_cached(venue, coin)
+    if series is None:
+        return {}
+    _imbalance, mid = series
+    valid = mid.notna()
+    if not valid.any():
+        return {}
+    mid = mid[valid]
+    dates = pd.to_datetime(mid.index.to_numpy(), unit="s", utc=True).strftime("%Y-%m-%d")
+    return pd.Series(mid.to_numpy(), index=dates).groupby(level=0).mean().to_dict()
+
+
+def _basis_signs_outcomes(coin: str, venue_a: str, venue_b: str) -> tuple:
     """basis_t = (mid_a-mid_b)/mid_b -> (부호[t], 수렴폭 basis_t-basis_next[t], 겹치는 날짜수).
     수렴방향 베팅: basis_t>0(A가 비쌈)이면 sign=+1 -> basis가 줄어들수록(outcome>0) 이익."""
-    mid_a = _daily_mid(venue_a, coin, _cache)
-    mid_b = _daily_mid(venue_b, coin, _cache)
+    mid_a = _daily_mid(venue_a, coin)
+    mid_b = _daily_mid(venue_b, coin)
     dates = sorted(d for d in mid_a if d in mid_b)
     signs, outcomes = [], []
     for i in range(len(dates) - 1):
@@ -236,11 +243,10 @@ def _select_basis_pairs() -> list:
     Note: len(signs) <= n_overlap-1 (consecutive pairs) and further reduced by zero-basis skip;
     filtering on n_overlap alone would pass boundary cases that fail at _series_evidence()."""
     scored = []
-    _cache: dict = {}
     for coin in BASIS_COINS:
         for venue_a, venue_b in BASIS_VENUE_PAIRS:
             try:
-                signs, outcomes, n_overlap = _basis_signs_outcomes(coin, venue_a, venue_b, _cache)
+                signs, outcomes, n_overlap = _basis_signs_outcomes(coin, venue_a, venue_b)
             except Exception:
                 logging.warning(
                     "basis pair skipped, snapshot load failed: %s %s-%s",
@@ -332,8 +338,7 @@ def _skew_divergence_result(coin: str) -> dict | None:
     """cross_venue_skew.py 어댑터 — run_cross_venue_skew_validate.run_coin()의 페어링 로직을
     단일 사전등록 horizon(SKEW_HORIZON_S=15)에 국한해 재현 + wf 분할 신규 추가."""
     from research.hypotheses.cross_venue_skew import (
-        align_venues, build_imbalance, build_labels_multi_horizon,
-        build_price_series, build_skew_divergence, build_spike_signal, load_venue_snapshots,
+        align_venues, build_labels_multi_horizon, build_skew_divergence, build_spike_signal,
     )
     from research.validation.metrics import trade_metrics
     from research.validation.cost_model import hl_effective_cost_bps
@@ -346,16 +351,16 @@ def _skew_divergence_result(coin: str) -> dict | None:
     if not dates:
         return None
 
-    raw_by_venue = {v: load_venue_snapshots(v, coin, dates) for v in SKEW_VENUES}
-    raw_by_venue = {v: df for v, df in raw_by_venue.items() if not df.empty}
-    if len(raw_by_venue) < 2:
+    series_by_venue = {v: s for v in SKEW_VENUES if (s := _load_venue_series_cached(v, coin)) is not None}
+    if len(series_by_venue) < 2:
         return None
 
-    imbalance_by_venue = {v: build_imbalance(df) for v, df in raw_by_venue.items()}
+    imbalance_by_venue = {v: imb for v, (imb, _mid) in series_by_venue.items()}
+    mid_by_venue = {v: mid for v, (_imb, mid) in series_by_venue.items()}
     aligned = align_venues(imbalance_by_venue)
     divergence = build_skew_divergence(aligned)
     spikes = build_spike_signal(divergence)
-    price = build_price_series(raw_by_venue)
+    price = align_venues(mid_by_venue).mean(axis=1, skipna=True)
     labels = build_labels_multi_horizon(price, spikes, horizons_s=[SKEW_HORIZON_S])
     labels = labels[labels["horizon_s"] == SKEW_HORIZON_S].sort_values("ts")
     if len(labels) < _MIN_EVENTS:
@@ -409,7 +414,12 @@ def microstructure_candidates() -> list:
     """4개 사전등록 소스 조립 — n_variants(레드팀 multiple_testing 판단용)는
     실제 등록 후보 총수. basis는 데이터가용성 기준 선정을 먼저 끝내고 나서
     그 실제 선정 개수로 n_variants를 계산(이론상 최대치 MAX_BASIS_CANDIDATES를
-    쓰면 실제보다 부풀려질 수 있어 오류)."""
+    쓰면 실제보다 부풀려질 수 있어 오류).
+
+    _snapshot_cache는 basis 선정(즉시 실행)과 skew candidate.run()(지연 실행, 배치
+    후반)이 이 배치 안에서만 (venue,coin) 스냅샷을 공유하도록 매 배치 시작 시 초기화 —
+    무기한 캐시하면 다음 배치의 새 날짜 스냅샷을 못 봄(오더북 데이터는 매일 갱신)."""
+    _snapshot_cache.clear()
     basis_selection = _select_basis_pairs()
     n_variants = len(OFI_SYMBOLS) + len(basis_selection) + len(ABSORPTION_SYMBOLS) + len(SKEW_COINS)
     out = []

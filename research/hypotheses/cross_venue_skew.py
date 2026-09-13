@@ -50,16 +50,61 @@ def load_venue_snapshots(venue: str, coin: str, dates: list[str]) -> pd.DataFram
     return df.sort_values("ts").reset_index(drop=True)
 
 
+def stream_imbalance_and_mid(
+    venue: str, coin: str, dates: list[str], depth_n: int = IMBALANCE_DEPTH_N,
+) -> tuple[pd.Series, pd.Series]:
+    """load_venue_snapshots와 동일 파일 탐색(평문 우선, 없으면 .gz)이지만 bids/asks를
+    DataFrame에 적재하지 않고 줄마다 imbalance/mid 스칼라만 뽑아 즉시 버림 — 피크
+    메모리가 파일 크기(GB)가 아니라 날짜수×스냅샷수에 비례(2026-09-14: 원본
+    DataFrame 캐시가 45일 윈도로도 배치 1시간 만에 물리메모리 70.6GB 찍고 GC
+    스래싱 재현). 반환값은 build_imbalance/행단위 _mid_of 결과와 동일 형태
+    (index=ts인 pd.Series, ts 오름차순) — align_venues 등 하위 함수는 무수정으로
+    그대로 받는다."""
+    ts_list: list[float] = []
+    imb_list: list[float] = []
+    mid_list: list[float] = []
+    for date in dates:
+        plain = _DATA_DIR / f"{venue}_{coin}_{date}.jsonl"
+        gz = _DATA_DIR / f"{venue}_{coin}_{date}.jsonl.gz"
+        if plain.exists():
+            opener = plain.open
+        elif gz.exists():
+            opener = lambda: gzip.open(gz, "rt")
+        else:
+            continue
+        with opener() as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                row = json.loads(line)
+                bids, asks = row["bids"], row["asks"]
+                ts_list.append(row["ts"])
+                imb_list.append(_imbalance_of(bids, asks, depth_n))
+                mid_list.append(_mid_of(bids, asks))
+
+    if not ts_list:
+        empty = pd.Series(dtype=float)
+        return empty, empty
+
+    sorted_df = pd.DataFrame({"ts": ts_list, "imbalance": imb_list, "mid": mid_list}).sort_values("ts")
+    ts_sorted = sorted_df["ts"].to_numpy()
+    imbalance = pd.Series(sorted_df["imbalance"].to_numpy(), index=ts_sorted)
+    mid = pd.Series(sorted_df["mid"].to_numpy(), index=ts_sorted)
+    return imbalance, mid
+
+
+def _imbalance_of(bids: list[dict], asks: list[dict], depth_n: int = IMBALANCE_DEPTH_N) -> float:
+    bid_sum = sum(lvl["size"] for lvl in bids[:depth_n])
+    ask_sum = sum(lvl["size"] for lvl in asks[:depth_n])
+    total = bid_sum + ask_sum
+    return bid_sum / total if total > 0 else 0.5
+
+
 def build_imbalance(df: pd.DataFrame, depth_n: int = IMBALANCE_DEPTH_N) -> pd.Series:
     """시점별 imbalance = sum(bid.size[:depth_n]) / (sum(bid.size[:depth_n]) + sum(ask.size[:depth_n])).
     0.5=중립, 1에 가까울수록 매수우위. 양쪽 합이 0이면 0.5. index=ts."""
-    def _imb(row):
-        bid_sum = sum(lvl["size"] for lvl in row["bids"][:depth_n])
-        ask_sum = sum(lvl["size"] for lvl in row["asks"][:depth_n])
-        total = bid_sum + ask_sum
-        return bid_sum / total if total > 0 else 0.5
-
-    values = df.apply(_imb, axis=1)
+    values = df.apply(lambda row: _imbalance_of(row["bids"], row["asks"], depth_n), axis=1)
     return pd.Series(values.values, index=df["ts"].values)
 
 
@@ -98,20 +143,21 @@ def build_price_series(raw_books_by_venue: dict[str, pd.DataFrame]) -> pd.Series
     if not raw_books_by_venue:
         return pd.Series(dtype=float)
 
-    def _mid(row):
-        if not row["bids"] or not row["asks"]:
-            return float("nan")
-        best_bid = max(lvl["price"] for lvl in row["bids"])
-        best_ask = min(lvl["price"] for lvl in row["asks"])
-        return (best_bid + best_ask) / 2.0
-
     mids_by_venue: dict[str, pd.Series] = {}
     for venue, df in raw_books_by_venue.items():
-        values = df.apply(_mid, axis=1)
+        values = df.apply(lambda row: _mid_of(row["bids"], row["asks"]), axis=1)
         mids_by_venue[venue] = pd.Series(values.values, index=df["ts"].values)
 
     aligned = align_venues(mids_by_venue)
     return aligned.mean(axis=1, skipna=True)
+
+
+def _mid_of(bids: list[dict], asks: list[dict]) -> float:
+    if not bids or not asks:
+        return float("nan")
+    best_bid = max(lvl["price"] for lvl in bids)
+    best_ask = min(lvl["price"] for lvl in asks)
+    return (best_bid + best_ask) / 2.0
 
 
 def build_skew_divergence(aligned: pd.DataFrame) -> pd.DataFrame:

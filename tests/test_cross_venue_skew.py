@@ -5,6 +5,8 @@ import pytest
 
 import research.hypotheses.cross_venue_skew as cvs
 from research.hypotheses.cross_venue_skew import (
+    _imbalance_of,
+    _mid_of,
     align_venues,
     build_imbalance,
     build_labels_multi_horizon,
@@ -12,6 +14,7 @@ from research.hypotheses.cross_venue_skew import (
     build_skew_divergence,
     build_spike_signal,
     load_venue_snapshots,
+    stream_imbalance_and_mid,
 )
 
 
@@ -265,3 +268,78 @@ def test_build_labels_multi_horizon_excludes_entry_ts_missing_from_price():
     spikes = pd.DataFrame([{"ts": 0.0, "venue": "a", "spike": True, "direction": 1.0}])
     labels = build_labels_multi_horizon(price, spikes, horizons_s=[5])
     assert labels.empty
+
+
+def test_imbalance_of_neutral_when_bid_ask_equal():
+    result = _imbalance_of([{"price": 99.0, "size": 5.0}], [{"price": 101.0, "size": 5.0}])
+    assert result == pytest.approx(0.5)
+
+
+def test_imbalance_of_buy_heavy_above_half():
+    result = _imbalance_of([{"price": 99.0, "size": 8.0}], [{"price": 101.0, "size": 2.0}])
+    assert result == pytest.approx(0.8)
+
+
+def test_imbalance_of_respects_depth_n():
+    bids = [{"price": 99.0, "size": 1.0}, {"price": 98.0, "size": 100.0}]
+    asks = [{"price": 101.0, "size": 1.0}]
+    result = _imbalance_of(bids, asks, depth_n=1)
+    assert result == pytest.approx(0.5)  # depth=1이면 size=100 레벨 무시
+
+
+def test_imbalance_of_empty_book_returns_neutral():
+    assert _imbalance_of([], []) == pytest.approx(0.5)
+
+
+def test_mid_of_uses_max_bid_min_ask_not_list_order():
+    bids = [{"price": 90.0, "size": 1.0}, {"price": 99.0, "size": 1.0}]
+    asks = [{"price": 105.0, "size": 1.0}, {"price": 101.0, "size": 1.0}]
+    # correct mid = (max(90,99)=99 + min(105,101)=101)/2 = 100.0
+    assert _mid_of(bids, asks) == pytest.approx(100.0)
+
+
+def test_mid_of_empty_book_returns_nan():
+    assert pd.isna(_mid_of([], []))
+
+
+def test_stream_imbalance_and_mid_matches_dataframe_path(tmp_path, monkeypatch):
+    """스트리밍 경로가 기존 DataFrame 경로(load_venue_snapshots -> build_imbalance /
+    행단위 _mid_of)와 정확히 같은 값을 내는지 확인 — 회귀 방지 핵심 테스트."""
+    monkeypatch.setattr(cvs, "_DATA_DIR", tmp_path)
+    _write_jsonl(tmp_path / "binance_BTC_2026-07-12.jsonl", [
+        {"ts": 2.0, "bids": [{"price": 99.0, "size": 1.0}, {"price": 98.0, "size": 3.0}],
+         "asks": [{"price": 101.0, "size": 2.0}]},
+        {"ts": 1.0, "bids": [{"price": 98.0, "size": 2.0}],
+         "asks": [{"price": 102.0, "size": 2.0}, {"price": 103.0, "size": 1.0}]},
+    ])
+    df = load_venue_snapshots("binance", "BTC", ["2026-07-12"])
+    expected_imbalance = build_imbalance(df)
+    expected_mid = pd.Series(
+        df.apply(lambda r: _mid_of(r["bids"], r["asks"]), axis=1).to_numpy(), index=df["ts"].to_numpy())
+
+    imbalance, mid = stream_imbalance_and_mid("binance", "BTC", ["2026-07-12"])
+
+    assert list(imbalance.index) == list(expected_imbalance.index)
+    assert imbalance.to_numpy() == pytest.approx(expected_imbalance.to_numpy())
+    assert list(mid.index) == list(expected_mid.index)
+    assert mid.to_numpy() == pytest.approx(expected_mid.to_numpy())
+
+
+def test_stream_imbalance_and_mid_merges_multiple_dates_sorted(tmp_path, monkeypatch):
+    monkeypatch.setattr(cvs, "_DATA_DIR", tmp_path)
+    _write_jsonl(tmp_path / "binance_BTC_2026-07-12.jsonl", [
+        {"ts": 1.0, "bids": [{"price": 99.0, "size": 1.0}], "asks": [{"price": 101.0, "size": 1.0}]},
+    ])
+    _write_jsonl(tmp_path / "binance_BTC_2026-07-13.jsonl", [
+        {"ts": 2.0, "bids": [{"price": 99.0, "size": 1.0}], "asks": [{"price": 101.0, "size": 1.0}]},
+    ])
+    imbalance, mid = stream_imbalance_and_mid("binance", "BTC", ["2026-07-12", "2026-07-13"])
+    assert list(imbalance.index) == [1.0, 2.0]
+    assert list(mid.index) == [1.0, 2.0]
+
+
+def test_stream_imbalance_and_mid_missing_file_returns_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr(cvs, "_DATA_DIR", tmp_path)
+    imbalance, mid = stream_imbalance_and_mid("binance", "BTC", ["2026-01-01"])
+    assert imbalance.empty
+    assert mid.empty

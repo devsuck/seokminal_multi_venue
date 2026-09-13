@@ -66,6 +66,9 @@ VM에서 새로 채울 값(맥 값 그대로 재사용해도 되지만 별도 �
 - `SESSION_SECRET`: `python -c "import secrets; print(secrets.token_hex(32))"`로 VM 전용 새 값
 - `COOKIE_SAMESITE=none`, `COOKIE_SECURE=true`, `CORS_ORIGINS=https://app.<도메인>` (2단계 참고)
 - `SEOKMINAL_RSS_LIMIT_MB=400` (1GB VM 기준, `docs/deploy/vultr-seoul-jobs.md` 참고)
+- `ANTHROPIC_API_KEY`: 헤드리스 VM엔 로그인된 claude CLI가 없어서 필수 — 없으면
+  `ai_portfolio`/lv5 에이전트 리뷰가 조용히 no-op(`api_server/claude_cli.py`, 컷오버
+  go/no-go 게이트에도 포함— `vultr-seoul-cutover.md`)
 
 대시보드도 같은 VM에 clone+build:
 ```bash

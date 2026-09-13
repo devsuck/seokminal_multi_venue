@@ -102,6 +102,7 @@ def test_generate_ai_recommendation_no_cli_skips_call(monkeypatch, tmp_path):
     _patch_consume(monkeypatch, CANDIDATES)
     _patch_state_path(monkeypatch, tmp_path)
     monkeypatch.setattr(ap, "claude_bin", lambda: None)
+    monkeypatch.setattr(ap, "claude_available", lambda: False)
     called = []
     monkeypatch.setattr(ap, "call_claude", lambda *a, **kw: called.append(1) or "")
 

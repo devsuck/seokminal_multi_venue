@@ -22,7 +22,9 @@ import re
 import threading
 import time
 
-from api_server.claude_cli import call_claude as _call_claude, claude_bin as _claude_bin
+from api_server.claude_cli import (
+    call_claude as _call_claude, claude_available as _claude_available, claude_bin as _claude_bin,
+)
 from api_server.lv5_learner import extract_trade_outcomes
 from api_server.lv5_memory import read_memory, append_memory
 from api_server.lv5_context import get_cached_context, format_context_for_prompt
@@ -259,8 +261,8 @@ def _run_review(
     _set_cache(agent_id, {"reviewing": True})
     try:
         claude = _claude_bin()
-        if not claude:
-            _log.warning("[Lv5] claude CLI 없음")
+        if not _claude_available():
+            _log.warning("[Lv5] claude 사용 불가 (API 키/CLI 둘 다 없음)")
             return
 
         outcomes = extract_trade_outcomes(cycles)

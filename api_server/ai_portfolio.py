@@ -10,7 +10,7 @@ import logging
 import math
 import os
 
-from api_server.claude_cli import call_claude, claude_bin
+from api_server.claude_cli import call_claude, claude_available, claude_bin
 from jarvis.config import state_path
 from jarvis.investment_os.portfolio_construction import _MAX_WEIGHT
 
@@ -89,7 +89,7 @@ def generate_ai_recommendation() -> dict:
     candidate_ids = {c["strategy_id"] for c in candidates}
     parsed = None
     claude = claude_bin()
-    if claude:
+    if claude_available():
         prompt = _build_prompt(candidates)
         for _ in range(2):  # 1회 재시도
             raw = call_claude(claude, prompt, timeout=120)

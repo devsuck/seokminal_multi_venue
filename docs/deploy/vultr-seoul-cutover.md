@@ -42,6 +42,7 @@ rsync -avz data/order_audit.jsonl data/agents.db data/graph_history.jsonl \
 | 대시보드 로드+API 연동 | 브라우저 `https://app.<도메인>` | 로드 + API 호출 성공 (CORS 확인) |
 | 세션 로그인 | 브라우저로 로그인 → 새로고침 유지 | 쿠키 유지됨 (`SameSite=None; Secure` 정상 동작 확인 — 서브3) |
 | 배치잡 타이머 | `systemctl list-timers` | 5개 전부 `enabled`, 다음 실행시각 정상 |
+| Claude API 키 | `.env`의 `ANTHROPIC_API_KEY` 값 확인 | 채워짐 — 없으면 `ai_portfolio`/lv5 에이전트 리뷰가 헤드리스 VM에서 조용히 no-op (`api_server/claude_cli.py`) |
 | 백업 잡 | `sudo systemctl start seokminal-backup-state && ls backups/` | tar.gz 생성됨 |
 | 재부팅 복구 | `sudo reboot` 후 | API/대시보드/timer 전부 자동 기동 |
 

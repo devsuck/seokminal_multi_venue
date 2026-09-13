@@ -1,0 +1,2 @@
+{"in_sample": {"n_v1": 1919, "n_v3": 1878, "v1_net": 0.02091, "v3_net": 0.022694, "v1_winrate": 0.5096, "v3_winrate": 0.5133, "v3_improves": true}, "forward": {"n_v1": 50, "n_v3": 50, "v1_net": 0.002612, "v3_net": 0.002612, "v1_winrate": 0.48, "v3_winrate": 0.48, "v3_improves": false}}
+{"in_sample": {"n_v1": 1919, "n_v3": 1878, "v1_net": 0.02091, "v3_net": 0.022694, "v1_winrate": 0.5096, "v3_winrate": 0.5133, "v3_improves": true}, "forward": {"n_v1": 50, "n_v3": 50, "v1_net": 0.002612, "v3_net": 0.002612, "v1_winrate": 0.48, "v3_winrate": 0.48, "v3_improves": false}}

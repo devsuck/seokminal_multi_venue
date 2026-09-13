@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  buyback v3(CB/BW 희석오버행 shadow 필터) forward 체크 — 매주 월요일 08:12(로컬) 1회 실행
+  (research-ledger-sync 08:00 Mon-Fri와 충돌 피하려 12분 오프셋). in-sample vs forward net/승률
+  스냅샷을 buyback_v3_dilution_forward_ledger.jsonl에 append(멱등 아님 — 매회 append, 추세 추적용).
+  이벤트 자체는 하루 수건 수준으로 느리게 쌓여서 주 1회면 충분(승격 판단은 n_excluded가 충분히
+  쌓여야 — 통계적으로 아직 거리 있음). 어떤 전략도 자동 승격하지 않음, v1 동결 그대로.
+
+  설치(경로/파이썬을 실제에 맞게 수정 — /Users/seokhun/seokminal/seokminal-multi-venue는 맥의 seokminal-multi-venue 절대경로):
+    cp scripts/deploy/launchd/com.seokminal.buyback-v3-forward.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.seokminal.buyback-v3-forward.plist
+    launchctl list | grep seokminal      # 등록 확인
+    tail -f /Users/seokhun/seokminal/seokminal-multi-venue/logs/buyback_v3_forward.log
+  해제: launchctl unload ~/Library/LaunchAgents/com.seokminal.buyback-v3-forward.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.seokminal.buyback-v3-forward</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/seokhun/seokminal/seokminal-multi-venue/scripts/deploy/run_buyback_v3_forward.sh</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>SEOKMINAL_REPO</key>
+        <string>/Users/seokhun/seokminal/seokminal-multi-venue</string>
+        <key>SEOKMINAL_PYTHON</key>
+        <string>/Library/Frameworks/Python.framework/Versions/3.14/bin/python3</string>
+    </dict>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>1</integer>
+        <key>Hour</key>
+        <integer>8</integer>
+        <key>Minute</key>
+        <integer>12</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/seokhun/seokminal/seokminal-multi-venue/logs/buyback_v3_forward.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/seokhun/seokminal/seokminal-multi-venue/logs/buyback_v3_forward.log</string>
+</dict>
+</plist>

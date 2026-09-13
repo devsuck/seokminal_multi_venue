@@ -113,7 +113,8 @@ def generate(write: bool = False) -> dict:
 
 def main():
     import json
-    print(json.dumps(generate(write=False), ensure_ascii=False, indent=2))
+    import sys
+    print(json.dumps(generate(write="--write" in sys.argv), ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

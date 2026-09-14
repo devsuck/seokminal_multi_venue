@@ -417,6 +417,7 @@ class ResearchService:
         self._warm_tsmom()
         self._data_analyst_report()
         self._disk_alert()
+        self._news_research_collect()
         # 데이터 pull 큐 — 세션 babysit 없이 장시간 pull 처리(재개 지원, 한 번에 하나)
         try:
             from research.data.pull_queue import tick as pull_tick

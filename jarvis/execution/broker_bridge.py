@@ -44,8 +44,12 @@ def _tracker():
 
 def _gate(order: dict) -> None:
     """route_order()/route_order_ib()가 공유하는 게이트: AUTONOMY_LEVEL → risk_guard.
-    통과 못하면 BrokerOrderRejected. 브로커 호출 전에 반드시 이걸 거쳐야 함."""
-    if not live_execution_enabled():
+    통과 못하면 BrokerOrderRejected. 브로커 호출 전에 반드시 이걸 거쳐야 함.
+
+    AUTONOMY_LEVEL 체크는 실계좌(paper=False)에만 적용 — ADR 0004는 jarvis 자율리서치가
+    실돈을 못 건드리게 막는 게 목적이라 페이퍼 주문(실리스크 0)까지 막을 이유 없음.
+    risk_guard/deadman 체크는 paper 여부와 무관하게 그대로 적용."""
+    if not bool(order.get("paper", True)) and not live_execution_enabled():
         reason = f"AUTONOMY_LEVEL={AUTONOMY_LEVEL} < MIN_LIVE_LEVEL={MIN_LIVE_LEVEL}"
         record({"layer": "broker_bridge", "action": "route_order", "venue": order.get("venue"),
                 "symbol": order.get("symbol"), "result": "autonomy_blocked", "reason": reason})

@@ -122,10 +122,26 @@ def test_unknown_venue_rejected():
 
 
 def test_blocked_when_autonomy_level_insufficient(monkeypatch):
+    """실계좌(paper=False) 주문은 ADR 0004대로 여전히 차단."""
+    monkeypatch.setattr(bb, "live_execution_enabled", lambda: False)
+    monkeypatch.setenv("KIS_APP_KEY", "k")
+    monkeypatch.setenv("KIS_APP_SECRET", "s")
+    monkeypatch.setenv("KIS_CANO", "c")
+    monkeypatch.setenv("KIS_ACNT_PRDT_CD", "01")
+    with pytest.raises(bb.BrokerOrderRejected, match="live execution disabled"):
+        bb.route_order(_kr_order(paper=False))
+
+
+def test_paper_order_not_blocked_by_autonomy_level(monkeypatch):
+    """페이퍼 주문(실리스크 0)은 AUTONOMY_LEVEL 게이트 우회 — risk_guard는 여전히 적용."""
     monkeypatch.setattr(bb, "live_execution_enabled", lambda: False)
     monkeypatch.setenv("KIS_MOCK_APP_KEY", "k")
     monkeypatch.setenv("KIS_MOCK_APP_SECRET", "s")
     monkeypatch.setenv("KIS_MOCK_CANO", "c")
     monkeypatch.setenv("KIS_ACNT_PRDT_CD", "01")
-    with pytest.raises(bb.BrokerOrderRejected, match="live execution disabled"):
-        bb.route_order(_kr_order())
+    monkeypatch.setattr(
+        bb.KISOrderClient, "place_order",
+        lambda self, *a, **k: {"status": "ok"},
+    )
+    result = bb.route_order(_kr_order(paper=True))
+    assert result == {"status": "ok"}

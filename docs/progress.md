@@ -3,6 +3,99 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-09-14) — 의존성 업그레이드: 프론트 전체 + 백엔드 직접사용분(완료)
+
+**배경**: 뉴스 파이프라인 완료 후 로드맵상 다음 자율작업 없어 `npm outdated`/`pip list
+--outdated` 점검 제안 → 사용자 승인. 백엔드 pip 환경이 이 레포 전용 venv가 아니라
+`/Library/Frameworks/Python.framework/Versions/3.14` 시스템 전역 설치임을 발견해 블라스트
+반경 재확인 질의 → "이 레포 직접 사용하는 패키지만"으로 스코프 축소 승인받음.
+
+**완료된 작업**:
+- **백엔드**(`pip install --upgrade`, 이 레포가 실제 import하는 패키지만, 전역 131건 중
+  무관한 것(rdkit/torch/langchain*/jupyter계열/pyobjc 등, 다른 프로젝트가 같은 시스템
+  파이썬 공유 중)은 미터치): `anthropic` 0.111.0→1.5.0, `openai` 2.43.0→3.13.0,
+  `websockets` 15.0.1→17.1(3개 모두 major, 사용 표면이 `messages.create`/
+  `chat.completions.create`/`connect_fn` 기본값 주입뿐이라 저위험으로 판단), `fastapi`
+  →0.141.1, `pydantic`/`pydantic_core`/`pydantic-settings`, `numpy`→2.5.3, `alpaca-py`
+  →0.44.0, `nautilus_trader`→1.231.0, `python-dotenv`→1.2.3, `xgboost`→3.4.1, `yfinance`
+  →1.7.0, `scipy`→1.18.1, `statsmodels`→0.15.0, `pywebpush`→2.5.0, `websocket-client`
+  →1.9.2, `uvicorn`→0.53.0. pip 의존성 충돌 경고(numba/langchain*/google-genai/
+  ib_async/pykrx)는 전부 이 레포 미사용이거나(numba) import 재검증 통과(ib_async,
+  pykrx) — 실제 회귀 없음. `pyproject.toml`은 기존 `>=` 느슨한 플로어가 신규 버전도
+  전부 만족해 미수정.
+- **프론트엔드**(`seokminal-dashboard`, `npm install` 전체 outdated 적용, major 포함):
+  `next` 16.2.9→16.3.5, `react`/`react-dom` 19.2→19.3, `typescript` 6.0.3→7.0.2(major),
+  `vitest` 4.1.9→5.0.0(major), `tailwindcss`/`@tailwindcss/postcss`→4.3.3, `postcss`
+  →8.5.28, `jsdom`→30.0.1, `lightweight-charts`→5.2.1, `@types/react`/`@types/react-dom`
+  →19.3.0. `@types/node`는 latest(26.5.1)가 아니라 실제 러닝 중인 Node 런타임
+  (`node --version`=v24.17.0)에 맞춰 `^24`로 고정(기존 22도 이미 런타임과 어긋나 있었음).
+  `npm audit fix`로 moderate 취약점(baseline-browser-mapping) 1건도 해소, 0 vulnerabilities.
+
+**검증**: 백엔드 `pytest tests/ -q` 2064 passed(업그레이드 전과 동일 건수, 회귀 0) —
+경고는 `websockets.legacy` deprecation, FastAPI `on_event` deprecation, pandas
+`Timestamp.utcnow` deprecation 등 기존 코드 패턴에 대한 사전경고뿐, 전부 이번 업그레이드
+이전부터 있던 것. 프론트 `npx tsc --noEmit` 클린(typescript 7 major에도 타입에러 0),
+`npm test` 33 passed, `npm run build`(Turbopack) 37페이지 전부 정상 생성.
+
+**변경된 파일**: `seokminal-dashboard/package.json`, `package-lock.json`(커밋 예정).
+백엔드는 시스템 전역 pip라 git 추적 대상 없음(`pyproject.toml` 미수정).
+
+**다음 할 일**: 없음 — 이번 업그레이드 스코프 완료. `vitest.config.ts`가 CJS로 로드되고
+있다는 Vite 경고(`configLoader: 'native'` 관련) 발견했으나 현재 동작에 영향 없어 미수정 —
+다음에 vitest 설정 건드릴 일 있으면 `.mjs` 전환 고려.
+
+**막힌 부분/결정사항**: 시스템 전역 pip 환경이라는 사실을 사용자 승인 이후에 발견 —
+스코프를 임의로 넓히지 않고 재확인 질의로 좁혀 진행(위 배경 참조). `@types/node`는
+`latest` 태그를 그대로 따라가지 않고 런타임 버전에 맞춰 다운그레이드 판단(26→24) —
+자체 판단, 사용자 재확인 안 받음(리스크 낮은 타입 전용 패키지).
+
+---
+
+## 세션 로그 (2026-09-14) — 뉴스 본문 전문 자동수집 → jarvis 연구 파이프라인 연결(완료)
+
+**완료된 작업**: 스펙(`docs/superpowers/specs/2026-09-14-news-jina-pipeline-design.md`) →
+계획(`docs/superpowers/plans/2026-09-14-news-jina-pipeline.md`) → subagent-driven-development로
+3 task + fix wave 1개까지 전부 실행·리뷰·머지 완료. 보유종목(live+paper) 뉴스 헤드라인을
+Finnhub로 수집하고 Jina Reader(`r.jina.ai`, 무료·키 불필요)로 본문 전문을 긁어 jarvis
+`ResearchFeedPipeline.collect()`에 주입, `ResearchAgentEngine`으로 일일 리포트까지 기록하는
+24h 스로틀 파이프라인. `_tick()`에 한 줄 연결. jarvis credential-free 경계 유지(벤더 호출은
+전부 `api_server/`).
+
+최종 whole-branch 리뷰(model opus)에서 Important 4건 발견 — 전부 계획 자체의 설계 갭(태스크별
+리뷰는 각자 스펙대로 통과했지만 크로스태스크 리뷰에서만 드러남):
+1. 본문 전문이 그대로 `news_intelligence._classify()`(결정적 키워드 매처)에 들어가 장문
+   기사 대부분이 `SUPPLY_CHAIN_CHANGE` false-positive.
+2. append-only 리포트 원장(크기상한·삭제 없음)에 본문 전문이 무제한 적재.
+3. 심볼별 Finnhub 호출에 예외 격리 없어 한 심볼 502/503이 그날 배치 전체를 죽임(스로틀
+   타임스탬프가 실패 전에 먼저 찍혀 24h 재시도도 없음).
+4. `status()`에 `last_news_collect` 노출 없어 전부-예외-흡수 기능의 관측 수단 전무.
+
+fix wave 1개(model haiku)로 4건 + 무료 번들 minor(URL 미검증 가드) 전부 처리 — 본문 2000자
+캡(1·2 동시 해결), 심볼별 try/except 격리, status() 키 추가, `fetch_article_text` URL 가드.
+scoped re-review(model sonnet)에서 5건 전부 ADDRESSED 확인(테스트가 실제 fixed behavior까지
+검증 — 표면적 mock 체크 아님), 신규 breakage 없음. 실네트워크 수동 스모크 테스트도 통과
+(`last_news_collect` 채워짐, `ResearchAgentEngine.agent_activity()`로 `REPORT_SUBMITTED`
+레코드 실제 기록 확인, symbols=2/collected=0 — 그 시점 최근뉴스 없음일 뿐 정상).
+
+**변경된 파일**:
+- 신규 `api_server/jina_reader.py` (`fetch_article_text(url, timeout=10) -> str | None`)
+- 신규 `tests/test_jina_reader.py`, `tests/test_lab_service_news_research_collect.py`
+- 수정 `research/lab/service.py` (`ResearchService._news_research_collect()` 신규 +
+  `_tick()` 연결 + `status()`에 `last_news_collect` 노출)
+- 커밋(main 직접): `0211748`(Task1) → `b4e577c`(Task2) → `81ed307`(Task3) → `1d72820`(fix wave1)
+- 테스트: `pytest tests/ -q` 2064 passed, 회귀 0건
+
+**다음 할 일**: 없음 — 이 기능은 완료. `research/lab/service.py`가 계속 커지는 중이라(현재
+_tick()에 연결된 서브메서드 9개+) 다음에 관련 작업할 때 파일 분리 고려할 만함(이번 세션
+스코프 아니라 손 안 댐).
+
+**막힌 부분/결정사항**: 없음 — SDD 프로세스 전 구간(태스크 3개+fix wave 1개) implementer/
+reviewer 전부 첫 시도에 clean 통과, fix loop escalation 없었음. 세션 시작 시 "git repo 아님"
+환경노트가 stale이었음을 자체 확인(`git rev-parse --is-inside-work-tree`=true) — 별도
+브랜치 없이 이 레포 컨벤션대로 main 직접 커밋으로 진행.
+
+---
+
 ## 세션 로그 (2026-09-13~14) — CB/BW v3 shadow forward 자동화 + autoresearch SIGKILL 근본수정(완료)
 
 **CB/BW v3 shadow(`kr_buyback_v3_dilution_shadow`) forward 모니터링 완료**: 2026-08-25

@@ -44,15 +44,20 @@ def report_matches(nm: str, include: list[str], exclude: list[str]) -> bool:
     return any(k in nm for k in include) and not any(k in nm for k in exclude)
 
 
-def _fetch_window(key: str, bgn: str, end: str, d: dict, out: list, seen: set, pace_s: float):
+def _fetch_window(key: str, bgn: str, end: str, d: dict, out: list, seen: set, pace_s: float,
+                   max_retries: int = 5):
     """단일 ≤3개월 윈도우 전 페이지 순회."""
-    page, total_pages = 1, None
+    page, total_pages, retries = 1, None, 0
     while True:
         try:
             r = requests.get(DART, params={"crtfc_key": key, "bgn_de": bgn, "end_de": end,
                                            "pblntf_ty": d.get("pblntf_ty", "B"), "page_no": page, "page_count": 100},
                              timeout=20).json()
-        except Exception:
+        except Exception as e:
+            retries += 1
+            if retries > max_retries:
+                print(f"  DART {d['_name']} {bgn}~{end} page {page}: {max_retries}회 재시도 실패({type(e).__name__}: {e}) — 윈도우 스킵")
+                return
             time.sleep(1.0); continue
         if r.get("status") == "013":  # 조회 데이터 없음
             return

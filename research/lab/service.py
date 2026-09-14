@@ -68,6 +68,8 @@ class ResearchService:
         self.last_data_analyst_report: str | None = None
         self._last_disk_alert_ts = _persisted.get("last_disk_alert_ts", 0.0)
         self.last_disk_check: dict | None = None
+        self._last_news_collect_ts = _persisted.get("last_news_collect_ts", 0.0)
+        self.last_news_collect: str | None = None
 
     def _load(self) -> dict:
         p = state_path(_CFG)
@@ -326,6 +328,62 @@ class ResearchService:
                                now=now, commit=True)
             eng.complete_task(t.task_id, now, commit=True)
             self.last_data_analyst_report = now
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _news_research_collect(self) -> None:
+        """24h 스로틀 — 보유종목(live+paper) 뉴스 헤드라인+본문(Jina Reader)을 수집해
+        jarvis ResearchFeedPipeline.collect()에 주입 후 리포트 제출. READ ONLY, 신호 아님.
+        벤더 호출(Finnhub·Jina)은 전부 api_server 쪽 — jarvis는 credential-free 유지."""
+        if time.time() - self._last_news_collect_ts < 86400:
+            return
+        self._last_news_collect_ts = self._touch("last_news_collect_ts")
+        try:
+            import asyncio
+            import datetime as _dt
+
+            from api_server.jina_reader import fetch_article_text
+            from api_server.main import get_company_news
+            from jarvis.broker_readonly.aggregator import PortfolioAggregator
+            from jarvis.research_agents import ResearchAgentEngine
+            from jarvis.research_agents.models import AGENT_DATA_ANALYST, CAP_ANALYZE
+            from jarvis.research_workflow.research_feed import collect as collect_feed
+
+            symbols: set[str] = set()
+            for mode in ("live", "paper"):
+                summary = asyncio.run(PortfolioAggregator(mode).summary())
+                symbols.update(h["symbol"] for h in summary.get("holdings", []))
+
+            headline_dicts: list[dict] = []
+            seen_urls: set[str] = set()
+            for symbol in sorted(symbols):
+                for item in get_company_news(ticker=symbol, days=1)[:3]:
+                    if item.url in seen_urls:
+                        continue
+                    seen_urls.add(item.url)
+                    body = fetch_article_text(item.url) or item.summary
+                    headline_dicts.append({"text": f"{item.headline}\n\n{body}",
+                                            "entity": symbol, "url": item.url})
+
+            result = collect_feed(sources={"news": headline_dicts})
+
+            today = _dt.date.today().isoformat()
+            now = _now()
+            agent = "news_research_daily"
+            eng = ResearchAgentEngine()
+            eng.register_agent(agent, AGENT_DATA_ANALYST, "일일 보유종목 뉴스 수집", now, commit=True)
+            eng.create_profile(agent, ["READ", "ANALYZE", "REPORT"], now=now, commit=True)
+            target = f"news:{today}"
+            t = eng.create_task(agent, CAP_ANALYZE, target, "일일 뉴스 수집+분석", now, commit=True)
+            eng.assign_task(t.task_id, now, commit=True)
+            eng.start_task(t.task_id, now, commit=True)
+            eng.submit_report(agent, t.task_id, f"daily:{today}", [result],
+                               summary=f"symbols={len(symbols)}, "
+                                       f"collected={result['collected_count']}, "
+                                       f"opportunities={result['opportunity_count']}",
+                               now=now, commit=True)
+            eng.complete_task(t.task_id, now, commit=True)
+            self.last_news_collect = now
         except Exception:  # noqa: BLE001
             pass
 

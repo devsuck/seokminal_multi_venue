@@ -22,6 +22,7 @@ SEED = 42
 
 _series_cache: dict = {"s": None, "ts": 0.0}
 _SERIES_TTL = 86400.0  # 서버 장기 생존 시 KRX 신규 pull 반영 위해 24h마다 재로드
+_pool_cache: dict = {"sid": None, "pool": None}
 
 
 def load_series():
@@ -46,9 +47,20 @@ def _fwd(b, ed, cost):
     return b["close"][xi] / entry - 1 - cost / 1e4
 
 
+def _pool_for(series: dict) -> list:
+    """전종목×전거래일 매칭 풀. event_study() 호출마다 재생성하면 series가 커도(전량
+    캐시됨) 매번 수백만 튜플 재할당 — SIGKILL 재현 원인 중 하나. series 객체(id) 불변인
+    동안은 재사용."""
+    sid = id(series)
+    if _pool_cache["sid"] != sid:
+        _pool_cache["pool"] = [(b, i) for b in series.values() for i in range(len(b["dates"]) - HOLD - 1)]
+        _pool_cache["sid"] = sid
+    return _pool_cache["pool"]
+
+
 def event_study(events: list[dict], series: dict, direction: str = "bullish") -> dict:
     """반환: n·net·percentile·p·wf·median·top_tail_share + 레드팀 evidence."""
-    pool = [(b, i) for b in series.values() for i in range(len(b["dates"]) - HOLD - 1)]
+    pool = _pool_for(series)
     rets = []
     for e in events:
         b = series.get(e.get("stock_code"))

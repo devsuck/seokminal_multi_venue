@@ -145,3 +145,36 @@ def test_paper_order_not_blocked_by_autonomy_level(monkeypatch):
     )
     result = bb.route_order(_kr_order(paper=True))
     assert result == {"status": "ok"}
+
+
+def test_route_close_blocked_when_autonomy_level_insufficient_real(monkeypatch):
+    """실계좌(paper=False) 청산은 ADR 0004대로 여전히 차단."""
+    monkeypatch.setattr(bb, "live_execution_enabled", lambda: False)
+    with pytest.raises(bb.BrokerOrderRejected, match="live execution disabled"):
+        bb.route_close(venue="US_ALPACA", symbol="AAPL", paper=False)
+
+
+def test_route_close_not_blocked_by_autonomy_level_for_paper(monkeypatch):
+    """페이퍼 청산은 AUTONOMY_LEVEL 게이트 우회."""
+    monkeypatch.setattr(bb, "live_execution_enabled", lambda: False)
+
+    class _FakePosition:
+        def dict(self):
+            return {"symbol": "AAPL", "status": "closed"}
+
+    monkeypatch.setattr(
+        "api_server.routers.alpaca_shared._trading_client",
+        lambda paper: type("m", (), {"close_position": lambda self, s: _FakePosition()})(),
+    )
+    result = bb.route_close(venue="US_ALPACA", symbol="AAPL", paper=True)
+    assert result == {"symbol": "AAPL", "status": "closed"}
+
+
+def test_route_set_leverage_not_blocked_by_autonomy_level_for_paper(monkeypatch):
+    """페이퍼 레버리지 설정은 AUTONOMY_LEVEL 게이트 우회."""
+    monkeypatch.setattr(bb, "live_execution_enabled", lambda: False)
+    fake_trader = type("m", (), {})()
+    fake_trader.set_leverage = lambda coin, leverage, is_cross, paper: {"status": "ok"}
+    monkeypatch.setitem(__import__("sys").modules, "hyperliquid.trader", fake_trader)
+    result = bb.route_set_leverage(coin="BTC", leverage=3, is_cross=True, paper=True)
+    assert result == {"status": "ok"}

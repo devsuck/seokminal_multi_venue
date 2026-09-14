@@ -131,11 +131,8 @@ def route_set_leverage(*, coin: str, leverage: int, is_cross: bool, paper: bool)
         record({"layer": "broker_bridge", "action": "route_set_leverage", "venue": "HL",
                 "symbol": coin, "result": "rejected", "reason": "real-money leverage disabled"})
         raise BrokerOrderRejected("실계좌 레버리지는 이 시스템에서 금지됨 (paper만 허용)")
-    if not live_execution_enabled():
-        reason = f"AUTONOMY_LEVEL={AUTONOMY_LEVEL} < MIN_LIVE_LEVEL={MIN_LIVE_LEVEL}"
-        record({"layer": "broker_bridge", "action": "route_set_leverage", "venue": "HL",
-                "symbol": coin, "result": "autonomy_blocked", "reason": reason})
-        raise BrokerOrderRejected(f"live execution disabled ({reason})")
+    # 이 지점 도달 시 paper=True 확정(위에서 실계좌는 이미 거부) — AUTONOMY_LEVEL은
+    # 실계좌 실행을 막는 게이트라 페이퍼 레버리지엔 적용 안 함.
     from hyperliquid.trader import set_leverage
     result = set_leverage(coin, leverage, is_cross, paper)
     record({"layer": "broker_bridge", "action": "route_set_leverage", "venue": "HL",
@@ -145,9 +142,11 @@ def route_set_leverage(*, coin: str, leverage: int, is_cross: bool, paper: bool)
 
 def route_close(*, venue: str, symbol: str, paper: bool, **kwargs) -> dict:
     """포지션 청산 — 리스크 축소이므로 진입 게이트(수량/명목가/포지션캡)는 적용 안 함
-    (헌법: 매도는 항상 허용). AUTONOMY_LEVEL 게이트만 통과하면 됨. kill switch는
-    "전체 주문 차단"이 의도된 사람 조작이라 청산도 막음(데드맨 스위치와는 다른 축)."""
-    if not live_execution_enabled():
+    (헌법: 매도는 항상 허용). AUTONOMY_LEVEL 게이트는 실계좌(paper=False)에만 적용 —
+    ADR 0004 취지가 실돈 실행 차단이라 페이퍼 청산(실리스크 0)까지 막을 이유 없음.
+    kill switch는 "전체 주문 차단"이 의도된 사람 조작이라 paper 여부 무관하게 청산도 막음
+    (데드맨 스위치와는 다른 축)."""
+    if not paper and not live_execution_enabled():
         reason = f"AUTONOMY_LEVEL={AUTONOMY_LEVEL} < MIN_LIVE_LEVEL={MIN_LIVE_LEVEL}"
         record({"layer": "broker_bridge", "action": "route_close", "venue": venue,
                 "symbol": symbol, "result": "autonomy_blocked", "reason": reason})

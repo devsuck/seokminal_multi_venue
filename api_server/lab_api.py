@@ -734,10 +734,10 @@ _READINESS_STRATEGIES = [
 ]
 
 
-@router.get("/execution/readiness")
-def execution_readiness() -> dict:
-    """arm 대기중 3개 전략(buyback/tsmom/tom)의 paper 시계 진행률 — 한 화면.
-    read_only(계산 안 함, 각 전략 edge_status의 service 워밍 캐시만 사용)."""
+def _compute_readiness() -> dict:
+    """arm 대기중 3개 전략(buyback/tsmom/tom)의 paper 시계 진행률 계산.
+    read_only(계산 안 함, 각 전략 edge_status의 service 워밍 캐시만 사용).
+    라우트와 research/lab/service.py의 Data Analyst 스케줄 tick이 공유."""
     import datetime as _dt
     import importlib
     from jarvis.execution.arm_criteria import CRITERIA, evaluate as arm_eval
@@ -764,6 +764,12 @@ def execution_readiness() -> dict:
         })
     return {"strategies": out, "min_paper_months": CRITERIA["min_paper_months"],
             "first_tranche_krw_max": CRITERIA["first_tranche_krw_max"]}
+
+
+@router.get("/execution/readiness")
+def execution_readiness() -> dict:
+    """arm 대기중 3개 전략의 paper 시계 진행률 — 한 화면."""
+    return _compute_readiness()
 
 
 @router.get("/jarvis/detail")

@@ -1,6 +1,6 @@
 """jarvis.research_agents — Research Agent Framework (P11.1). **연구 보조 전용.**
 
-**ARCHIVED (Phase1 STEP3-B, 2026-07-31):** no active real-import caller found; references elsewhere are string-fixture defaults / declarative ledger keys only, not imports. Migration: no active consumer identified; re-evaluate for full removal in a later phase.
+**REVIVED 2026-09-12:** `research/lab/service.py`의 `ResearchService._data_analyst_report()`가 24h 스로틀로 Data Analyst 에이전트를 호출(registry+readiness 실라이브 데이터 관찰, `ResearchAgentEngine` 경유).
 
 연구를 보조하는 AI 에이전트 계층(Phase 11 시작). Data Analyst·Strategy Research·Backtest Analyst·Risk Analyst·
 Reviewer 5종 에이전트가 Research OS 를 **READ ONLY** 로 참조(파일 기반, import 없음)해 읽기·분석·리포트만 수행하고

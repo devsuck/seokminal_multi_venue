@@ -52,6 +52,7 @@ class CyclePayload(BaseModel):
     note: str | None = None
     markets: dict | None = None
     fill: dict | None = None  # {side, qty, price} when an order executed this cycle
+    gate: dict | None = None  # {A,B,C: bool} 핵심 게이트 충족여부 — gate~pnl 상관분석용
 
 
 def _agent_tmux(agent_id: str) -> str:

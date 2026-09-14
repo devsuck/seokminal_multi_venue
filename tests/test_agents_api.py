@@ -47,6 +47,19 @@ def test_record_and_read_cycles(client):
     assert cycles[0]["decision"] == "WATCH"
 
 
+def test_record_cycle_persists_gate(client):
+    """gate 필드가 CyclePayload에 선언 안 돼서 조용히 버려지던 버그 회귀 방지."""
+    agent = client.post("/agents", json={"name": "D", "type": "swing"}).json()
+    aid = agent["id"]
+    r = client.post(f"/agents/{aid}/cycles", json={
+        "cycle": 1, "decision": "BUY", "symbol": "AAPL",
+        "gate": {"A": True, "B": False, "C": True},
+    })
+    assert r.status_code == 200
+    cycles = client.get(f"/agents/{aid}/cycles").json()["cycles"]
+    assert cycles[0]["gate"] == {"A": True, "B": False, "C": True}
+
+
 def test_record_cycle_bad_decision_400(client):
     agent = client.post("/agents", json={"name": "D", "type": "swing"}).json()
     r = client.post(f"/agents/{agent['id']}/cycles", json={"cycle": 1, "decision": "MOON"})

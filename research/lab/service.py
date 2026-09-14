@@ -357,11 +357,15 @@ class ResearchService:
             headline_dicts: list[dict] = []
             seen_urls: set[str] = set()
             for symbol in sorted(symbols):
-                for item in get_company_news(ticker=symbol, days=1)[:3]:
+                try:
+                    items = get_company_news(ticker=symbol, days=1)[:3]
+                except Exception:  # noqa: BLE001
+                    continue
+                for item in items:
                     if item.url in seen_urls:
                         continue
                     seen_urls.add(item.url)
-                    body = fetch_article_text(item.url) or item.summary
+                    body = (fetch_article_text(item.url) or item.summary or "")[:2000]
                     headline_dicts.append({"text": f"{item.headline}\n\n{body}",
                                             "entity": symbol, "url": item.url})
 
@@ -463,6 +467,7 @@ class ResearchService:
             "last_execution_result": self.last_execution_result,
             "last_data_analyst_report": self.last_data_analyst_report,
             "last_disk_check": self.last_disk_check,
+            "last_news_collect": self.last_news_collect,
             "watchdog": self._watchdog_summary(),
             "pull_queue": self._pull_queue_summary(),
             "note": "pending 큐 + buyback 24h 갱신 + Auto-Research 24h 배치 + lab 되먹임 + jarvis 감사큐 브릿지 + 엣지 6h 워밍 + 실행체크 6h + 감시견. 실주문 경로 있음(게이트 미달시 무동작). $0.",

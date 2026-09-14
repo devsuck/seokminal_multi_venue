@@ -151,3 +151,68 @@ def test_exception_is_swallowed(monkeypatch):
     svc = ResearchService()
     svc._news_research_collect()  # 예외로 죽지 않음
     assert svc.last_news_collect is None
+
+
+def test_body_truncated_to_2000_chars(monkeypatch):
+    """Jina body longer than 2000 chars gets truncated."""
+    long_body = "x" * 3000
+    item = _FakeNewsItem("https://x.com/a", "headline", "summary")
+    calls = {}
+
+    def fake_collect(sources=None, **kw):
+        calls["sources"] = sources
+        return _default_collect_result()
+
+    _stub_dependencies(
+        monkeypatch,
+        news_by_symbol={"005930": [item]},
+        collect_fn=fake_collect,
+        fetch_text=lambda url, timeout=10: long_body
+    )
+    svc = ResearchService()
+    svc._news_research_collect()
+
+    text = calls["sources"]["news"][0]["text"]
+    body_part = text.split("\n\n")[1]  # Extract body from "headline\n\nbody"
+    assert len(body_part) == 2000
+    assert body_part == "x" * 2000
+
+
+def test_one_symbol_exception_does_not_abort_batch(monkeypatch):
+    """When get_company_news raises for one symbol, other symbols still get collected."""
+    item_good = _FakeNewsItem("https://x.com/good", "headline", "summary")
+    calls = {}
+
+    def fake_collect(sources=None, **kw):
+        calls["sources"] = sources
+        return _default_collect_result()
+
+    def fake_get_company_news(ticker, days):
+        if ticker == "005930":
+            raise Exception("502 Bad Gateway")
+        return [item_good]
+
+    monkeypatch.setattr("jarvis.broker_readonly.aggregator.PortfolioAggregator", _FakeAggregator)
+    monkeypatch.setattr("api_server.main.get_company_news", fake_get_company_news)
+    monkeypatch.setattr("api_server.jina_reader.fetch_article_text",
+                         lambda url, timeout=10: None)
+    monkeypatch.setattr("jarvis.research_workflow.research_feed.collect",
+                         fake_collect)
+
+    svc = ResearchService()
+    svc._news_research_collect()
+
+    # Should have collected from AAPL despite 005930 failing
+    assert len(calls["sources"]["news"]) == 1
+    assert calls["sources"]["news"][0]["entity"] == "AAPL"
+
+
+def test_status_includes_last_news_collect(monkeypatch):
+    """status() includes last_news_collect field matching last_news_collect attribute."""
+    _stub_dependencies(monkeypatch)
+    svc = ResearchService()
+    svc._news_research_collect()
+
+    status = svc.status()
+    assert "last_news_collect" in status
+    assert status["last_news_collect"] == svc.last_news_collect

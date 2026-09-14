@@ -50,3 +50,19 @@ def test_fetch_article_text_respects_custom_timeout():
         fetch_article_text("https://example.com/article", timeout=3)
 
     mock_get.assert_called_once_with("https://r.jina.ai/https://example.com/article", timeout=3)
+
+
+def test_fetch_article_text_returns_none_on_empty_url():
+    with patch("api_server.jina_reader.requests.get") as mock_get:
+        result = fetch_article_text("")
+
+    assert result is None
+    mock_get.assert_not_called()
+
+
+def test_fetch_article_text_returns_none_on_none_url():
+    with patch("api_server.jina_reader.requests.get") as mock_get:
+        result = fetch_article_text(None)
+
+    assert result is None
+    mock_get.assert_not_called()

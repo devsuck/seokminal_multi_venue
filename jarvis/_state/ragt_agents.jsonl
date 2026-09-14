@@ -1,0 +1,2 @@
+{"agent_id": "RGA:80fee0a988ef", "name": "data_analyst_daily", "agent_type": "DATA_ANALYST", "description": "일일 registry+readiness 관찰", "registered_at": "", "input_hash": "sha256:bae85b156cf959ec", "record_hash": "sha256:932ca41233edecc9", "previous_hash": "GENESIS"}
+{"agent_id": "RGA:335066aa0b68", "name": "news_research_daily", "agent_type": "DATA_ANALYST", "description": "일일 보유종목 뉴스 수집", "registered_at": "2026-09-14T10:48:33Z", "input_hash": "sha256:a275759771ddac2e", "record_hash": "sha256:984559c0ace9f077", "previous_hash": "sha256:932ca41233edecc9"}

@@ -1,1 +1,1 @@
-{"snapshot": {"edge": "no_oos_yet", "arm": "WAIT", "oos_months": 0, "p_worse_alert": false}, "events": []}
+{"snapshot": {"edge": "accumulating", "arm": "WAIT", "oos_months": 1, "p_worse_alert": false}, "events": [{"ts": "2026-09-09T14:11:30Z", "key": "edge", "old": "no_oos_yet", "new": "accumulating", "severity": "info", "msg": "엣지 생존 no_oos_yet → accumulating"}, {"ts": "2026-09-09T14:11:30Z", "key": "oos_months", "old": 0, "new": 1, "severity": "info", "msg": "OOS 월 0 → 1 (카운트다운 진행)"}]}

@@ -25,6 +25,14 @@ def get_gateway_status() -> dict:
         resp = httpx.get(_health_url(), timeout=2.0)
         resp.raise_for_status()
         data = resp.json()
+        if not isinstance(data, dict):
+            raise ValueError("non-dict health response")
+        return {
+            "connected": bool(data.get("connected", data.get("authenticated", False))),
+            "last_auth_ts": data.get("last_auth_ts") or data.get("lastAuthTime"),
+            "next_reset_eta": data.get("next_reset_eta") or data.get("nextReset"),
+            "needs_manual_action": bool(data.get("needs_manual_action", False)),
+        }
     except Exception:
         return {
             "connected": False,
@@ -33,9 +41,3 @@ def get_gateway_status() -> dict:
             "needs_manual_action": False,
             "error": "ib_gateway_unreachable",
         }
-    return {
-        "connected": bool(data.get("connected", data.get("authenticated", False))),
-        "last_auth_ts": data.get("last_auth_ts") or data.get("lastAuthTime"),
-        "next_reset_eta": data.get("next_reset_eta") or data.get("nextReset"),
-        "needs_manual_action": bool(data.get("needs_manual_action", False)),
-    }

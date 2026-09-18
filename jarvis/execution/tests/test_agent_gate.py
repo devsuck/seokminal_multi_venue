@@ -92,11 +92,12 @@ def test_already_paper_short_circuits_without_registry_lookup():
     assert paper is True and reason is None
 
 
-def test_god_mode_bypasses_unvalidated_registry():
-    # god_mode=1은 별도 3조건 실적 심사(god_mode.py)를 이미 통과한 것 —
-    # registry 미등록이어도(매핑 비어있음) live 허용돼야 함.
+def test_god_mode_does_not_bypass_unvalidated_registry():
+    # god_mode=1이어도 별도 면제 경로 없음 — registry 미등록(매핑 비어있음)이면
+    # 다른 에이전트와 동일하게 페이퍼 강제(회귀 방지: ca043d6에서 잠깐 있었던
+    # 무조건 면제 분기가 되살아나지 않게).
     paper, reason = ag.enforce_paper({"type": "kr_daytrade", "paper": False, "god_mode": True})
-    assert paper is False and reason is None
+    assert paper is True and reason is not None
 
 
 def test_register_validated_strategy_requires_human_admin():

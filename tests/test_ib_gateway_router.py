@@ -50,6 +50,26 @@ def test_status_falls_back_to_disconnected_when_unreachable(monkeypatch):
     assert body["error"] == "ib_gateway_unreachable"
 
 
+def test_status_falls_back_when_health_body_is_not_a_dict(monkeypatch):
+    class FakeResp:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return ["ok"]
+
+    monkeypatch.setattr(ib_gateway.httpx, "get", lambda url, timeout: FakeResp())
+
+    r = _client().get("/ib/gateway/status")
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["connected"] is False
+    assert body["error"] == "ib_gateway_unreachable"
+
+
 def test_status_surfaces_needs_manual_action_flag(monkeypatch):
     class FakeResp:
         status_code = 200

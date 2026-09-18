@@ -1,8 +1,8 @@
 """신호 프로바이더 — registry 검증전략 → StrategySignal 어댑터.
 
 정직: PROVIDER_REGISTRY는 비어 있음(= 라이브 계기신호 어댑터 아직 미배선).
-agent_gate.PROFILE_TO_STRATEGY가 빈 것과 같은 원칙. 어댑터가 붙기 전엔
-validated 전략에서 신호가 안 나온다(가짜신호 금지).
+agent_gate의 매핑(agent_strategy_mapping.jsonl)이 비어있는 것과 같은 원칙.
+어댑터가 붙기 전엔 validated 전략에서 신호가 안 나온다(가짜신호 금지).
 """
 from __future__ import annotations
 

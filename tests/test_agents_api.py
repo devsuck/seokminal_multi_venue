@@ -5,6 +5,15 @@ from fastapi.testclient import TestClient
 from api_server.main import app
 
 
+@pytest.fixture(autouse=True)
+def isolated_state(tmp_path, monkeypatch):
+    """jarvis state 파일들을 tmp로 격리(실 상태 오염 방지).
+    지금은 모든 테스트 에이전트가 paper=True라 enforce_paper가 상태 파일을
+    건드리기 전에 단락되지만, paper=False 에이전트가 추가되는 순간을 대비."""
+    monkeypatch.setattr("jarvis.config.STATE_DIR", str(tmp_path))
+    return tmp_path
+
+
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     # agent_store._db_path() reads AGENT_DB_PATH at call time, so pointing the

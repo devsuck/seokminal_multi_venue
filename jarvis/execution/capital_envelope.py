@@ -17,6 +17,7 @@ from jarvis.permissions import Level, PermissionDenied, Principal, require
 _ENVELOPE = "capital_envelope.json"
 
 
+# ponytail: 크로스통화 풀 합산 단순화(단일 통화 가정), 실제 EUR/JPY 라이브 돌릴 때 FX 정규화 재검토
 def get_envelope() -> dict:
     p = state_path(_ENVELOPE)
     if not os.path.exists(p):

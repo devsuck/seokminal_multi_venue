@@ -28,7 +28,8 @@ class IBClient:
         self._ib = ib if ib is not None else IB()
 
     async def stream_trades(
-        self, symbol: str, connect_timeout: float = 15.0
+        self, symbol: str, connect_timeout: float = 15.0,
+        exchange: str = "SMART", currency: str = "USD",
     ) -> AsyncIterator[TickByTickAllLast]:
         # connect_timeout caps the wait so a missing/closed TWS gateway raises
         # promptly instead of leaving the caller (e.g. a WebSocket handler)
@@ -36,7 +37,7 @@ class IBClient:
         await self._ib.connectAsync(
             self._host, self._port, self._client_id, timeout=connect_timeout
         )
-        contract = Stock(symbol, "SMART", "USD")
+        contract = Stock(symbol, exchange, currency)
         await self._ib.qualifyContractsAsync(contract)
         ticker = self._ib.reqTickByTickData(contract, TICK_TYPE)
         async for _ in ticker.updateEvent:

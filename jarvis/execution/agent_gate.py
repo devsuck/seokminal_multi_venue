@@ -122,16 +122,14 @@ def validation_of(agent: dict) -> dict:
 def enforce_paper(agent: dict) -> tuple[bool, str | None]:
     """live 요청 에이전트가 미검증이면 페이퍼 강제.
 
-    God Mode(agent["god_mode"]) 승급 에이전트는 registry 트랙과 무관한 별도
-    3조건 실적 심사(api_server/god_mode.py)를 이미 통과했으므로 여기서 면제.
+    God Mode 승급 에이전트도 예외 없음 — registry 매핑 검증을 동일하게 통과해야
+    live 허용(이 게이트를 우회하는 별도 면제 경로는 없음).
 
     반환: (paper 최종값, 차단 사유 또는 None). 감사 로그는 호출부가 남김.
     """
     paper = bool(agent.get("paper", True))
     if paper:
         return True, None
-    if agent.get("god_mode"):
-        return False, None
     v = validation_of(agent)
     if v["validated"]:
         return False, None

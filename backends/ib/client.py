@@ -107,9 +107,10 @@ class IBClient:
         return bars
 
     async def get_daily_bars(
-        self, symbol: str, end_date: str, duration: str, bar_size: str = DEFAULT_BAR_SIZE
+        self, symbol: str, end_date: str, duration: str, bar_size: str = DEFAULT_BAR_SIZE,
+        exchange: str = "SMART", currency: str = "USD",
     ) -> list[BarData]:
-        contract = Stock(symbol, "SMART", "USD")
+        contract = Stock(symbol, exchange, currency)
         return await self._fetch_bars(
             contract, end_date, duration, bar_size, DAILY_WHAT_TO_SHOW, True,
             f"{symbol} (end_date={end_date!r}, duration={duration!r}, bar_size={bar_size!r})",

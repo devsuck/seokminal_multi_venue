@@ -119,6 +119,18 @@ async def test_get_daily_bars_raises_value_error_on_empty_response():
         await client.get_daily_bars("AAPL", end_date="", duration="1 Y")
 
 
+async def test_get_daily_bars_explicit_eur_exchange_currency():
+    bar = BarData(date=dt.date(2024, 6, 1), open=100.0, high=101.0, low=99.0, close=100.5, volume=1000.0)
+    fake_ib = FakeIB(historical_bars=[bar])
+    client = IBClient(host="127.0.0.1", port=7497, client_id=1, ib=fake_ib)
+
+    bars = await client.get_daily_bars("SAP", end_date="20240601 23:59:59", duration="1 Y",
+                                        exchange="IBIS", currency="EUR")
+
+    assert bars == [bar]
+    assert fake_ib.qualify_calls == [("SAP", "IBIS", "EUR")]
+
+
 # ── New contract type tests ───────────────────────────────────────────────────
 
 async def test_get_daily_bars_forex_returns_bars():

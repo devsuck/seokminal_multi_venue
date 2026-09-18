@@ -200,3 +200,32 @@ async def test_get_intraday_bars_returns_score_shaped_dicts():
     assert bars[0] == {"t": "2026-07-01 09:30", "o": 100.0, "h": 101.0,
                        "l": 99.5, "c": 100.5, "v": 1000.0}
     assert len(bars) == 2
+
+
+async def test_place_order_default_exchange_currency_is_smart_usd():
+    fake_ib = FakeIB()
+    client = _client(fake_ib)
+
+    await client.place_order(symbol="AAPL", side="BUY", quantity=1, order_type="MARKET")
+
+    assert fake_ib.qualify_calls == [("AAPL", "SMART", "USD")]
+
+
+async def test_place_order_explicit_eur_currency():
+    fake_ib = FakeIB()
+    client = _client(fake_ib)
+
+    await client.place_order(symbol="SAP", side="BUY", quantity=1, order_type="MARKET",
+                              exchange="IBIS", currency="EUR")
+
+    assert fake_ib.qualify_calls == [("SAP", "IBIS", "EUR")]
+
+
+async def test_get_intraday_bars_explicit_exchange_currency():
+    fake_ib = FakeIB()
+    fake_ib._bars = []
+    client = _client(fake_ib)
+
+    await client.get_intraday_bars("SAP", exchange="IBIS", currency="EUR")
+
+    assert fake_ib.qualify_calls == [("SAP", "IBIS", "EUR")]

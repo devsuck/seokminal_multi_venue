@@ -29,12 +29,14 @@ class IBOrderClient:
         order_type: str,
         limit_price: float | None = None,
         wait_fill: bool = False,
+        exchange: str = "SMART",
+        currency: str = "USD",
     ) -> dict:
         """Place an order. When ``wait_fill`` is True, wait (briefly) for the
         order to reach a terminal state so the returned dict carries the real
         ``avg_fill_price`` — needed for accurate live P&L on market orders."""
         await self._ensure_connected()
-        contract = Stock(symbol, "SMART", "USD")
+        contract = Stock(symbol, exchange, currency)
         await self._ib.qualifyContractsAsync(contract)
         return await self._place(contract, side, quantity, order_type, limit_price, wait_fill)
 
@@ -49,6 +51,8 @@ class IBOrderClient:
         order_type: str,
         limit_price: float | None = None,
         wait_fill: bool = False,
+        exchange: str = "SMART",
+        currency: str = "USD",
     ) -> dict:
         """Place a single-leg option order. ``quantity`` is contract count
         (1 contract = 100 shares of the underlying)."""
@@ -58,8 +62,8 @@ class IBOrderClient:
             lastTradeDateOrContractMonth=expiry,
             strike=strike,
             right=right,
-            exchange="SMART",
-            currency="USD",
+            exchange=exchange,
+            currency=currency,
         )
         await self._ib.qualifyContractsAsync(contract)
         return await self._place(contract, side, quantity, order_type, limit_price, wait_fill)
@@ -86,13 +90,14 @@ class IBOrderClient:
             await asyncio.sleep(0.2)
 
     async def get_intraday_bars(
-        self, symbol: str, bar_size: str = "5 mins", duration: str = "2 D"
+        self, symbol: str, bar_size: str = "5 mins", duration: str = "2 D",
+        exchange: str = "SMART", currency: str = "USD",
     ) -> list[dict]:
         """Recent intraday bars as intraday_score-shaped dicts (t/o/h/l/c/v).
         Reuses this client's IB connection so a live day-trade tick reads data
         and executes over a single session (no source mismatch)."""
         await self._ensure_connected()
-        contract = Stock(symbol, "SMART", "USD")
+        contract = Stock(symbol, exchange, currency)
         await self._ib.qualifyContractsAsync(contract)
         bars = await self._ib.reqHistoricalDataAsync(
             contract,

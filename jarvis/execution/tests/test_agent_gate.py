@@ -106,6 +106,14 @@ def test_register_validated_strategy_requires_human_admin():
     assert ag._current_mapping() == {}
 
 
+def test_unregister_strategy_requires_human():
+    sid = _register()
+    ag.register_validated_strategy("kr_daytrade", sid, HUMAN_ADMIN)
+    with pytest.raises(PermissionDenied):
+        ag.unregister_strategy("kr_daytrade", BACKTEST_AGENT)
+    assert ag._current_mapping() == {"kr_daytrade": sid}
+
+
 def test_register_validated_strategy_rejects_unregistered_strategy_id():
     r = ag.register_validated_strategy("kr_daytrade", "no_such_strategy", HUMAN_ADMIN)
     assert r["registered"] is False

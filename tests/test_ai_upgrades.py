@@ -50,18 +50,18 @@ def test_watchdog_oos_progress_event(isolated_state):
 
 # ── 에이전트 registry 게이트 ────────────────────────────────────────────
 
-def test_gate_unvalidated_live_forced_to_paper():
+def test_gate_unvalidated_live_forced_to_paper(isolated_state):
     agent = {"paper": False, "profile": {"name": "hl_daytrade"}}
     paper, note = enforce_paper(agent)
     assert paper is True and note and "차단" in note
 
 
-def test_gate_paper_agent_passes_silently():
+def test_gate_paper_agent_passes_silently(isolated_state):
     paper, note = enforce_paper({"paper": True, "profile": {"name": "swing"}})
     assert paper is True and note is None
 
 
-def test_gate_validation_reason_exposed():
+def test_gate_validation_reason_exposed(isolated_state):
     v = validation_of({"profile": {"name": "daytrade"}})
     assert v["validated"] is False and "미등록" in v["reason"]
 

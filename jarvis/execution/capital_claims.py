@@ -86,6 +86,42 @@ def _fulfillment_mode(strategy_id: str) -> tuple[str, float]:
     return "paper", paper_limit_for(strategy_id)
 
 
+def strategy_capacity(strategy_id: str) -> dict:
+    """전략별 남은 배정여력 — mode(paper/live)는 registry상태+arm여부로 자동판정."""
+    mode, limit = _fulfillment_mode(strategy_id)
+    used = _current_allocations().get(strategy_id, 0.0)
+    return {"mode": mode, "limit": limit, "used": used, "remaining": max(limit - used, 0.0)}
+
+
+def pool_capacity() -> dict:
+    """전체 풀 남은 배정여력 — paper/live 구분 없이 capital_envelope.pool_limit 기준."""
+    limit = get_envelope()["pool_limit"]
+    used = sum(_current_allocations().values())
+    return {"pool_limit": limit, "pool_used": used, "pool_remaining": max(limit - used, 0.0)}
+
+
+def pool_capacity_by_mode() -> dict:
+    """배정 가능 잔여 — LIVE/PAPER 분리. LIVE는 armed 전략들의 arm.py capital_limit 합,
+    PAPER는 capital_envelope.pool_limit 기준(LIVE 배정은 이 풀을 안 씀)."""
+    paper_pool_limit = get_envelope()["pool_limit"]
+    paper_used = 0.0
+    live_limit = 0.0
+    live_used = 0.0
+    for sid, amt in _current_allocations().items():
+        mode, limit = _fulfillment_mode(sid)
+        if mode == "live":
+            live_limit += limit
+            live_used += amt
+        else:
+            paper_used += amt
+    return {
+        "paper_limit": paper_pool_limit, "paper_used": paper_used,
+        "paper_remaining": max(paper_pool_limit - paper_used, 0.0),
+        "live_limit": live_limit, "live_used": live_used,
+        "live_remaining": max(live_limit - live_used, 0.0),
+    }
+
+
 def _current_allocations() -> dict[str, float]:
     """strategy_id -> 최신 approved 청구의 allocated_capital.
 

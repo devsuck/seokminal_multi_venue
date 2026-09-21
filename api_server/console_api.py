@@ -2368,17 +2368,23 @@ def capital_claim_candidates() -> dict:
               if r["status"] == Status.PAPER_ACTIVE.value]
     claimed = {c["strategy_id"] for c in _safe(lambda: cc.claim_history(limit=10000), [])}
     pool_limit = _safe(lambda: get_envelope()["pool_limit"], 0.0)
+    pool = _safe(lambda: cc.pool_capacity_by_mode(), {
+        "paper_limit": pool_limit, "paper_used": 0.0, "paper_remaining": pool_limit,
+        "live_limit": 0.0, "live_used": 0.0, "live_remaining": 0.0,
+    })
     candidates = []
     for sid in active:
         if sid in claimed:
             continue
         ceiling = _safe(lambda: cc.propose_claim(sid, total_capital_basis=pool_limit)["ceiling_ref"], {})
+        capacity = _safe(lambda: cc.strategy_capacity(sid), {"mode": "paper", "limit": 0.0, "used": 0.0, "remaining": 0.0})
         candidates.append({
             "strategy_id": sid,
             "suggested_amount": ceiling.get("capital_amount") if ceiling.get("weight") is not None else None,
             "stale": ceiling.get("stale", True),
+            "capacity": capacity,
         })
-    return {"candidates": candidates, "count": len(candidates),
+    return {"candidates": candidates, "count": len(candidates), "pool": pool,
             "is_advisory": True, "is_decision": False}
 
 

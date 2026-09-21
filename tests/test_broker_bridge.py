@@ -52,7 +52,8 @@ def test_kr_rejected_when_no_mock_credentials(monkeypatch):
     for v in ("KIS_MOCK_APP_KEY", "KIS_MOCK_APP_SECRET", "KIS_MOCK_CANO", "KIS_ACNT_PRDT_CD"):
         monkeypatch.delenv(v, raising=False)
     monkeypatch.delenv("MAX_ORDER_QTY_KR", raising=False)
-    with pytest.raises(bb.BrokerOrderRejected, match="credentials"):
+    # 크레덴셜 없으면 포지션 조회부터 실패 → _gate()가 place_order 도달 전에 fail-closed 거부.
+    with pytest.raises(bb.BrokerOrderRejected, match="position lookup failed"):
         bb.route_order(_kr_order())
 
 
@@ -66,6 +67,9 @@ def test_kr_places_order_and_notifies(monkeypatch, _no_real_notify):
     class _FakeClient:
         def __init__(self, *a, **kw):
             pass
+
+        def get_holdings(self):
+            return []
 
         def place_order(self, symbol, side, qty, order_type, price):
             return {"status": "filled", "symbol": symbol}
@@ -103,6 +107,9 @@ def test_notify_failure_does_not_mislabel_submitted_order(monkeypatch):
     class _FakeClient:
         def __init__(self, *a, **kw):
             pass
+
+        def get_holdings(self):
+            return []
 
         def place_order(self, symbol, side, qty, order_type, price):
             return {"status": "filled", "symbol": symbol}
@@ -143,6 +150,7 @@ def test_paper_order_not_blocked_by_autonomy_level(monkeypatch):
         bb.KISOrderClient, "place_order",
         lambda self, *a, **k: {"status": "ok"},
     )
+    monkeypatch.setattr(bb.KISOrderClient, "get_holdings", lambda self: [])
     result = bb.route_order(_kr_order(paper=True))
     assert result == {"status": "ok"}
 

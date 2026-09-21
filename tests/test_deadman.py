@@ -13,6 +13,12 @@ def _isolated_state(tmp_path, monkeypatch):
     monkeypatch.setattr("jarvis.config.STATE_DIR", str(tmp_path))
 
 
+@pytest.fixture(autouse=True)
+def _no_position_lookup(monkeypatch):
+    """이 파일은 deadman 게이트만 검증 — 포지션 조회(KIS API)는 관심사 밖이라 0으로 고정."""
+    monkeypatch.setattr(broker_bridge, "_current_position_qty", lambda order: 0.0)
+
+
 def test_no_heartbeat_is_expired():
     assert deadman.last_heartbeat() is None
     assert deadman.is_expired() is True

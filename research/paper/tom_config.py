@@ -25,8 +25,8 @@ BASELINE = {
 
 CAPITAL = 0
 MONITORING = "monthly"
-MIN_OBSERVATION_MONTHS = 3
-PREFERRED_OBSERVATION_MONTHS = 12
+MIN_OBSERVATION_MONTHS = 1        # 압축: 운용자 입대 전 관측 마감(2026-10-22 전후)
+PREFERRED_OBSERVATION_MONTHS = 2
 
 FORBIDDEN = [
     "hold 4일 변경", "entry를 월말 종가 아닌 다른 시점으로", "유동성 필터 완화",

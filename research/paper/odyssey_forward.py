@@ -1,18 +1,11 @@
-"""SIREN — KR buyback drift 전략 paper trading(모의 원화계좌). 실주문 없음, 순수 리포팅.
+"""오디세이(Odyssey) — buyback v1 순수형(사이징blend 없음, 균등weight=1.0) paper trading.
+세이렌(SIREN, v1+사이징blend)의 울음(사이징 신호)에도 규칙(균등배분)에 묶여 흔들리지 않는 대조군 —
+같은 시작일/초기자본으로 병렬 실행해 사이징blend가 실제로 수익에 기여하는지 비교하기 위함.
 
-동결 config(buyback_config) + 이번 세션 확정 사이징blend(run_buyback_sizing_full_blend.py) 그대로.
-초기자본 100만원 가정, notional(명목) KRW 배분 — 실제 최소단위/호가 제약 무시(백테스트 수식과
-정합성 유지 목적, 실주문 전제 아님). 목표동시보유 슬롯수로 1회 배분 상한(BASE_SLOT) 산출 후
-사이징weight 곱해서 배분, 가용현금 부족하면 스킵.
+siren_forward.py와 진입/보유/비용 규칙(next_open/HOLD/cost) 완전 동일, 유일한 차이는 사이징 —
+여기는 이벤트당 weight 항상 1.0(균등배분). 실주문 없음, 순수 리포팅.
 
-사이징 배분비율(pct_rank)은 FROZEN_DATE 이전 이벤트만으로 계산한 calibration pool 기준 —
-미래정보 사용 안 함(PIT).
-
-상태: siren_state.json(오픈/청산 포지션 전체), siren_ledger.jsonl(청산시마다 1줄 append),
-siren_equity_curve.jsonl(실행마다 1줄 스냅샷), siren_report.md(현황 리포트).
-
-동결: entry(next_open)/hold(20일)/cost(40bps)/사이징weight — paper 결과로 재튜닝 금지, live 금지.
-실행: PYTHONPATH=. python3 -m research.paper.siren_forward
+실행: PYTHONPATH=. python3 -m research.paper.odyssey_forward
 """
 from __future__ import annotations
 
@@ -24,21 +17,21 @@ import os
 import statistics as _st
 
 from research.data.krx_api import build_series, market_dir
-from research.data.kr_dart_events import load_events, pull_buyback_details
+from research.data.kr_dart_events import load_events
 from research.paper import buyback_config as CFG
 
-FROZEN_DATE = "2026-09-21"        # SIREN 시작일 — 이 날짜 이후 이벤트만 진입대상
-STARTING_CAPITAL = 1_000_000.0    # 유저 실제 운용예정액(100만원) 시뮬레이션
-TARGET_CONCURRENT = 50            # 목표 동시보유 슬롯수(이벤트 발생빈도 기반 대략치)
-BASE_SLOT = STARTING_CAPITAL / TARGET_CONCURRENT   # 1슬롯 상한 = 2만원
-MIN_TICKET = 5_000.0              # 이보다 작으면 배분 스킵(의미없는 소액)
+FROZEN_DATE = "2026-09-21"        # SIREN과 동일 시작일 — 비교 위해 맞춤
+STARTING_CAPITAL = 1_000_000.0    # SIREN과 동일 초기자본
+TARGET_CONCURRENT = 50
+BASE_SLOT = STARTING_CAPITAL / TARGET_CONCURRENT
+MIN_TICKET = 5_000.0
 HOLD = CFG.HOLD_DAYS
 COST_BPS = CFG.COST_BASE_BPS
 
-STATE = os.path.join(os.path.dirname(__file__), "siren_state.json")
-LEDGER = os.path.join(os.path.dirname(__file__), "siren_ledger.jsonl")
-EQUITY = os.path.join(os.path.dirname(__file__), "siren_equity_curve.jsonl")
-REPORT = os.path.join(os.path.dirname(__file__), "siren_report.md")
+STATE = os.path.join(os.path.dirname(__file__), "odyssey_state.json")
+LEDGER = os.path.join(os.path.dirname(__file__), "odyssey_ledger.jsonl")
+EQUITY = os.path.join(os.path.dirname(__file__), "odyssey_equity_curve.jsonl")
+REPORT = os.path.join(os.path.dirname(__file__), "odyssey_report.md")
 
 
 def _series():
@@ -65,44 +58,9 @@ def _save_state(state: dict):
     json.dump(state, open(STATE, "w"), ensure_ascii=False, indent=2)
 
 
-def _calib_pool(events, dmap, series):
-    """FROZEN_DATE 이전(과거) 이벤트만으로 금액/ADV ratio 분포 계산 — 미래정보 미사용."""
-    ratios = []
-    for e in events:
-        if e["date"] >= FROZEN_DATE:
-            continue
-        b = series.get(e["stock_code"])
-        if b is None:
-            continue
-        j = _entry_idx(b, e["date"])
-        if j is None:
-            continue
-        j0 = j - 1
-        if j0 < 5:
-            continue
-        adv = _st.mean(b["tval"][max(0, j0 - 20):j0])
-        d = dmap.get((e["corp_code"], e["date"].replace("-", "")))
-        amt = d.get("plan_amount") if d else None
-        if amt and adv > 0:
-            ratios.append(amt / adv)
-    return sorted(ratios)
-
-
-def _weight(ratio, calib_sorted):
-    if ratio is None or not calib_sorted:
-        return 1.0
-    rank = bisect.bisect_right(calib_sorted, ratio)
-    return max(rank / len(calib_sorted), 1e-6)
-
-
 def generate(write: bool = True) -> dict:
     series = _series()
     events = load_events("buyback")
-    corps = sorted({e["corp_code"] for e in events if e.get("corp_code")})
-    end = _dt.date.today().strftime("%Y%m%d")
-    details = pull_buyback_details(corps, "20240101", end)
-    dmap = {(d["corp_code"], d["rcept_dt"]): d for d in details}
-    calib = _calib_pool(events, dmap, series)
 
     state = _load_state()
     opened_keys = {(p["stock_code"], p["event_date"]) for p in state["positions"]}
@@ -114,21 +72,15 @@ def generate(write: bool = True) -> dict:
             continue
         j = _entry_idx(b, e["date"])
         if j is None:
-            continue  # 다음날 시가 데이터 아직 미도착 — 다음 실행에서 재시도
-        j0 = j - 1
-        adv = _st.mean(b["tval"][max(0, j0 - 20):j0]) if j0 >= 5 else 0
-        d = dmap.get((e["corp_code"], e["date"].replace("-", "")))
-        amt = d.get("plan_amount") if d else None
-        ratio = (amt / adv) if (amt and adv > 0) else None
-        w = _weight(ratio, calib)
-        notional = min(state["cash"], BASE_SLOT * w)
+            continue
+        notional = min(state["cash"], BASE_SLOT)  # weight=1.0 고정 — 사이징blend 없음
         if notional < MIN_TICKET:
             continue
         entry_price = b["open"][j]
         state["cash"] -= notional
         state["positions"].append({
             "stock_code": e["stock_code"], "event_date": e["date"], "entry_date": b["dates"][j],
-            "entry_price": entry_price, "notional": round(notional, 2), "weight": round(w, 4),
+            "entry_price": entry_price, "notional": round(notional, 2), "weight": 1.0,
             "status": "open",
         })
 
@@ -142,7 +94,7 @@ def generate(write: bool = True) -> dict:
         j = b["dates"].index(p["entry_date"])
         xi = min(j + HOLD, len(b["dates"]) - 1)
         if xi < j + HOLD:
-            continue  # 아직 HOLD일 안 지남
+            continue
         exit_price = b["close"][xi]
         ret = (exit_price / p["entry_price"] - 1) - COST_BPS / 10_000.0
         pnl = p["notional"] * ret
@@ -190,9 +142,9 @@ def generate(write: bool = True) -> dict:
 
 def _write_md(r: dict):
     lines = [
-        "# SIREN — KR Buyback Drift Paper Trading", "",
-        "> ⚠️ PAPER ONLY, NO LIVE. 실주문/자동집행 없음 — 순수 리포팅. "
-        "entry/hold/cost/사이징 동결(v1+blend, 이번세션 확정).",
+        "# 오디세이(Odyssey) — buyback v1 순수형(균등weight), SIREN 대조군", "",
+        "> ⚠️ PAPER ONLY, NO LIVE. entry/hold/cost 동결, weight 항상 1.0(사이징blend 없음). "
+        "SIREN(사이징blend 적용)과 동일 시작일/초기자본으로 병렬 실행 — 사이징blend 기여도 비교용.",
         f"> 초기자본 {STARTING_CAPITAL:,.0f}원 · 시작일 {FROZEN_DATE}", "",
         f"## 현황 (as of {r['as_of']})",
         f"- cash {r['cash']:,.0f}원 · equity {r['equity']:,.0f}원 · 수익률 {r['return_pct']:+.2%}",
@@ -204,7 +156,7 @@ def _write_md(r: dict):
         for p in sorted(r["open_positions"], key=lambda x: x["entry_date"]):
             unreal = p["mtm"] / p["notional"] - 1
             lines.append(f"- {p['stock_code']} 진입 {p['entry_date']} @{p['entry_price']:,.0f} · "
-                         f"배분 {p['notional']:,.0f}원(w={p['weight']}) · 평가손익 {unreal:+.2%}")
+                         f"배분 {p['notional']:,.0f}원 · 평가손익 {unreal:+.2%}")
     else:
         lines.append("- (없음)")
     lines += ["", "## 최근 청산"]
@@ -215,10 +167,9 @@ def _write_md(r: dict):
     else:
         lines.append("- (이번 실행 신규청산 없음)")
     lines += ["", "## 운영 원칙",
-              "- live 금지, 실주문 API 호출 없음 — 상태파일(JSON)+리포트(md)만 갱신.",
-              "- entry/hold/cost/사이징weight 동결 — paper 결과로 재튜닝 금지.",
-              "- 팻테일 특성 상 초반 수개월은 손익 미미하거나 음수 정상 — 권장 관찰기간 1개월"
-              "(통계적으로는 짧은 샘플 — 참고용. 라이브 전환은 이 기간 결과만으로 판단 금지)."]
+              "- live 금지, 실주문 API 호출 없음.",
+              "- entry/hold/cost 동결 — paper 결과로 재튜닝 금지.",
+              "- 권장 관찰기간 1개월(짧은 샘플 — 참고용). SIREN과 equity 비교로 사이징blend 효과 판단."]
     os.makedirs(os.path.dirname(REPORT), exist_ok=True)
     open(REPORT, "w").write("\n".join(lines) + "\n")
 

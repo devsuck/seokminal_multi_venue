@@ -42,6 +42,42 @@ def _tracker():
     return _daily_pnl
 
 
+def _kr_holdings_qty(symbol: str, paper: bool) -> float | None:
+    """실보유 수량(KIS get_holdings), paper/live 계좌 자동분기(_place_kr과 동일 분기).
+    조회 실패(크레덴셜 없음/API 에러)면 None — 호출부가 포지션 불명 상태로 실주문
+    내보내지 않게 fail-closed 처리(jarvis/execution/live_router.py의 같은 원칙)."""
+    if paper:
+        app_key = os.environ.get("KIS_MOCK_APP_KEY", "")
+        app_secret = os.environ.get("KIS_MOCK_APP_SECRET", "")
+        cano = os.environ.get("KIS_MOCK_CANO", "")
+    else:
+        app_key = os.environ.get("KIS_APP_KEY", "")
+        app_secret = os.environ.get("KIS_APP_SECRET", "")
+        cano = os.environ.get("KIS_CANO", "")
+    acnt_prdt_cd = os.environ.get("KIS_ACNT_PRDT_CD", "")
+    if not all([app_key, app_secret, cano, acnt_prdt_cd]):
+        return None
+    try:
+        client = KISOrderClient(app_key, app_secret, cano, acnt_prdt_cd, mock=paper)
+        holdings = client.get_holdings()
+    except Exception:
+        return None
+    for h in holdings:
+        if h["code"] == symbol:
+            return h["qty"]
+    return 0.0
+
+
+def _current_position_qty(order: dict) -> float | None:
+    """실제 누적 포지션 조회 — validate_order()의 포지션캡 계산 입력.
+    None = 조회 실패(포지션 불명), _gate()가 이 경우 fail-closed로 주문 거부."""
+    if order["venue"] == "KR":
+        return _kr_holdings_qty(order["symbol"], bool(order.get("paper", True)))
+    # ponytail: HL/US_ALPACA 포지션 조회 미구현 — 0 폴백(기존 동작 그대로).
+    # 이번 라이브 준비 스코프는 KR buyback이라 KR만 고침 — HL/Alpaca 무장 전 동일 수정 필요.
+    return 0.0
+
+
 def _gate(order: dict) -> None:
     """route_order()/route_order_ib()가 공유하는 게이트: AUTONOMY_LEVEL → risk_guard.
     통과 못하면 BrokerOrderRejected. 브로커 호출 전에 반드시 이걸 거쳐야 함.
@@ -61,12 +97,19 @@ def _gate(order: dict) -> None:
                 "symbol": order.get("symbol"), "result": "deadman_blocked", "reason": reason})
         raise BrokerOrderRejected(reason)
 
+    current_qty = _current_position_qty(order)
+    if current_qty is None:
+        reason = "position lookup failed — refusing to gate blind on unknown exposure"
+        record({"layer": "broker_bridge", "action": "route_order", "venue": order.get("venue"),
+                "symbol": order.get("symbol"), "result": "position_check_failed", "reason": reason})
+        raise BrokerOrderRejected(reason)
+
     cfg = RiskConfig.from_env(venue=order["venue"])
     try:
         validate_order(
             side=order["side"], quantity=float(order["quantity"]),
             price_estimate=order.get("price"),
-            current_position_qty=0, day_realized_pnl=_tracker().realized(),
+            current_position_qty=current_qty, day_realized_pnl=_tracker().realized(),
             config=cfg,
         )
     except (RiskViolation, DailyLossLimitBreached) as exc:

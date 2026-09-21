@@ -3345,6 +3345,24 @@ def _kis_creds(mock: bool) -> tuple[str, str, str, str]:
     return app_key, app_secret, cano, acnt_prdt_cd
 
 
+def _kr_current_position_qty(code: str, paper: bool) -> float | None:
+    """실보유 수량 조회(KIS get_holdings) — _check_risk의 포지션캡 계산 입력.
+    None = 조회 실패(크레덴셜 없음/API 에러), 호출부가 fail-closed 거부(jarvis/execution/
+    broker_bridge.py의 _kr_holdings_qty와 동일 원칙 — 여기 값을 재사용 안 하는 건 KISOrderClient
+    patch 대상이 테스트마다 모듈별로 갈리기 때문. 0 가정 금지)."""
+    app_key, app_secret, cano, acnt_prdt_cd = _kis_creds(mock=paper)
+    if not all([app_key, app_secret, cano, acnt_prdt_cd]):
+        return None
+    try:
+        holdings = KISOrderClient(app_key, app_secret, cano, acnt_prdt_cd, mock=paper).get_holdings()
+    except Exception:
+        return None
+    for h in holdings:
+        if h["code"] == code:
+            return h["qty"]
+    return 0.0
+
+
 @app.post("/orders/kr", response_model=KROrderResponse)
 def place_kr_order(req: KROrderRequest) -> KROrderResponse:
     # Route to 모의(KIS_MOCK) or 실전(KIS) creds + server by the paper flag.
@@ -3360,7 +3378,12 @@ def place_kr_order(req: KROrderRequest) -> KROrderResponse:
     cached = idempotency.get_cached("KR", req.client_order_id)
     if cached is not None:
         return KROrderResponse(**cached)
-    _check_risk(side=req.side, quantity=req.quantity, price_estimate=req.price, venue="KR")
+    # broker_bridge.py와 동일 fail-closed 원칙 — 누적 포지션 조회 실패 시 0 가정 대신 거부.
+    current_qty = _kr_current_position_qty(req.code, req.paper)
+    if current_qty is None:
+        raise HTTPException(status_code=503, detail="position lookup failed — refusing to gate blind on unknown exposure")
+    _check_risk(side=req.side, quantity=req.quantity, price_estimate=req.price,
+                current_position_qty=current_qty, venue="KR")
     try:
         order_client = KISOrderClient(app_key, app_secret, cano, acnt_prdt_cd, mock=req.paper)
         result = order_client.place_order(

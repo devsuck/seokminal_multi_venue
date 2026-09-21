@@ -39,8 +39,8 @@ CANDIDATES = {
 # 관찰 창
 CAPITAL = 0                       # live 금지
 MONITORING = "monthly"
-MIN_OBSERVATION_MONTHS = 3        # 최소 3~6개월
-PREFERRED_OBSERVATION_MONTHS = 12
+MIN_OBSERVATION_MONTHS = 1        # 압축: 운용자 입대 전 관측 마감(2026-10-22 전후)
+PREFERRED_OBSERVATION_MONTHS = 2
 
 # 금지(성과 나빠도 절대 하지 말 것 — 하면 데이터 스누핑/규율 붕괴)
 FORBIDDEN = [

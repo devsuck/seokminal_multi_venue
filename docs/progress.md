@@ -3,6 +3,37 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-09-22) — 자본청구 LIVE/PAPER 잔여 분리 (대시보드 Phase278 연동)
+
+**배경**: 대시보드 아이템9(홈/포폴/에이전트/성과 UI 정리) 작업 중, 자본청구
+페이지 "자율승인 풀"을 "배정 가능한 남은 금액(라이브/페이퍼 둘다)"으로
+바꿔달라는 요청 처리 — 이 저장소 쪽 작업만 기록. 전체 맥락은
+`seokminal-dashboard/docs/progress.md` Phase278 참고.
+
+**완료된 작업**:
+- `jarvis/execution/capital_claims.py`에 `pool_capacity_by_mode()` 추가 —
+  LIVE(armed 전략들의 arm.py `capital_limit` 합)와 PAPER(`capital_envelope`
+  `pool_limit`) 잔여를 분리 계산. 기존 `pool_capacity()`(합산 버전)는 그대로
+  둠 — 다른 소비자 있을 수 있어 안 건드림.
+- `api_server/console_api.py`의 `/capital-claims/candidates`가
+  `pool_capacity_by_mode()` 결과를 `pool` 필드로 반환하도록 교체(기존
+  `pool_capacity()` 호출 대체).
+- `pytest -k capital` 24 passed. `scripts/restart_api.sh`로 배포, curl로
+  `/console/capital-claims/candidates` 응답에 `pool.{paper,live}_*` 6개
+  필드 확인 완료.
+
+**변경된 파일**: `jarvis/execution/capital_claims.py`,
+`api_server/console_api.py` — 커밋 `dbed6f6`, push 완료.
+
+**다음 할 일**: 없음(대시보드 쪽 소비자 코드도 같은 세션에서 완료·배포).
+
+**막힌 부분/결정사항**: LIVE는 원래 전체 풀 개념이 없고 전략별 arm 한도만
+있음 — `live_limit`은 "현재 승인된 라이브 청구가 있는 전략들의 arm 한도
+합"으로 정의, armed 라이브 에이전트 없으면 0으로 뜸(설계상 정상, 직관적이진
+않을 수 있음).
+
+---
+
 ## 세션 로그 (2026-09-22) — 오디세이 대조군 개명 + 아이템3/8 후속조치 + 커밋/push
 
 **배경**: 직전 세션(SIREN paper trading 스캐폴딩) 보고 뒤 5개 후속지시 받음 —

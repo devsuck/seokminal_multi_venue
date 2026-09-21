@@ -18,6 +18,11 @@ STORE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 ENDPOINTS = {"KOSPI": "/svc/apis/sto/stk_bydd_trd", "KOSDAQ": "/svc/apis/sto/ksq_bydd_trd"}
 NUM = ["TDD_OPNPRC", "TDD_HGPRC", "TDD_LWPRC", "TDD_CLSPRC", "ACC_TRDVOL", "ACC_TRDVAL", "MKTCAP", "LIST_SHRS"]
 
+# 미조정 corp action(액면분할/감자 등) 탐지 시그니처: 종가 전일비 극단 점프(2배↑ or 1/2↓)인데
+# marcap 전일비는 정상 범위 → split-adjust 안 된 가격으로 간주해 역조정.
+SPLIT_PRICE_JUMP = 2.0
+SPLIT_MARCAP_STABLE = (0.7, 1.4)
+
 
 def _cfg():
     key = os.environ.get("KRX_API_KEY", ""); base = os.environ.get("KRX_BASE_URL", "")
@@ -79,9 +84,35 @@ def pull_range(market: str, start: str, end: str, pace_s: float = 0.25, log=prin
     return saved
 
 
+def _adjust_splits(s: dict) -> None:
+    """미조정 corp action 역조정 — s의 open/high/low/close를 in-place로 뒤에서부터 누적 스케일.
+    marcap은 애초에 split 영향 안 받으므로(가격×발행주식수) 건드리지 않음 — 탐지 기준 그대로 유지.
+    탐지는 원본 close 스냅샷으로만(raw_closes) — 이미 조정된 값과 비교하면 같은 split이
+    보정마다 재탐지돼 factor가 연쇄로 계속 곱해짐(오버플로/언더플로 원인)."""
+    closes, marcaps = s["close"], s["marcap"]
+    raw_closes = list(closes)
+    n = len(closes)
+    factor = 1.0
+    for i in range(n - 1, 0, -1):
+        c0, c1 = raw_closes[i - 1], raw_closes[i]
+        m0, m1 = marcaps[i - 1], marcaps[i]
+        if c0 > 0 and c1 > 0 and m0 > 0 and m1 > 0:
+            price_ratio = c1 / c0
+            marcap_ratio = m1 / m0
+            jumped = price_ratio >= SPLIT_PRICE_JUMP or price_ratio <= 1 / SPLIT_PRICE_JUMP
+            marcap_ok = SPLIT_MARCAP_STABLE[0] <= marcap_ratio <= SPLIT_MARCAP_STABLE[1]
+            if jumped and marcap_ok:
+                factor *= price_ratio
+        if factor != 1.0:
+            for k in ("open", "high", "low", "close"):
+                s[k][i - 1] *= factor
+
+
 def build_series(market: str, min_bars: int = 60) -> dict:
     """날짜별 스냅샷 → {code: {name, dates[], open/high/low/close/tval[], marcap[], sect[]}}.
     survivorship-free: 각 종목은 실제 거래된 날짜에만 존재.
+    미조정 corp action(액면분할/감자 등)은 _adjust_splits로 역조정된 가격을 반환 — marcap은
+    원본 그대로(split 무관). 탐지 시그니처: SPLIT_PRICE_JUMP/SPLIT_MARCAP_STABLE.
 
     컬럼 단위(numpy) 추출 — 행 단위 iterrows()는 다년치 전종목 스냅샷(수백만 row)에서
     Series 박싱 오버헤드로 메모리/시간을 몇 배씩 잡아먹어(autoresearch 주간잡 OOM 원인 중
@@ -111,4 +142,7 @@ def build_series(market: str, min_bars: int = 60) -> dict:
             s["low"].append(lows[i]); s["close"].append(closes[i])
             s["tval"].append(tvals[i]); s["marcap"].append(marcaps[i])
             s["sect"].append(sects[i])
-    return {c: s for c, s in series.items() if len(s["dates"]) >= min_bars}
+    series = {c: s for c, s in series.items() if len(s["dates"]) >= min_bars}
+    for s in series.values():
+        _adjust_splits(s)
+    return series

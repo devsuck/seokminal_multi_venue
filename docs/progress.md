@@ -3,6 +3,70 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-09-21) — KR buyback 사이징 최종게이트 + SIREN paper trading 스캐폴딩(완료)
+
+**배경**: KR 자사주매입(buyback) drift 전략 사이징 트랙 마무리 요청. 기존 `weightrank_adv`
+variant(net+1.66%, n=569)가 DART상세 有 서브셋에서만 계산돼 전체v1(+1.75%, n=1978)과 직접비교
+불가능함을 자체 발견 — 전체유니버스 기준 재검증 필요. 사이징 확정 후 "페이퍼 넘기기전에 남은거
+다 해야하는거 아냐?" 질의에 capacity 체크만 진짜 선행조건으로 스코프 좁힘. 이후 "paper trading
+스캐폴딩 짜자, 금액은 실제 운용액이랑 비슷해야" → 자동화("라이브처럼 최대한 비슷하게")까지 확장.
+
+**완료된 작업**:
+- `research/run_buyback_sizing_full_blend.py`(신규): 사전등록 blend 룰(DART상세 無=weight1
+  디폴트, 有=금액/ADV pct_rank(0,1] 가중)을 전체n=1978 기준 v1(+1.75%)과 직접비교. 결과
+  net=+1.95%(n=1982), pct=100, p=0.002, walk-forward 양쪽 양수, stress 양수 — **ACCEPT**, v1
+  대비 개선 확인. `experiment_registry.jsonl`에 `kr_dart_buyback_sizing_fulluniverse_blend_v2_PIT`
+  로 기록. 이게 사이징 트랙 최종 확정 룰(이전 `weightrank_adv` 결론 폐기).
+- `research/run_buyback_capacity_check.py`(신규): 포지션당 ADV(20일평균거래대금) 5% 상한 기준
+  전략 용량 추정. 동시보유 median=73 가정시 약 3~23억원까지 무리없이 소화 — 개인/소액계좌
+  규모(유저 실제 운용액 100만원)엔 용량 제약 전혀 없음 확인.
+- **SIREN**(`research/paper/siren_forward.py`, 신규) — 위 확정 전략(v1+사이징blend)의 KRW
+  잔고 시뮬레이션 paper trading 스캐폴딩. 초기자본 100만원(유저 실제 운용예정액), FROZEN_DATE
+  2026-09-21부터 신규 이벤트 진입. notional(명목) KRW 배분 — 목표동시보유 50슬롯 기준 슬롯당
+  2만원 상한에 사이징weight 곱해 배분, 5천원 미만이면 스킵. HOLD(20일) 경과시 종가청산,
+  손익 현금 반영. 상태는 `siren_state.json`(오픈/청산 전체), 청산시 `siren_ledger.jsonl` 1줄
+  append, 실행마다 `siren_equity_curve.jsonl` 스냅샷, `siren_report.md` 리포트 갱신 — 전부
+  기존 `buyback_forward.py`/`buyback_v3_dilution_forward.py` 패턴 재사용. 사이징weight의
+  pct_rank는 FROZEN_DATE 이전 과거이벤트만으로 계산한 calibration pool 기준(미래정보 미사용,
+  PIT). 실행 검증 완료(idempotent, equity=100만원 정상, 2회 재실행 동일결과).
+- 자동화: `scripts/deploy/run_siren_forward.sh` + launchd
+  `scripts/deploy/launchd/com.seokminal.siren-forward.plist`(평일 08:20, 기존 `buyback-v3-forward`
+  주간잡과 동일 패턴) — **유저 승인 후 실제 `~/Library/LaunchAgents/`에 등록·load 완료**,
+  `launchctl list`로 등록 확인함. 순수 리포팅/기록만, 실주문 API 호출 없음(CONSTITUTION.md
+  "Human approval is always required" / 자동매매 금지 준수).
+- KIS(한국투자증권) 국내주식 소수단위 거래 사실관계 확인(WebSearch): 2022-09-26 예탁결제원
+  신탁방식 서비스로 존재하나 실시간 아닌 예약/일괄체결, 전종목 아닌 일부종목 한정 — SIREN은
+  실주문 자체가 없어 이 제약과 무관(notional 방식으로 우회 설계).
+
+**변경된 파일**: `research/run_buyback_sizing_full_blend.py`(신규),
+`research/run_buyback_capacity_check.py`(신규), `research/paper/siren_forward.py`(신규),
+`scripts/deploy/run_siren_forward.sh`(신규, +x), `scripts/deploy/launchd/com.seokminal.siren-forward.plist`
+(신규, `~/Library/LaunchAgents/`에도 설치됨), `research/paper/siren_state.json`/
+`siren_report.md`(신규, 런타임 생성 — 첫 실행시 cash=100만원/포지션 0건).
+(참고: 이번 세션 앞부분에 작성된 `run_buyback_sizing_variants.py`/`run_buyback_concurrency.py`
+는 진단용 — 결론은 위 full_blend로 대체/확정됨, 파일 자체는 남겨둠)
+
+**다음 할 일**: SIREN은 평일 자동실행 시작됐으니 별다른 액션 불필요 — 그냥 지켜보면 됨(최소
+3개월, 권장 12개월 관찰 후 live 전환 여부 판단, CONSTITUTION.md상 그 판단도 사람이 함).
+로그 확인하려면 `tail -f logs/siren_forward.log`, 상태 보려면 `research/paper/siren_report.md`.
+그 외 이번 세션에서 논의만 되고 안 건 것: exit-timing 투자 종결 메모(비블로킹, 더 이전 세션
+로그 5건 미종결), "LLM as 리포팅/컨텍스트 레이어" 에이전트 설계(스코프 아직 안 잡힘).
+
+**막힌 부분/결정사항**:
+- 멀티플 테스팅 리스크 자체인지: 이번 세션에서만 사이징 관련 가설 9개 테스트함(hold10,
+  target5pct, stop15/10/5, filter25adv, weightrank_adv, fulluniverse_blend) — 공식 보정 없이
+  더 파는 건 "우연한 통과" 리스크 증가로 판단, 이걸 근거로 백테스트 파라미터 마이닝 중단하고
+  paper trading으로 전환하는 게 맞다고 결정.
+- paper trading 포지션 사이징의 "목표동시보유 슬롯수=50" 값은 정밀 도출값 아님 —
+  이벤트발생빈도(월평균 76.6건)×HOLD(20일)≈50 정도의 대략치, capacity 체크의 median=73과
+  오더 비슷해서 채택(백테스트는 무한자본 가정이라 이 슬롯수 개념 자체가 없었음 — paper부터
+  신규로 필요해진 설계 결정).
+- 브레인스토밍 스킬상 architectural 분류였으나 별도 spec 문서는 안 씀 — 이 레포의 기존
+  paper-trading 스크립트들(v1/v3 forward)도 spec 없이 직접 구현된 전례를 따름(레포 컨벤션
+  우선 판단).
+
+---
+
 ## 세션 로그 (2026-09-14) — AI 포트폴리오 빌더 계획 문서 커밋 + 잔여 미커밋 파일 정리 + 전건 검증(완료)
 
 **배경**: 컴팩션 이후 세션 재개, 사용자 요청 "프론트 페이지 마저 만들고 ①도 커밋". 확인해보니
@@ -3275,3 +3339,161 @@ CLI가 없어서 `ai_portfolio`/lv5 리뷰루프가 조용히 no-op하는 문제
 - 서브프로젝트 3·4는 이미 코드/문서 완료 상태(과거 커밋) — VM 생성 후 설치만 하면 됨.
 - `kr_buyback_x_regime_v2shadow`: forward 데이터 계속 누적 중, 상승장 buyback
   이벤트 나와야 검증 가능 — 현재로선 추가 조치 없음, 자연 누적 대기.
+
+## 2026-09-19: KR엔드포인트 버그수정 + 판 US/KR 병합(MIXED) + 정지 에이전트 4개 재기동
+
+**KR 엔드포인트 버그 2건 수정** (`api_server/main.py`): ①`from fastapi import Path`가
+기존 `from pathlib import Path`(line 11)를 섀도잉해서 서버 기동 자체가
+`AssertionError`로 죽던 문제 — `Path as FastAPIPath`로 별칭 처리. ②KIS 모의투자
+API가 간헐적으로 500 뱉는 문제 — `/kr/context/{code}`는 `requests.exceptions.
+RequestException`도 잡아서 포지션만 None으로 우아하게 낮추고, `/kr/portfolio`는
+502로 깨끗하게 변환. `tools/kr_portfolio.sh`/`kr_quant.sh` 신규 작성,
+`autopilot/CLAUDE.md`에 KR 도구 3종 + 시장구분 규칙 문서화.
+
+**IB Gateway vs CPAPI 재확인**: 유저가 "gateway 말고 web api라며" 재질문 —
+`docs/superpowers/specs/2026-09-18-ib-live-execution-design.md`(승인됨) 확인해서
+답변. CPAPI는 브레인스토밍 중 24시간 재인증 불안정성으로 기각, 소켓 IB Gateway를
+Vultr VM에 헤드리스로 올리는 걸로 이미 결정돼있었음(Section 1) — 유저 착각이었고
+스펙이 최신. Section 2~4(재인증배지/멀티통화 파라미터/게이트매핑)는 이미 구현+커밋
+완료 상태였음(이전 세션이 압축요약에서 "미착수"로 잘못 전달했던 부분, 이번에
+git log로 정정 확인).
+
+**전체 에이전트 점검**: `/agents` 7건 중 4건(자율형 학습 AI/KR거시전략AI/US
+Daytrade E2E/lv5가상화폐)이 `status:stopped`였던 원인을 `docs/progress.md:678`
+(2026-09-06 로그)에서 찾음 — 당시 API 서버 메모리 불안정으로 신규/기존 기동을
+전부 보류했고 그 뒤로 재검토 안 된 채 방치. 마지막 사이클(8/19) 판단 자체는 정상
+(WATCH/SKIP, 에러 아님) — 로직 문제 아니라 그냥 안 켠 상태. 서버 지금 안정 확인
+(pytest 그린, 오늘 KR작업 내내 헬시) → 유저 승인받고 4개 전부 재기동.
+
+**판(trust) US+KR 병합 → MIXED 단일 에이전트**: 유저 요청 — 완전위임-판-테스트
+(US, $10,000)와 완전위임-판-KR(KR, ₩1,000,000)을 이름 "판" 하나로 합치기.
+막힌 지점: `agent_loop.sh`의 `MARKET=MIXED`가 한 번도 실제로 안 쓰여봐서(DB
+`market='MIXED'` count=0) 통화처리가 USD 단일로 하드코딩돼있었음 — KRW 배정을
+표현할 방법이 없었음. 유저가 "USD+KRW 둘 다 넘김" 선택.
+- `api_server/agent_store.py`: `account_alloc_krw REAL DEFAULT 0` 컬럼 추가
+  (market="MIXED" 전용, 그 외엔 0 강제). `create_agent()`에 `account_alloc_krw`
+  파라미터 추가.
+- `api_server/routers/agents.py`: `AgentCreate.account_alloc_krw` 필드 추가,
+  `start_agent()`가 tmux 기동 시 6번째 위치인자로 KRW 배정 전달.
+- `autopilot/agent_loop.sh`: `ALLOC_KRW="${6:-0}"` 추가, `ALLOC_TEXT` 변수로
+  US/KR/MIXED 표현 통합(MIXED는 "$X (USD) + ₩Y (KRW), 각자 배정 내에서만
+  사이징"). swing 프로필의 `COMMON_EXEC` "통화·시장 교차 금지" 문구도 MIXED일 때
+  자기모순이었던 걸 `CROSS_MARKET_RULE` 분기로 수정(비-MIXED는 기존 문구 유지).
+  trust 프로필 프롬프트도 `ALLOC_TEXT`로 교체.
+- 기존 `85e7b4e2`(완전위임-판-테스트)/`10ca6205`(완전위임-판-KR) stop+delete
+  (둘 다 protected=false, 사이클 1건씩만 있던 신규 페이퍼 에이전트) → 신규
+  `9f20cd5f`(name="판", type=trust, market=MIXED, $10,000+₩1,000,000, autonomy=3,
+  paper) 생성+기동. tmux 인자로 `... MIXED 10000.0 1000000.0` 정상 전달 확인.
+- `pytest tests/ -q` 2077 passed, 회귀 없음 (진행 전/후 둘 다 확인).
+
+**오이디푸스(7591f352) 도구호출 모니터링 중(미해결)**: STEP1.5(macro.sh, 매
+사이클 무조건)/STEP3D~E(insider·dart·financials.sh, 상위후보 대상) 신규 배선한
+도구들이 사이클 #5까지 한 번도 안 불림(`TOOL_HIT: none`). MACD 병목으로 B단계
+못 넘어가서 D/E까지 안 갔을 가능성은 있지만 macro.sh는 조건 없이 매번 호출해야
+하는데 이것도 빠짐 — 워크플로 이탈 의심. 백그라운드 Monitor로 계속 지켜보는 중,
+패턴 반복되면 CLAUDE.md 문구 강화 또는 프롬프트 재검토 필요.
+
+### 변경된 파일
+- `api_server/main.py`, `api_server/agent_store.py`, `api_server/routers/agents.py`
+- `autopilot/agent_loop.sh`, `autopilot/CLAUDE.md`
+- 신규: `autopilot/tools/kr_portfolio.sh`, `autopilot/tools/kr_quant.sh`
+
+### 다음 할 일
+- **커밋 안 됨** — 위 전체 변경분(트러스트 프로필 블록 포함, 원래도 uncommitted였음)
+  아직 working tree에만 있음. 유저가 커밋 요청하면 진행.
+- 오이디푸스 도구호출 미스 패턴 계속 지켜보기 (Monitor 가동 중).
+- Vultr VM 생성 목표일이 9/19(오늘)였음 — 아직 유저가 시작했다는 신호 없음,
+  다음 세션에서 확인 필요.
+- 판(`9f20cd5f`) 첫 사이클 결과 확인 — MIXED 프롬프트가 실제로 US/KR 둘 다
+  제대로 다루는지 실전 검증 아직 안 됨(코드 리뷰만, 라이브 사이클 미관측).
+
+### 결정사항
+- MIXED 통화: USD/KRW 두 배정 병행 유지(단일 환산 안 함) — 유저 명시 선택.
+- 판 이름은 접두/접미 없이 "판" 단독(오이디푸스와 동일 네이밍 컨벤션).
+
+## 2026-09-19: 승인대기 데이터 스테일 청소 + 리서치 자동화 배선
+
+### 완료된 작업
+- **폴리마켓 죽은 전략 3건 registry 정리**: 08-25 폴리마켓 코드 전체삭제(`c985dac`,
+  지오블록+유저 장기 한국상주) 후에도 `paper_active`로 남아 capital-claims 후보에
+  계속 잡히던 3건(`polymarket_sharp_wallet_convergence_v1` 등) `StrategyRegistry.transition()`으로
+  `paper_retired` 정식 전이. jsonl 직접편집 안 하고 FSM 이벤트로 처리.
+- **디자인 토큰**: `seokminal-dashboard/app/globals.css`에 `--c-*-weak` 5종(Toss
+  Fill/Weak 패턴, `color-mix` alpha 16%) 추가, `ApprovalInbox` 배지 2곳 교체 적용.
+  `npx tsc --noEmit` 클린. 브라우저 육안검증은 아직 안 함(Chrome MCP 미시도).
+- **DART 스캐너 3family 자동갱신 배선**: `research/lab/service.py`에
+  `_refresh_scanner_families()` 추가 — treasury_disposal/turn_to_profit/asset_transfer,
+  buyback처럼 24h 스로틀 `_tick()`에 등록. `EVENT_DEFS`에 없던 family라 KeyError
+  났던 걸 `run_scanner.py`와 동일한 동적 등록 방식으로 고침. 검증: 3개 family
+  83건 신규 이벤트 실제 pull 확인.
+- **KR factor/TOM/TSMOM 5개 전략 monthly forward-test 자동배선**: `_monthly_forward_check()`
+  추가(30일 스로틀). `jarvis.paper.deploy.run_forward()`가 항상 `write=False`라
+  모니터링 전용으로만 쓰이고 ledger에 안 남는 구조적 결함 발견 — fac_kr_size_smb/
+  amihud_illiq/turnover_neglect/tom/tsmom 5개 러너를 직접(`write=True` 기본값)
+  호출하도록 배선. 검증: 3개 factor ledger에 9월 실측값 기록됨
+  (size_smb +0.1236, amihud_illiq +0.0643, turnover_neglect -0.0659).
+  `valuation_factors_2025.parquet`는 전체 리포 소비자 0개 확인돼 배선 스킵(죽은 파일).
+- **`com.seokminal.autoresearch` launchd job 제거**: 주 1회 스케줄이 `run_batch()`를
+  호출하는데, 이게 `research/lab/service.py`의 `_autoresearch_batch()`가 이미 매일
+  인프로세스로 부르는 것과 100% 동일 함수·동일 출력 파일이라 순수 중복이었음.
+  `launchctl list` 확인 결과 exit 137(SIGKILL) 반복, plist에 메모리 제한 없음 —
+  일요일 05시 콜드부팅 프로세스가 시스템 메모리 압박에 죽는 걸로 추정되나, 어차피
+  중복이라 원인 안 파고들고 삭제로 정리. `~/Library/LaunchAgents/com.seokminal.autoresearch.plist`
+  + `scripts/deploy/launchd/com.seokminal.autoresearch.plist` 둘 다 삭제, `launchctl unload` 완료.
+  `scripts/deploy/run_autoresearch.sh`는 수동 CLI 진입점으로 남겨둠(orphan 아님, 문서화된 용도).
+- `pytest tests/ -q` 2077 passed, 회귀 없음.
+
+### 변경된 파일
+- `seokminal-multi-venue/research/lab/service.py` (신규 메서드 2개 + `_tick()` 등록)
+- `seokminal-multi-venue/jarvis/_state/registry.jsonl` (폴리마켓 3건 전이 이벤트 append)
+- 삭제: `~/Library/LaunchAgents/com.seokminal.autoresearch.plist`,
+  `seokminal-multi-venue/scripts/deploy/launchd/com.seokminal.autoresearch.plist`
+- `seokminal-dashboard/app/globals.css`, `seokminal-dashboard/app/(console)/investment-os/live-agents/page.tsx`
+
+### 다음 할 일
+- 승인대기 UI에서 "진짜 에이전트(god_mode)" vs "정적 후보(capital-claims)" 라벨
+  분리 논의 — 유저에게 한 번 제안만 하고 아직 미결정.
+- 팩터-스캐너 겹침 기반 에이전트 설계 — 신선한 데이터로 재측정 필요(이번 세션
+  데이터 살렸으니 다음 세션에서 겹침 재분석 가능).
+- `ApprovalInbox` 새 토큰 브라우저 육안검증 아직 안 함.
+- 위 모든 변경 **커밋 안 됨** — 유저 요청 시 진행.
+
+### 결정사항
+- factor 스냅샷 parquet는 죽은 아티팩트로 판정, 되살리지 않고 배선 스킵.
+- autoresearch 중복 job은 원인 조사 대신 삭제로 정리(같은 작업 하는 더 건강한
+  경로가 이미 있었으므로).
+
+## 2026-09-19 (계속): ApprovalInbox 패널분리 + 자본청구 제안액 흐름
+
+### 완료된 작업
+- **god_mode / capital_claims 패널 분리**: 위 세션에서 미결정으로 남았던 라벨분리
+  실행. `live-agents/page.tsx`의 `ApprovalInbox`를 두 개 `ApPanel`로 분리
+  (`kicker="god_mode"` 승급/복귀, `kicker="capital_claims"` 전략 자본배정 후보).
+  데이터 fetch/로직은 그대로, 렌더만 쪼갬.
+- **자본청구 제안액 흐름**: 기존에 있던 `jarvis/execution/capital_claims.py`의
+  `propose_claim()`(ceiling_ref = 추천 비중 × `get_envelope()["pool_limit"]`)가
+  `submit_claim()` 내부에서만 쓰이고 `/candidates` GET에는 안 나오던 걸 발견 —
+  새 sizing 로직 안 만들고 그대로 노출.
+  - `GET /console/capital-claims/candidates` 응답을 `string[]` →
+    `{strategy_id, suggested_amount, stale}[]`로 확장 (`api_server/console_api.py`).
+  - 프론트: 기본 상태는 제안액 표시 + **예/아니오/내가 마음대로 주기** 3버튼.
+    예=제안액으로 즉시 제출, 아니오=`requested_amount=0`으로 제출(청구 이력에 남아
+    후보 목록서 빠짐 — reject 처리에 새 백엔드 로직 불필요), 내가 마음대로
+    주기=기존 number input 노출 후 직접입력 제출. 제안액 없는 전략은 예 버튼 숨김.
+  - 실제 계산 확인(10개 후보 전부 제안액 나옴, 예: `fac_kr_size_smb_v1` → 3,300,000원).
+- `pytest tests/ -q` 2077 passed (회귀 없음), `npx tsc --noEmit` 클린.
+
+### 변경된 파일
+- `seokminal-multi-venue/api_server/console_api.py` (`capital_claim_candidates()` 확장)
+- `seokminal-dashboard/lib/console-api.ts` (`CapitalClaimCandidate` 타입 추가)
+- `seokminal-dashboard/app/(console)/investment-os/live-agents/page.tsx`
+  (`ApprovalInbox` 패널분리 + 제안액 3버튼 흐름)
+
+### 다음 할 일
+- `ApprovalInbox` 새 UI 브라우저 육안검증 아직 안 함(Chrome MCP 미시도 — 이 항목
+  누적 이월).
+- 위 변경 **커밋 안 됨** — 유저 요청 시 진행.
+
+### 결정사항
+- "아니오" 클릭 시 별도 반려 상태/필드 안 만들고 `requested_amount=0` 제출로
+  처리 — 기존 청구 이력 기반 후보 필터링 로직을 그대로 재사용(중복 로직 회피).

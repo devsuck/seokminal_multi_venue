@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  SIREN(KR buyback drift 전략 paper trading, 모의 원화계좌) — 평일 매일 08:20(로컬) 1회 실행
+  (research-ledger-sync 08:00, buyback-v3-forward 08:12(월)와 충돌 피하려 오프셋).
+  신규 자사주 공시 진입 + HOLD(20일) 경과 포지션 청산 시뮬레이션, state/ledger/report 갱신.
+  실주문/자동집행 없음 — 순수 리포팅. live 전환·전략 승격은 사람이 별도 결정.
+
+  설치(경로/파이썬을 실제에 맞게 수정 — /Users/seokhun/seokminal/seokminal-multi-venue는 맥의 절대경로):
+    cp scripts/deploy/launchd/com.seokminal.siren-forward.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.seokminal.siren-forward.plist
+    launchctl list | grep seokminal      # 등록 확인
+    tail -f /Users/seokhun/seokminal/seokminal-multi-venue/logs/siren_forward.log
+  해제: launchctl unload ~/Library/LaunchAgents/com.seokminal.siren-forward.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.seokminal.siren-forward</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/seokhun/seokminal/seokminal-multi-venue/scripts/deploy/run_siren_forward.sh</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>SEOKMINAL_REPO</key>
+        <string>/Users/seokhun/seokminal/seokminal-multi-venue</string>
+        <key>SEOKMINAL_PYTHON</key>
+        <string>/Library/Frameworks/Python.framework/Versions/3.14/bin/python3</string>
+    </dict>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Weekday</key>
+            <integer>1</integer>
+            <key>Hour</key>
+            <integer>8</integer>
+            <key>Minute</key>
+            <integer>20</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key>
+            <integer>2</integer>
+            <key>Hour</key>
+            <integer>8</integer>
+            <key>Minute</key>
+            <integer>20</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key>
+            <integer>3</integer>
+            <key>Hour</key>
+            <integer>8</integer>
+            <key>Minute</key>
+            <integer>20</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key>
+            <integer>4</integer>
+            <key>Hour</key>
+            <integer>8</integer>
+            <key>Minute</key>
+            <integer>20</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key>
+            <integer>5</integer>
+            <key>Hour</key>
+            <integer>8</integer>
+            <key>Minute</key>
+            <integer>20</integer>
+        </dict>
+    </array>
+
+    <key>StandardOutPath</key>
+    <string>/Users/seokhun/seokminal/seokminal-multi-venue/logs/siren_forward.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/seokhun/seokminal/seokminal-multi-venue/logs/siren_forward.log</string>
+</dict>
+</plist>

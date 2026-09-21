@@ -118,6 +118,17 @@ AGENT_PROFILES: dict[str, dict] = {
         "focus": ["AI_basic_act", "low_birth_rate", "semiconductor_infra", "geopolitics"],
         "human_in_loop": True,       # 최종 투자는 사람 결정 명시
     },
+    "trust": {
+        # 완전위임("판") — 사전계산 컨텍스트 없이 STEP0~6 전체를 모델이 직접 수행
+        # (autopilot/CLAUDE.md). screen_stocks.py 고정 유니버스 밖 테마/공급망 발굴은
+        # WebSearch로 직접. cadence는 agent_loop.sh의 trust 분기(28800s=8h)가 실제 소스.
+        "label": "완전위임 (판)",
+        "cadence_seconds": 8 * 3600,
+        "force_eod_close": False,
+        "paper": True,
+        "autonomy": 3,
+        "venue": "US",
+    },
 }
 
 _VALID_DECISIONS = {"WATCH", "BUY", "SELL", "SKIP", "HOLD"}
@@ -186,6 +197,15 @@ def _conn() -> sqlite3.Connection:
         conn.execute("ALTER TABLE agents ADD COLUMN option_right TEXT")
     if "option_contracts" not in cols:
         conn.execute("ALTER TABLE agents ADD COLUMN option_contracts INTEGER NOT NULL DEFAULT 1")
+    if "account_alloc_krw" not in cols:
+        # market="MIXED" 전용: account_alloc은 USD 배정, 이건 KRW 배정 (두 통화 병행 운용).
+        conn.execute("ALTER TABLE agents ADD COLUMN account_alloc_krw REAL NOT NULL DEFAULT 0")
+    if "paper_revert_reason" not in cols:
+        # god_mode=1(live 승인)인데 jarvis.execution.agent_gate.enforce_paper가 매 사이클
+        # registry 재검증에서 막혀 paper로 강제복귀시킨 경우의 가시화용 — 예전엔 이 사유가
+        # _gate_note로만 계산되고 버려져서 사람이 전혀 몰랐음(조용한 강제복귀).
+        conn.execute("ALTER TABLE agents ADD COLUMN paper_revert_reason TEXT")
+        conn.execute("ALTER TABLE agents ADD COLUMN paper_revert_at TEXT")
     conn.commit()
     return conn
 
@@ -196,18 +216,24 @@ def create_agent(name: str, agent_type: str, account_alloc: float,
                  paper: bool = True, autonomy: int = 2, market: str = "US",
                  condition: dict | None = None,
                  instrument_id: str | None = None,
-                 option: dict | None = None) -> dict:
+                 option: dict | None = None,
+                 account_alloc_krw: float = 0) -> dict:
     """autonomy: 1=조건식(Lv1, 백테스트 승격 전용) / 2=AI 전략가(구Lv2·3·4 통합) /
     3=자가학습(구Lv5). God Mode는 생성 시 지정 불가 — promote_to_god_mode() 참고.
 
     option: agent_type="option_lv1" 전용 — {"expiry": "YYYYMMDD", "strike": float,
-    "right": "C"|"P", "contracts": int}. 기초자산 조건식 신호를 옵션 계약 매매로 실행."""
+    "right": "C"|"P", "contracts": int}. 기초자산 조건식 신호를 옵션 계약 매매로 실행.
+
+    account_alloc_krw: market="MIXED" 전용 — account_alloc(USD)과 별도로 KR 종목용 원화
+    배정. MIXED가 아니면 무시(0 저장)."""
     if agent_type not in AGENT_PROFILES:
         raise ValueError(f"unknown agent type: {agent_type!r}")
     if autonomy not in (1, 2, 3):
         raise ValueError(f"autonomy must be 1, 2, or 3, got {autonomy}")
     if market not in ("US", "KR", "MIXED"):
         raise ValueError(f"market must be US, KR, or MIXED, got {market!r}")
+    if account_alloc_krw and market != "MIXED":
+        raise ValueError("account_alloc_krw는 market='MIXED' 전용")
     # Lv1(조건식): 백테스트 승격 플로우 전용 — 조건식+종목 둘 다 있거나 둘 다 없어야 함.
     if bool(condition) != bool(instrument_id):
         raise ValueError("condition과 instrument_id는 함께 지정해야 함")
@@ -237,6 +263,7 @@ def create_agent(name: str, agent_type: str, account_alloc: float,
         "name": name,
         "type": agent_type,
         "account_alloc": float(account_alloc),
+        "account_alloc_krw": float(account_alloc_krw),
         "status": "stopped",
         "paper": bool(paper),
         "autonomy": int(autonomy),
@@ -256,12 +283,12 @@ def create_agent(name: str, agent_type: str, account_alloc: float,
     conn.execute(
         "INSERT INTO agents (id,name,type,account_alloc,status,paper,autonomy,market,"
         "condition_json,instrument_id,option_expiry,option_strike,option_right,"
-        "option_contracts,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "option_contracts,created_at,account_alloc_krw) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (agent["id"], agent["name"], agent["type"], agent["account_alloc"],
          agent["status"], 1 if paper else 0, int(autonomy), market,
          agent["condition_json"], agent["instrument_id"],
          agent["option_expiry"], agent["option_strike"], agent["option_right"],
-         agent["option_contracts"], agent["created_at"]),
+         agent["option_contracts"], agent["created_at"], agent["account_alloc_krw"]),
     )
     conn.commit()
     conn.close()
@@ -287,6 +314,19 @@ def promote_to_god_mode(agent_id: str) -> dict:
     conn.commit()
     conn.close()
     return get_agent(agent_id)
+
+
+def set_paper_revert(agent_id: str, reason: str | None) -> dict | None:
+    """enforce_paper 게이트 결과 기록 — reason 있으면(차단됨) 사유+시각 세팅,
+    None이면(더 이상 안 막힘) 클리어. daytrade-tick마다 호출돼 최신 상태 유지."""
+    conn = _conn()
+    at = _dt.datetime.now(_dt.UTC).isoformat() if reason else None
+    cur = conn.execute("UPDATE agents SET paper_revert_reason=?, paper_revert_at=? WHERE id=?",
+                        (reason, at, agent_id))
+    conn.commit()
+    changed = cur.rowcount
+    conn.close()
+    return get_agent(agent_id) if changed else None
 
 
 def set_condition_state(agent_id: str, spawned: bool | None = None,

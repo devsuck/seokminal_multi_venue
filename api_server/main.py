@@ -24,7 +24,7 @@ import numpy as np
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Path as FastAPIPath, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
@@ -2663,6 +2663,91 @@ def get_kr_bars(
     except (ValueError, KeyError) as exc:
         raise HTTPException(status_code=400, detail=f"malformed KIS bar data: {exc}")
     return KRBarsResponse(code=code, name=name, bars=bars, count=len(bars))
+
+
+def _kis_mock_client() -> KISOrderClient:
+    mk, ms, mc = (os.environ.get("KIS_MOCK_APP_KEY", ""), os.environ.get("KIS_MOCK_APP_SECRET", ""),
+                  os.environ.get("KIS_MOCK_CANO", ""))
+    if not all([mk, ms, mc]):
+        raise HTTPException(status_code=503, detail="KIS_MOCK credentials not configured")
+    return KISOrderClient(mk, ms, mc, os.environ.get("KIS_ACNT_PRDT_CD", "01"), mock=True)
+
+
+@app.get("/kr/portfolio")
+def get_kr_portfolio():
+    """KR 페이퍼(모의) 계좌 잔고+보유종목 — autopilot 판/오이디푸스 KR용 kr_portfolio.sh가 씀."""
+    client = _kis_mock_client()
+    try:
+        balance = client.get_balance()
+        holdings = client.get_holdings()
+    except requests.exceptions.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"KIS mock API 조회 실패: {exc}")
+    return {"mode": "paper", **balance, "holdings": holdings}
+
+
+@app.get("/kr/context/{code}")
+def get_kr_context(code: str = FastAPIPath(..., min_length=1, max_length=6)):
+    """alpaca/context와 동일 목적(RSI/MACD+포지션) — KR 종목용. autopilot kr_quant.sh가 씀."""
+    code = code.strip().zfill(6)
+    app_key = os.environ.get("KIS_APP_KEY", "")
+    app_secret = os.environ.get("KIS_APP_SECRET", "")
+    if not app_key or not app_secret:
+        raise HTTPException(status_code=503, detail="KIS credentials not configured")
+
+    end_date = dt.date.today().strftime("%Y%m%d")
+    start_date = (dt.date.today() - dt.timedelta(days=120)).strftime("%Y%m%d")
+    try:
+        kis_client = KISClient(app_key=app_key, app_secret=app_secret)
+        rows = kis_client.get_daily_price(code, start_date, end_date)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"no bars found for code={code!r}")
+    rows = sorted(rows, key=lambda r: r["stck_bsop_date"])
+
+    closes = [int(r["stck_clpr"] or 0) for r in rows]
+    highs = [int(r["stck_hgpr"] or 0) for r in rows]
+    lows = [int(r["stck_lwpr"] or 0) for r in rows]
+    volumes = [int(r["acml_vol"] or 0) for r in rows]
+
+    from api_server.routers import alpaca_shared as shared
+    rsi = shared.calc_rsi(closes)
+    macd_val, macd_signal, macd_hist = shared.calc_macd(closes)
+
+    vol_ratio = 1.0
+    if len(volumes) >= 2:
+        avg_vol = sum(volumes[:-1][-20:]) / min(len(volumes) - 1, 20)
+        if avg_vol > 0:
+            vol_ratio = round(volumes[-1] / avg_vol, 2)
+
+    position = None
+    try:
+        for h in _kis_mock_client().get_holdings():
+            if h["code"] == code:
+                position = h
+                break
+    except (HTTPException, requests.exceptions.RequestException):
+        pass
+
+    return {
+        "code": code,
+        "price": {
+            "current": closes[-1] if closes else 0,
+            "open": int(rows[-1]["stck_oprc"] or 0) if rows else 0,
+            "high": max(highs[-20:]) if highs else 0,
+            "low": min(lows[-20:]) if lows else 0,
+        },
+        "technicals": {
+            "rsi_14": rsi, "macd": macd_val, "macd_signal": macd_signal,
+            "macd_hist": macd_hist, "volume_ratio": vol_ratio,
+        },
+        "position": position,
+        "bars": [
+            {"date": r["stck_bsop_date"], "o": int(r["stck_oprc"] or 0), "h": int(r["stck_hgpr"] or 0),
+             "l": int(r["stck_lwpr"] or 0), "c": int(r["stck_clpr"] or 0), "v": int(r["acml_vol"] or 0)}
+            for r in rows[-20:]
+        ],
+    }
 
 
 # ── US Symbol Search ────────────────────────────────────────────────────────────

@@ -70,6 +70,11 @@ class ResearchService:
         self.last_disk_check: dict | None = None
         self._last_news_collect_ts = _persisted.get("last_news_collect_ts", 0.0)
         self.last_news_collect: str | None = None
+        self._last_scanner_refill_ts = _persisted.get("last_scanner_refill_ts", 0.0)
+        self.last_scanner_refill: str | None = None
+        self.scanner_refill_added_total = 0
+        self._last_monthly_forward_ts = _persisted.get("last_monthly_forward_ts", 0.0)
+        self.last_monthly_forward: str | None = None
 
     def _load(self) -> dict:
         p = state_path(_CFG)
@@ -141,6 +146,53 @@ class ResearchService:
             refresh()
         except Exception:  # noqa: BLE001
             pass
+
+    def _refresh_scanner_families(self) -> None:
+        """24시간 스로틀 — buyback 외 3개 DART 스캐너 family 증분갱신.
+        2026-09-18 발견: buyback만 자동배선돼있고 나머지(treasury_disposal/turn_to_profit/
+        asset_transfer)는 수동 refill 스크립트로만 채워져 수개월 방치됐었음."""
+        if time.time() - self._last_scanner_refill_ts < 86400:
+            return
+        self._last_scanner_refill_ts = self._touch("last_scanner_refill_ts")
+        try:
+            from research.data.kr_dart_events import EVENT_DEFS, refresh_events
+            from research.scanner.families import FAMILIES
+            n = 0
+            for family in ("treasury_disposal", "turn_to_profit", "asset_transfer"):
+                fam = FAMILIES[family]
+                # run_scanner.py와 동일한 동적 등록 — EVENT_DEFS에 없으면 refresh_events가 KeyError.
+                EVENT_DEFS[family] = {"include": fam["keywords"], "exclude": fam["exclude"],
+                                       "pblntf_ty": fam.get("pblntf_ty", "B")}
+                n += refresh_events(family, days=120) or 0
+            self.scanner_refill_added_total += n
+            self.last_scanner_refill = _now()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _monthly_forward_check(self) -> None:
+        """30일 스로틀 — KR factor 3종 + turn-of-month + tsmom forward-test 기록(write=True).
+        2026-09-18 발견: jarvis.paper.deploy.run_forward()는 항상 write=False라 모니터링
+        용도로만 쓰이고 ledger에 안 남음 — 5개 paper_active 전략이 배포 후 forward 관측
+        0건으로 3주+ 방치돼있었음. 각 러너를 직접 write=True(기본값)로 호출."""
+        if time.time() - self._last_monthly_forward_ts < 2592000:
+            return
+        self._last_monthly_forward_ts = self._touch("last_monthly_forward_ts")
+        try:
+            from research.paper.factor_forward import generate_all
+            generate_all()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from research.paper.tom_forward import generate as tom_generate
+            tom_generate()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from research.paper.tsmom_forward import generate as tsmom_generate
+            tsmom_generate()
+        except Exception:  # noqa: BLE001
+            pass
+        self.last_monthly_forward = _now()
 
     def _pull_krx_daily(self) -> None:
         """24시간 스로틀 KRX 일별 스냅샷 pull — 이게 없으면 factor/buyback 등 KR 전략
@@ -415,6 +467,8 @@ class ResearchService:
         self.ticks += 1
         self._pull_krx_daily()
         self._refresh_buyback()
+        self._refresh_scanner_families()
+        self._monthly_forward_check()
         self._autoresearch_batch()
         self._warm_edge()
         self._execution_check()

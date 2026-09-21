@@ -1,1 +1,2 @@
 {"overall": {"n_months": 84, "mean": 0.006221, "win_rate": 0.619}, "envelope": {"n_months": 84, "mean_p10": -0.028996, "mean_p90": 0.046201, "mean_avg": 0.006221}, "n_forward": 0}
+{"overall": {"n_months": 86, "mean": 0.006976, "win_rate": 0.6279}, "envelope": {"n_months": 86, "mean_p10": -0.030485, "mean_p90": 0.048843, "mean_avg": 0.006976}, "n_forward": 0}

@@ -32,6 +32,7 @@ class AgentCreate(BaseModel):
     name: str
     type: str            # "swing" | "daytrade" | "hl_daytrade"
     account_alloc: float = 100000.0
+    account_alloc_krw: float = 0  # market="MIXED" 전용 — USD와 별도 KR 종목용 원화 배정
     paper: bool = True   # False = live (real money / mainnet)
     autonomy: int = 2    # 1=조건식(Lv1, 백테스트 승격 전용) / 2=AI 전략가(구Lv2·3·4 통합) / 3=자가학습(구Lv5)
     market: str = "US"   # US | KR | MIXED (swing scope)
@@ -80,7 +81,8 @@ def list_agents() -> dict:
 def create_agent(body: AgentCreate) -> dict:
     try:
         return agent_store.create_agent(body.name, body.type, body.account_alloc, body.paper, body.autonomy,
-                                         body.market, body.condition, body.instrument_id, body.option)
+                                         body.market, body.condition, body.instrument_id, body.option,
+                                         body.account_alloc_krw)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -131,7 +133,8 @@ def start_agent(agent_id: str) -> dict:
         subprocess.Popen(
             ["tmux", "new-session", "-d", "-s", name,
              agent_loop, agent_id, agent["type"], str(agent.get("autonomy", 2)),
-             agent.get("market", "US"), str(agent.get("account_alloc", 100000))],
+             agent.get("market", "US"), str(agent.get("account_alloc", 100000)),
+             str(agent.get("account_alloc_krw", 0))],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
     agent_store.set_status(agent_id, "running")
@@ -312,6 +315,30 @@ def agent_performance(agent_id: str) -> dict:
 from api_server import god_mode as _god_mode
 
 
+@agents_router.get("/god-mode/candidates")
+def god_mode_candidates() -> dict:
+    """God Mode 승인함 — (a) 3조건 통과했는데 아직 미승급인 에이전트(승인 버튼 대상),
+    (b) 승급됐다가 registry 재검증 실패로 조용히 paper 복귀된 에이전트(사람 확인 필요,
+    승인으로 못 뚫음 — 안전 게이트라 여전히 우회 불가, 최소한 안 보이던 걸 보이게만)."""
+    promotable, reverted = [], []
+    for agent in agent_store.list_agents():
+        if int(agent.get("autonomy") or 0) != 3:
+            continue
+        if agent.get("god_mode"):
+            if agent.get("paper_revert_reason"):
+                reverted.append({"agent_id": agent["id"], "name": agent["name"],
+                                  "reason": agent["paper_revert_reason"],
+                                  "at": agent.get("paper_revert_at")})
+            continue
+        try:
+            check = _god_mode.evaluate(agent["id"])
+        except ValueError:
+            continue
+        if check.get("eligible"):
+            promotable.append({"agent_id": agent["id"], "name": agent["name"], **check})
+    return {"promotable": promotable, "reverted": reverted}
+
+
 @agents_router.get("/{agent_id}/god-mode/eligibility")
 def god_mode_eligibility(agent_id: str) -> dict:
     """3조건 심사 결과 조회 — 버튼 활성화 여부 판단용. 승급은 아직 하지 않음."""
@@ -437,6 +464,9 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
     # registry 게이트: 미검증 전략은 live 불가(페이퍼 강제) — 연구 트랙과 같은 기준
     from jarvis.execution.agent_gate import enforce_paper
     paper, _gate_note = enforce_paper(agent)
+    # god_mode=1인데 여기서 막히면 "조용한 강제복귀" — 사람이 보게 기록(None이면 클리어).
+    if agent.get("god_mode"):
+        agent_store.set_paper_revert(agent_id, _gate_note)
     # TradFi (xyz builder DEX) has no usable testnet liquidity → paper agents
     # trade crypto only; live agents get the full multi-asset universe.
     if venue == "HL" and paper:

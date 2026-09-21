@@ -2356,6 +2356,32 @@ def submit_capital_claim(strategy_id: str, requested_amount: float | None = None
         return _capital_claim_error(e)
 
 
+@router.get("/capital-claims/candidates")
+def capital_claim_candidates() -> dict:
+    """자본 배정 대기 — registry paper_active인데 청구 이력이 한 번도 없는 전략.
+    suggested_amount는 propose_claim()의 ceiling_ref(추천 비중×풀 한도) 참고용 제안일 뿐 —
+    배정액은 사람이 예/아니오/직접입력으로 결정해 POST /console/capital-claims로 제출."""
+    from jarvis.execution import capital_claims as cc
+    from jarvis.execution.capital_envelope import get_envelope
+    from jarvis.registry import Status, StrategyRegistry
+    active = [r["strategy_id"] for r in _safe(lambda: StrategyRegistry().all_current(), [])
+              if r["status"] == Status.PAPER_ACTIVE.value]
+    claimed = {c["strategy_id"] for c in _safe(lambda: cc.claim_history(limit=10000), [])}
+    pool_limit = _safe(lambda: get_envelope()["pool_limit"], 0.0)
+    candidates = []
+    for sid in active:
+        if sid in claimed:
+            continue
+        ceiling = _safe(lambda: cc.propose_claim(sid, total_capital_basis=pool_limit)["ceiling_ref"], {})
+        candidates.append({
+            "strategy_id": sid,
+            "suggested_amount": ceiling.get("capital_amount") if ceiling.get("weight") is not None else None,
+            "stale": ceiling.get("stale", True),
+        })
+    return {"candidates": candidates, "count": len(candidates),
+            "is_advisory": True, "is_decision": False}
+
+
 @router.get("/capital-claims/queue")
 def capital_claim_queue() -> dict:
     """대기열 — 엔벨로프 초과로 사람 승인 대기 중인 청구."""

@@ -3,6 +3,53 @@
 > 이 파일은 세션 간 작업 맥락을 이어주는 용도입니다.
 > 새 세션 시작 시: `@docs/progress.md @CLAUDE.md 읽고 이어서 작업해줘`
 
+## 세션 로그 (2026-09-22) — 오디세이 대조군 개명 + 아이템3/8 후속조치 + 커밋/push
+
+**배경**: 직전 세션(SIREN paper trading 스캐폴딩) 보고 뒤 5개 후속지시 받음 —
+(1) buyback v1 순수형(균등weight) 대조군을 "오디세이"로 개명(세이렌의 울음에도
+규칙에 묶여 안 흔들린다는 비유), (2) "3(관측=observation)은 페이퍼에이전트로
+따로 도는거냐, 다른 전략들도 쓰는 공유툴 아니냐" 질의 — 조사해서 확인, (3) "8은
+잘못된 곳 다 고쳐야지" — main.py 수동 `/orders/kr` 라우트 포지션캡 fail-closed
+미적용분까지 마저 수정, (4) 커밋+push, (5) 대시보드 아이템9로 넘어감(대시보드
+`docs/progress.md` Phase277 참고).
+
+**완료된 작업**:
+- **오디세이 개명**: `research/paper/buyback_v1_plain_forward.py` →
+  `odyssey_forward.py`(+ state/ledger/equity/report 파일, 실행스크립트,
+  launchd plist 전부 rename). launchd `com.seokminal.odyssey-forward`
+  재설치·확인(평일 08:22). SIREN과 동일 시작일/초기자본 유지.
+- **아이템3 조사**: `jarvis/_state/registry.jsonl`은 append-only 전이로그라
+  strategy_id별 최신 status만 골라야 정확함 — 확인 결과 KR `paper_active` 5개
+  (`kr_dart_buyback_drift_v1`, `kr_turn_of_month_v1_PORTFOLIO`,
+  `fac_kr_amihud_illiq_v1`, `fac_kr_size_smb_v1`, `fac_kr_turnover_neglect_v1`),
+  0개 아니었음. 또한 `buyback_edge.py`/`tom_edge.py`/`tsmom_edge.py`의 관측기간
+  상태머신이 buyback/factor/TOM/TSMOM 여러 전략군이 공유하는 진짜 공통툴임을
+  확인 — 유저 주장이 맞았음. SIREN/오디세이/buyback-v3-forward는 registry
+  밖의 순수 리포팅 harness로 별도 트랙.
+- **아이템8**: `api_server/main.py`의 `/orders/kr` 라우트가 `_check_risk`에
+  누적포지션 0 하드코딩하던 걸 `broker_bridge.py`와 동일하게 KIS 실보유수량
+  조회 → 실패시 fail-closed 거부로 수정(`_kr_current_position_qty` 헬퍼 신설).
+  `broker_bridge.py`의 `_kr_holdings_qty` 재사용 안 한 이유: `test_orders_api.py`가
+  `api_server.main.KISOrderClient`를 patch하는 모듈로컬 바인딩이라 재사용시
+  테스트가 실 KIS API를 침. US/US_OPTIONS/HL 라우트는 기존처럼 스코프 밖
+  (broker_bridge의 기존 의도적 제외와 동일 원칙). 전체 테스트 2077 passed.
+- **커밋/push**: `3b58245`(`7971a2a..3b58245`, origin/main). 동시에 다른
+  세션이 건드리던 `api_server/console_api.py`/`jarvis/execution/capital_claims.py`
+  (pool_capacity/strategy_capacity 신규 함수 — capital_claims UI 연동용으로
+  보임, 대시보드 Phase277에서 관련 정황 확인됨)는 파일 mtime으로 무관함
+  확인하고 의도적으로 커밋 제외.
+
+**변경된 파일**: `research/paper/odyssey_*.py`(rename), `research/paper/odyssey_state.json`
+등 상태파일 3종(rename), `scripts/deploy/run_odyssey_forward.sh`(rename),
+`scripts/deploy/launchd/com.seokminal.odyssey-forward.plist`(rename),
+`api_server/main.py`.
+
+**다음 할 일 / 막힌 부분**: 없음 — 5개 지시 전부 완료. `capital_claims.py`/
+`console_api.py`의 미커밋 pool/strategy capacity 작업은 다른 세션 소관이라
+계속 손 안 댐(대시보드측에서 자동청구 배선은 이미 별도로 완료됨, Phase277 참고).
+
+---
+
 ## 세션 로그 (2026-09-21) — KR buyback 사이징 최종게이트 + SIREN paper trading 스캐폴딩(완료)
 
 **배경**: KR 자사주매입(buyback) drift 전략 사이징 트랙 마무리 요청. 기존 `weightrank_adv`

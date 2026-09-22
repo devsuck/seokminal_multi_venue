@@ -5782,6 +5782,8 @@ async def _start_dart_bot() -> None:
     asyncio.create_task(alert_push_loop())
     from jarvis.broker_readonly.snapshot_job import snapshot_loop
     asyncio.create_task(snapshot_loop())
+    from api_server.venue_risk import venue_risk_loop
+    asyncio.create_task(venue_risk_loop())
 
 
 # ── Market Overview ───────────────────────────────────────────────────────────

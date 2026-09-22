@@ -51,7 +51,7 @@ ALLOWLIST = {
                                                 # KIS/IB/HL 클라이언트는 포지션·잔고·캔들 조회에만 씀
     "api_server/routers/alpaca_shared.py",     # broker_bridge가 쓰는 _trading_client() 팩토리 자체
                                                 # (계좌/포지션 조회 엔드포인트도 같이 씀 — 주문은 broker_bridge 경유)
-    "api_server/risk_state.py",                # TradingClient.get_portfolio_history()만 — 읽기 전용
+    "api_server/venue_risk.py",                # TradingClient.get_account()만 — 읽기 전용
     "insider/options_uoa_client.py",           # TradingClient.get_option_contracts()만 — 읽기 전용
                                                 # (insider 전략은 애초에 live 집행에 안 붙음)
     "jarvis/execution/live_router.py",         # 주문은 broker_bridge.route_order() 경유(line ~129).

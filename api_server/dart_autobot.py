@@ -367,7 +367,7 @@ def _tick_impl() -> dict:
 
     try:
         from api_server.risk_state import is_killed
-        if is_killed():
+        if is_killed("KR"):
             _log_event({"kind": "kill", "msg": "리스크 킬스위치 — 신규 매수 중단"})
             cfg["last_run"] = _dt.datetime.now(_dt.timezone.utc).isoformat()
             _save(cfg)

@@ -80,6 +80,26 @@ def test_multiple_symbols_independent():
     assert syms == {"AAPL"}
 
 
+def test_sell_to_open_tracks_short_instead_of_vanishing():
+    """회귀: Fork D Finding 2 / Fork C Finding 6 — 매수 기록 없이 매도(공매도)면
+    book이 비어 while 루프가 안 돌아 realized=0, lot도 안 남아 포지션이 사라짐."""
+    perf = compute_performance([_cycle(1, "TSLA", "sell", 5, 200.0, "숏")])
+    assert perf.realized_pnl == 0.0
+    assert perf.trades[0]["realized_pnl"] is None  # 오픈이라 아직 청산 없음
+    assert perf.open_positions == [{"symbol": "TSLA", "qty": -5, "avg_price": 200.0}]
+
+
+def test_buy_to_cover_short_realizes_pnl_not_new_long():
+    """숏 커버(되사기)가 신규 롱 오픈으로 오인되지 않고 기존 숏을 정산해야 함."""
+    perf = compute_performance([
+        _cycle(1, "TSLA", "sell", 5, 200.0, "숏"),
+        _cycle(2, "TSLA", "buy", 5, 150.0, "커버"),
+    ])
+    assert perf.realized_pnl == 250.0  # (200-150)*5
+    assert perf.trades[1]["realized_pnl"] == 250.0
+    assert perf.open_positions == []
+
+
 def test_invalid_fill_ignored():
     perf = compute_performance([
         {"cycle": 1, "symbol": "AAPL", "fill": {"side": "buy", "qty": 0, "price": 100}},

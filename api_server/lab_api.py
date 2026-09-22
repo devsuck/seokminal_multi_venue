@@ -7,6 +7,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from jarvis.config import MIN_LIVE_LEVEL
 from research.lab.pipeline import ENGINE
 
 router = APIRouter(prefix="/lab", tags=["lab"])
@@ -707,7 +708,7 @@ def execution_console() -> dict:
                   "cum_paper_pnl": paper.get("cum_paper_pnl"), "recent_closed": paper.get("recent_closed", [])[:5]},
         "arm_gate": {
             "armed": bool(armed and armed.get("armed")),
-            "autonomy_level": js.get("autonomy_level"), "min_live_level": 6,
+            "autonomy_level": js.get("autonomy_level"), "min_live_level": MIN_LIVE_LEVEL,
             "live_execution": js.get("live_execution"),
             "eligible": elig["eligible"], "reasons": elig.get("reasons", []),
             "paper_months": paper_months, "min_paper_months": CFG.MIN_OBSERVATION_MONTHS,

@@ -11,6 +11,7 @@ import asyncio
 import datetime as _dt
 import json
 import os
+import threading
 from pathlib import Path
 
 from fastapi import APIRouter
@@ -55,18 +56,44 @@ def _recent_log(n: int = 40) -> list[dict]:
         return []
 
 
+def _record_order(symbol: str, order) -> None:
+    """close_position()은 Alpaca TradingClient를 직접 호출함(broker_bridge 안 거침) —
+    dashboard 실현손익/오더뷰가 읽는 api_server.oms·order_audit엔 직접 기록해야
+    청산이 보임(회귀: Fork C Finding 5). Order 객체 → dict는 _fmt_order()로
+    통일(id/filled_qty 키 → oms.record_event가 읽는 order_id/filled로 매핑,
+    broker_bridge의 US_ALPACA 처리와 동일 패턴)."""
+    try:
+        from api_server import oms
+        from api_server.order_audit import record_order
+        from api_server.routers.alpaca_shared import _fmt_order
+        result = _fmt_order(order)
+        record_order(venue="US_ALPACA", request={"venue": "US_ALPACA", "symbol": symbol, "side": "SELL"},
+                     result=result, status="submitted")
+        oms.record_event("US_ALPACA", {**result, "order_id": result.get("id"), "filled": result.get("filled_qty")},
+                          symbol=symbol, side=result.get("side", "sell").upper())
+    except Exception:  # noqa: BLE001 — 청산은 이미 성공, 부가기록 실패로 흐름 막지 않음
+        pass
+
+
+_tick_lock = threading.Lock()
+
+
 def tick() -> dict:
+    """백그라운드 루프와 수동 트리거(POST /run-now)가 같은 threadpool에서 겹쳐
+    돌면 cfg 로드→수정→저장 구간이 경합함 — 전역 락으로 tick 전체를 직렬화."""
+    with _tick_lock:
+        return _tick_impl()
+
+
+def _tick_impl() -> dict:
     """1회 실행: TP/SL 임계 초과 페이퍼 포지션 전부 청산."""
+    # 이 봇은 신규 매수 없이 TP/SL 자동청산만 함 — 킬스위치가 이 tick 자체를 막으면
+    # 드로다운 브레이크가 봇의 유일한 기능(위험 축소)을 정지시키는 역설이 됨.
+    # (회귀: Fork C Finding 4 — dart_autobot/vrp_bot과 동일한 버그, 여기선 청산
+    # 전용 봇이라 gate할 매수 루프 자체가 없으므로 체크를 완전히 제거)
     cfg = _load()
     if not cfg["enabled"]:
         return {"skipped": "disabled"}
-    try:
-        from api_server.risk_state import is_killed
-        if is_killed():
-            _log_event({"kind": "kill", "msg": "리스크 킬스위치 — 자동청산 중단"})
-            return {"skipped": "kill_switch"}
-    except Exception:
-        pass
 
     key = os.environ.get("ALPACA_API_KEY", "")
     sec = os.environ.get("ALPACA_SECRET_KEY", "")
@@ -92,7 +119,8 @@ def tick() -> dict:
                 continue
             try:
                 pl_dollar = float(p.unrealized_pl)  # 청산 시점 Alpaca 평가손익 = 실현손익으로 확정
-                client.close_position(p.symbol)
+                order = client.close_position(p.symbol)
+                _record_order(p.symbol, order)
                 cfg["realized_pnl"] = round(cfg.get("realized_pnl", 0.0) + pl_dollar, 4)
                 closed.append({"ticker": p.symbol, "pl_pct": round(plpc, 2), "pl_dollar": round(pl_dollar, 2), "reason": reason})
                 _log_event({"kind": "close", "ticker": p.symbol, "pl_pct": round(plpc, 2), "pl_dollar": round(pl_dollar, 2), "reason": reason})

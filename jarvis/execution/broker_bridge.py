@@ -19,7 +19,9 @@ from backends.kis.order_client import KISOrderClient
 from jarvis.audit import record
 from jarvis.config import AUTONOMY_LEVEL, MIN_LIVE_LEVEL, live_execution_enabled
 from jarvis.execution import deadman
-from live_engine.risk_guard import DailyLossLimitBreached, RiskConfig, RiskViolation, validate_order
+from live_engine.risk_guard import (
+    DailyLossLimitBreached, RiskConfig, RiskViolation, order_increases_exposure, validate_order,
+)
 
 
 class BrokerOrderRejected(Exception):
@@ -91,17 +93,19 @@ def _gate(order: dict) -> None:
                 "symbol": order.get("symbol"), "result": "autonomy_blocked", "reason": reason})
         raise BrokerOrderRejected(f"live execution disabled ({reason})")
 
-    if order["side"].upper() == "BUY" and deadman.is_expired():
-        reason = f"deadman switch expired (no heartbeat within {deadman.deadman_days()}d)"
-        record({"layer": "broker_bridge", "action": "route_order", "venue": order.get("venue"),
-                "symbol": order.get("symbol"), "result": "deadman_blocked", "reason": reason})
-        raise BrokerOrderRejected(reason)
-
     current_qty = _current_position_qty(order)
     if current_qty is None:
         reason = "position lookup failed — refusing to gate blind on unknown exposure"
         record({"layer": "broker_bridge", "action": "route_order", "venue": order.get("venue"),
                 "symbol": order.get("symbol"), "result": "position_check_failed", "reason": reason})
+        raise BrokerOrderRejected(reason)
+
+    # "청산은 항상 허용"은 route_close() 전용 원칙(deadman.py 참고) — route_order()를 통한
+    # 신규 숏 진입까지 매도라서 면제되면 안 됨. 익스포저를 늘리는 주문만 게이트한다.
+    if order_increases_exposure(order["side"], float(order["quantity"]), current_qty) and deadman.is_expired():
+        reason = f"deadman switch expired (no heartbeat within {deadman.deadman_days()}d)"
+        record({"layer": "broker_bridge", "action": "route_order", "venue": order.get("venue"),
+                "symbol": order.get("symbol"), "result": "deadman_blocked", "reason": reason})
         raise BrokerOrderRejected(reason)
 
     cfg = RiskConfig.from_env(venue=order["venue"])
@@ -118,7 +122,30 @@ def _gate(order: dict) -> None:
         raise BrokerOrderRejected(str(exc)) from exc
 
 
-def _audit_submitted(order: dict, paper: bool) -> None:
+def _record_oms_and_audit(order: dict, paper: bool, result: dict) -> None:
+    """dashboard의 실현손익 계산(main.py)과 /orders/audit·/orders/oms 엔드포인트는
+    api_server.oms/api_server.order_audit만 읽는다 — 이 함수가 빠지면 이 브릿지로
+    나간 주문은 그 두 화면에서 완전히 안 보임(jarvis.audit.log는 별개의 3번째
+    감사로그라 대체가 안 됨). KR(_place_kr)은 이미 order_id/filled/remaining/status
+    키로 옴(main.py /orders/kr과 동일 응답 형태) — 그대로 통과. US_ALPACA(_fmt_order)는
+    id/filled_qty 키를 써서 oms.record_event가 읽는 order_id/filled로 매핑
+    필요(main.py /orders/us paper 분기와 동일 패턴). HL은 raw SDK 응답이라 order_id가
+    없어 oms.record_event가 조용히 no-op — order_audit엔 그대로 남으니 완전 무기록은
+    아님(HL 쪽 매핑은 이번 스코프 밖)."""
+    from api_server import oms
+    from api_server.order_audit import record_order as _record_order_audit
+    _record_order_audit(venue=order["venue"], request=order, result=result, status="submitted")
+    oms_result = result
+    if order["venue"] == "US_ALPACA":
+        oms_result = {**result, "order_id": result.get("id"), "filled": result.get("filled_qty")}
+    oms.record_event(order["venue"], oms_result, symbol=order.get("symbol"), side=order["side"])
+
+
+def _audit_submitted(order: dict, paper: bool, result: dict) -> None:
+    try:
+        _record_oms_and_audit(order, paper, result)
+    except Exception:  # noqa: BLE001 — 아래 jarvis 감사로그와 동일 원칙: 브로커 제출은
+        pass            # 이미 성공, 부가 기록 실패로 예외 던지면 호출부가 오기록함
     try:
         record({"layer": "broker_bridge", "action": "route_order", "venue": order["venue"],
                 "symbol": order.get("symbol"), "side": order["side"],
@@ -145,7 +172,7 @@ def route_order(order: dict) -> dict:
     else:
         raise BrokerOrderRejected(f"unknown venue: {venue} (US_IB은 route_order_ib() 사용)")
 
-    _audit_submitted(order, paper)
+    _audit_submitted(order, paper, result)
     return result
 
 
@@ -162,7 +189,7 @@ async def route_order_ib(order: dict, ib_client) -> dict:
         order.get("order_type", "MARKET"), order.get("price"),
         wait_fill=order.get("wait_fill", False),
     )
-    _audit_submitted(order, paper)
+    _audit_submitted(order, paper, result)
     return result
 
 

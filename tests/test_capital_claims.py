@@ -166,3 +166,22 @@ def test_ceiling_ref_stale_when_no_recommendation():
     _paper_active("S1")
     proposal = cc.propose_claim("S1", requested_amount=None, total_capital_basis=10000)
     assert proposal["ceiling_ref"]["stale"] is True
+
+
+def test_live_balance_subtracts_already_allocated(monkeypatch):
+    """이미 agent_store 실운용 agent가 쓰고 있는 몫은 여기서 또 배정 가능하면 안 됨."""
+    import api_server.routers.agents as agents_router
+
+    def fake_account_balances():
+        return {"accounts": [
+            {"venue": "kis_live", "mode": "live", "ccy": "KRW", "balance": 1000.0, "allocated": 300.0},
+            {"venue": "hl_mainnet", "mode": "live", "ccy": "USDC", "balance": 100.0, "allocated": 0.0},
+            {"venue": "kis_mock", "mode": "paper", "ccy": "KRW", "balance": 999999.0, "allocated": 0.0},
+        ]}
+
+    monkeypatch.setattr(agents_router, "account_balances", fake_account_balances)
+    monkeypatch.setattr(cc, "_usdkrw", lambda: 1400.0)
+    cc._LIVE_BALANCE_CACHE.clear()
+
+    free = cc._live_balance_krw()
+    assert free == pytest.approx((1000.0 - 300.0) + 100.0 * 1400.0)

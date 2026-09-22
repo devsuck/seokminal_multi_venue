@@ -122,10 +122,36 @@ def _order_client():
                           client_id=int(os.environ.get("IB_VRP_ORDER_CLIENT_ID", "77")))
 
 
+def _record_order(symbol: str, side: str, request: dict, result: dict) -> None:
+    """이 봇은 broker_bridge를 안 거치고 IBOrderClient를 직접 호출함 — dashboard의
+    실현손익 계산과 /orders/audit·/orders/oms는 api_server.oms/order_audit만
+    읽으므로 여기서 직접 기록해야 봇 체결이 보임(회귀: Fork C Finding 5).
+    IBOrderClient._to_dict()의 order_id/status/filled/remaining/avg_fill_price
+    키가 oms.record_event 입력과 그대로 맞음 — 별도 매핑 불필요."""
+    try:
+        from api_server import oms
+        from api_server.order_audit import record_order
+        record_order(venue="US_IB", request=request, result=result, status="submitted")
+        oms.record_event("US_IB", result, symbol=symbol, side=side)
+    except Exception:  # noqa: BLE001 — 브로커 제출은 이미 성공, 부가기록 실패로 흐름 막지 않음
+        pass
+
+
+def _contract_symbol(symbol: str, expiry: str, strike: float, right: str) -> str:
+    """order_pnl.py의 FIFO 매처는 (venue, symbol)별로 롱/숏 구분 없이 매칭함 —
+    콘도어 4레그를 전부 symbol=underlying으로 기록하면 서로 다른 계약(콜/풋,
+    다른 strike)이 같은 종목인 것처럼 섞여 매칭됨. 계약별 고유 키로 분리."""
+    return f"{symbol}_{expiry}_{strike}_{right}"
+
+
 async def _place_leg(order_client, symbol: str, expiry: str, strike: float, right: str,
                       side: str, contracts: int) -> dict:
     r = await order_client.place_option_order(symbol, expiry, strike, right, side,
                                                contracts, "MARKET", None, wait_fill=True)
+    _record_order(_contract_symbol(symbol, expiry, strike, right), side,
+                  {"venue": "US_IB", "symbol": symbol, "expiry": expiry,
+                   "strike": strike, "right": right, "side": side,
+                   "quantity": contracts, "order_type": "MARKET"}, r)
     return {"strike": strike, "right": right, "side": side, "contracts": contracts,
             "fill": r.get("avg_fill_price")}
 
@@ -135,10 +161,15 @@ async def _unwind_legs(order_client, symbol: str, expiry: str, filled_legs: list
     for leg in filled_legs:
         try:
             reverse = "SELL" if leg["side"] == "BUY" else "BUY"
-            await order_client.place_option_order(
+            r = await order_client.place_option_order(
                 symbol, expiry, leg["strike"], leg["right"], reverse,
                 leg["contracts"], "MARKET", None, wait_fill=True,
             )
+            _record_order(_contract_symbol(symbol, expiry, leg["strike"], leg["right"]), reverse,
+                          {"venue": "US_IB", "symbol": symbol, "expiry": expiry,
+                           "strike": leg["strike"], "right": leg["right"],
+                           "side": reverse, "quantity": leg["contracts"],
+                           "order_type": "MARKET"}, r)
         except Exception as e:  # noqa: BLE001
             _log_event({"kind": "unwind_fail", "symbol": symbol, "leg": leg, "msg": str(e)[:80]})
 
@@ -331,6 +362,11 @@ async def _close_position(order_client, pos: dict) -> float | None:
             )
         except Exception:
             return None
+        _record_order(_contract_symbol(pos["symbol"], pos["expiry"], leg["strike"], leg["right"]), reverse,
+                      {"venue": "US_IB", "symbol": pos["symbol"],
+                       "expiry": pos["expiry"], "strike": leg["strike"],
+                       "right": leg["right"], "side": reverse,
+                       "quantity": leg["contracts"], "order_type": "MARKET"}, r)
         fill = r.get("avg_fill_price")
         if fill is None:
             return None
@@ -380,20 +416,38 @@ async def _process_exits(cfg: dict) -> int:
     return closed
 
 
+_tick_lock = asyncio.Lock()
+
+
 async def tick() -> dict:
+    """백그라운드 루프와 수동 트리거(POST /run-now)가 같은 이벤트루프에서 겹쳐
+    돌면 await 지점에서 인터리빙되어 cfg 로드→수정→저장 구간이 경합함 — 락으로
+    tick 전체를 직렬화."""
+    async with _tick_lock:
+        return await _tick_impl()
+
+
+async def _tick_impl() -> dict:
     cfg = _load()
     if not cfg["enabled"]:
         return {"skipped": "disabled"}
+
+    # 청산은 킬스위치와 무관하게 항상 실행 — 드로다운 브레이크가 만기 청산/손절까지
+    # 얼어붙게 하면 위험이 커진 순간 오히려 리스크를 방치하게 됨(회귀: Fork C Finding 4,
+    # dart_autobot과 동일 버그).
+    closed = await _process_exits(cfg)
+    _save(cfg)
+
     try:
         from api_server.risk_state import is_killed
         if is_killed():
-            _log_event({"kind": "kill", "msg": "리스크 킬스위치 — 매매 중단"})
-            return {"skipped": "kill_switch"}
+            _log_event({"kind": "kill", "msg": "리스크 킬스위치 — 신규 진입 중단"})
+            cfg["last_run"] = _dt.datetime.now(_dt.timezone.utc).isoformat()
+            _save(cfg)
+            return {"skipped": "kill_switch", "closed": closed}
     except Exception:
         pass
 
-    closed = await _process_exits(cfg)
-    _save(cfg)
     entered = await _scan_and_enter(cfg)
     cfg["last_run"] = _dt.datetime.now(_dt.timezone.utc).isoformat()
     _save(cfg)

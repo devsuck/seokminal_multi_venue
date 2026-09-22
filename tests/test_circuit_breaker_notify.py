@@ -7,8 +7,7 @@ from api_server import main as api_main
 
 @pytest.fixture(autouse=True)
 def _isolate_tracker(monkeypatch):
-    # Fresh tracker + reset debounce state so tests don't leak into each other.
-    monkeypatch.setattr(api_main, "daily_pnl_tracker", api_main.DailyPnLTracker())
+    # Reset debounce state so tests don't leak into each other.
     monkeypatch.setattr(api_main, "_circuit_breaker_notified_day", None)
     monkeypatch.setenv("DAILY_LOSS_LIMIT", "1000")
     monkeypatch.delenv("TRADING_KILL_SWITCH", raising=False)
@@ -17,7 +16,7 @@ def _isolate_tracker(monkeypatch):
 def test_daily_loss_breach_notifies_once(monkeypatch):
     calls = []
     monkeypatch.setattr("api_server.lv6_notify.notify_circuit_breaker", lambda **kw: calls.append(kw))
-    api_main.daily_pnl_tracker.add(-2000)
+    monkeypatch.setattr(api_main, "_today_realized_pnl", lambda: -2000.0)
 
     for _ in range(3):
         with pytest.raises(HTTPException):

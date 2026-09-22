@@ -86,19 +86,28 @@ def compute_performance(cycles: list[dict]) -> Performance:
             }
 
             book = lots.setdefault(symbol, deque())
-            if side == "buy":
-                book.append(_Lot(qty=qty, price=price))
-            else:  # sell — realize against oldest lots (FIFO)
-                remaining = qty
-                realized = 0.0
-                while remaining > 1e-9 and book:
-                    lot = book[0]
-                    take = min(remaining, lot.qty)
+            signed_qty = qty if side == "buy" else -qty
+            remaining, realized = abs(signed_qty), 0.0
+            # 반대 방향 lot부터 FIFO로 정산 — sell은 기존 롱을 청산, buy는 기존 숏을 커버.
+            # book이 비어있거나 같은 방향이면 루프 안 돌고 remaining이 그대로 남아 아래서
+            # 새 lot(양수=롱 또는 음수=숏)으로 적립됨 — sell-to-open이 book 비었다고
+            # realized=0으로 사라지지 않고 숏 lot으로 추적됨(order_pnl.py와 동일 버그,
+            # 회귀: Fork D Finding 2 / Fork C Finding 6 — 같은 근본원인의 독립 구현체).
+            while remaining > 1e-9 and book and (book[0].qty > 0) != (signed_qty > 0):
+                lot = book[0]
+                take = min(remaining, abs(lot.qty))
+                if side == "sell":
                     realized += (price - lot.price) * take
-                    lot.qty -= take
-                    remaining -= take
-                    if lot.qty <= 1e-9:
-                        book.popleft()
+                else:
+                    realized += (lot.price - price) * take
+                lot.qty += take if lot.qty < 0 else -take
+                remaining -= take
+                if abs(lot.qty) <= 1e-9:
+                    book.popleft()
+            matched = abs(signed_qty) - remaining
+            if remaining > 1e-9:
+                book.append(_Lot(qty=remaining if side == "buy" else -remaining, price=price))
+            if matched > 1e-9:
                 perf.realized_pnl += realized
                 trade["realized_pnl"] = round(realized, 4)
 
@@ -107,7 +116,7 @@ def compute_performance(cycles: list[dict]) -> Performance:
     # Snapshot open positions from remaining lots.
     for symbol, book in lots.items():
         total_qty = sum(l.qty for l in book)
-        if total_qty <= 1e-9:
+        if abs(total_qty) <= 1e-9:  # 숏은 total_qty가 음수라 <= 1e-9 스킵 조건에 항상 걸림
             continue
         cost = sum(l.qty * l.price for l in book)
         avg = cost / total_qty

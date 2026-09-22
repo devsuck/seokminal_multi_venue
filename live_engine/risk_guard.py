@@ -77,6 +77,15 @@ class RiskConfig:
         )
 
 
+def order_increases_exposure(side: str, quantity: float, current_position_qty: float) -> bool:
+    """True if this order grows |position| (opens/adds) rather than reduces it.
+    Shared by validate_order()'s position cap and broker_bridge's deadman gate —
+    both need the same signed-exposure direction, computed once so they can't drift."""
+    signed = quantity if side.upper() == "BUY" else -quantity
+    projected = current_position_qty + signed
+    return abs(projected) > abs(current_position_qty)
+
+
 def validate_order(
     *,
     side: str,
@@ -130,7 +139,7 @@ def validate_order(
     # Position cap: only enforce when the order *increases* absolute exposure.
     signed = quantity if side.upper() == "BUY" else -quantity
     projected = current_position_qty + signed
-    increases_exposure = abs(projected) > abs(current_position_qty)
+    increases_exposure = order_increases_exposure(side, quantity, current_position_qty)
     if increases_exposure and abs(projected) > config.max_position_qty:
         raise RiskViolation(
             f"resulting position {projected} exceeds max position qty "

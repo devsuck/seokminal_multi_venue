@@ -95,6 +95,80 @@ def test_hl_places_order_and_notifies(monkeypatch, _no_real_notify):
     assert _no_real_notify[0]["venue"] == "HL"
 
 
+def test_kr_order_recorded_to_oms_and_order_audit(monkeypatch, tmp_path):
+    """회귀: Fork C Finding 5 — route_order로 나간 봇 주문이 dashboard 실현손익/
+    /orders/audit·/orders/oms가 읽는 api_server.oms·order_audit에 안 남으면
+    체결이 있어도 대시보드에서 완전히 안 보임."""
+    from api_server import oms
+    monkeypatch.setattr(oms, "_orders", {})
+    monkeypatch.setenv("ORDER_AUDIT_PATH", str(tmp_path / "audit.jsonl"))
+    monkeypatch.setenv("KIS_MOCK_APP_KEY", "k")
+    monkeypatch.setenv("KIS_MOCK_APP_SECRET", "s")
+    monkeypatch.setenv("KIS_MOCK_CANO", "c")
+    monkeypatch.setenv("KIS_ACNT_PRDT_CD", "01")
+    monkeypatch.delenv("MAX_ORDER_QTY_KR", raising=False)
+
+    class _FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        def get_holdings(self):
+            return []
+
+        def place_order(self, symbol, side, qty, order_type, price):
+            return {"order_id": "ORD123", "status": "SUBMITTED", "filled": 0.0, "remaining": float(qty)}
+
+    monkeypatch.setattr(bb, "KISOrderClient", _FakeClient)
+    bb.route_order(_kr_order())
+
+    order = oms.get_order("KR", "ORD123")
+    assert order is not None
+    assert order["symbol"] == "005930"
+    assert order["side"] == "BUY"
+
+    from api_server.order_audit import read_recent
+    entries = read_recent(path=tmp_path / "audit.jsonl")
+    assert len(entries) == 1
+    assert entries[0]["venue"] == "KR"
+    assert entries[0]["result"]["order_id"] == "ORD123"
+
+
+def test_us_alpaca_order_recorded_to_oms_maps_id_and_filled_qty(monkeypatch, tmp_path):
+    """_fmt_order()는 id/filled_qty 키를 쓰는데 oms.record_event는 order_id/filled를
+    읽음 — 매핑 안 하면 US_ALPACA 주문은 oms.record_event가 조용히 no-op됨."""
+    from api_server import oms
+    monkeypatch.setattr(oms, "_orders", {})
+    monkeypatch.setenv("ORDER_AUDIT_PATH", str(tmp_path / "audit.jsonl"))
+    monkeypatch.setattr(bb, "live_execution_enabled", lambda: True)
+
+    class _FakeOrder:
+        id = "abc-123"
+        symbol = "AAPL"
+        side = type("S", (), {"value": "buy"})()
+        qty = 1.0
+        filled_qty = 1.0
+        status = type("St", (), {"value": "filled"})()
+        filled_avg_price = 150.0
+        created_at = None
+
+    class _FakeClient:
+        def submit_order(self, req):
+            return _FakeOrder()
+
+    monkeypatch.setattr(
+        "api_server.routers.alpaca_shared._trading_client",
+        lambda paper: _FakeClient(),
+    )
+    order = dict(venue="US_ALPACA", symbol="AAPL", side="BUY", quantity=1,
+                 order_type="market", price=None, paper=True)
+    bb.route_order(order)
+
+    recorded = oms.get_order("US_ALPACA", "abc-123")
+    assert recorded is not None
+    assert recorded["status"] == "FILLED"
+    assert recorded["price"] == 150.0
+
+
 def test_notify_failure_does_not_mislabel_submitted_order(monkeypatch):
     """주문 제출 성공 후 감사기록/알림이 터져도 route_order는 성공 result를 반환해야 함
     (호출부가 이미 나간 주문을 blocked로 오기록하는 사고 방지)."""

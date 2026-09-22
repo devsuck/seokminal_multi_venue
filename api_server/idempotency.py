@@ -9,12 +9,29 @@ means a rare double-submit risk returns, not persisted corruption.
 """
 from __future__ import annotations
 
+import asyncio
+import threading
 import time
 
 _TTL_SECONDS = 300
 _MAX_ENTRIES = 1000
 
 _cache: dict[tuple[str, str], tuple[float, dict]] = {}
+
+_sync_locks: dict[str, threading.Lock] = {}
+_async_locks: dict[str, asyncio.Lock] = {}
+
+
+def lock(venue: str) -> threading.Lock:
+    """venue별 전역 락 — sync 주문 엔드포인트(KR)의 get_cached→브로커 호출→store
+    구간을 직렬화해 동시 요청의 이중 제출을 막음.
+    ponytail: venue 전체 직렬화, 처리량 문제되면 client_order_id별 락으로 세분화."""
+    return _sync_locks.setdefault(venue, threading.Lock())
+
+
+def async_lock(venue: str) -> asyncio.Lock:
+    """lock()과 동일 목적, async 주문 엔드포인트(US/US_OPTIONS)용."""
+    return _async_locks.setdefault(venue, asyncio.Lock())
 
 
 def get_cached(venue: str, client_order_id: str | None) -> dict | None:

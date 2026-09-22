@@ -3575,3 +3575,61 @@ Daytrade E2E/lv5가상화폐)이 `status:stopped`였던 원인을 `docs/progress
 ### 결정사항
 - "아니오" 클릭 시 별도 반려 상태/필드 안 만들고 `requested_amount=0` 제출로
   처리 — 기존 청구 이력 기반 후보 필터링 로직을 그대로 재사용(중복 로직 회피).
+
+## 2026-09-22: 전면 디버그 스윕 (Fork C Finding 5/6, Fork D Finding 2)
+
+### 완료된 작업
+- **Fork C Finding 5 — 봇 주문이 `oms`/`order_audit`에 안 기록되던 문제**: 대시보드
+  실현손익 계산과 `/orders/audit`·`/orders/oms`는 오직 `api_server.oms`/
+  `order_audit`만 읽는데(`jarvis/audit/log.py`는 별개의 3번째 감사로그라 대체 안 됨),
+  `broker_bridge.route_order()`/`route_order_ib()`(dart_autobot 외 5개 호출부 공유
+  chokepoint), `vrp_bot.py`(IBOrderClient 직접호출), `copytrade_autobot.py`(Alpaca
+  TradingClient 직접호출) 세 경로 전부 이 기록을 안 하고 있었음 — 전부 배선.
+  US_ALPACA는 `_fmt_order()`의 `id`/`filled_qty` 키를 `oms.record_event`가 읽는
+  `order_id`/`filled`로 매핑 필요(`main.py` `/orders/us` paper 분기와 동일 패턴).
+- **자체발견 버그 — vrp_bot 옵션 4레그가 종목코드 하나로 뭉침**: 위 Finding 5 수정
+  중 vrp_bot 콘도어 4레그(콜/풋 롱숏)를 전부 `symbol=underlying`(예: "SPY")으로
+  기록했었는데, `order_pnl.py`의 FIFO 매처는 `(venue, symbol)`별로만 매칭함 —
+  서로 다른 계약(다른 strike/right)이 같은 종목인 것처럼 섞여 매칭될 뻔함. 배포
+  전에 직접 잡아서 `_contract_symbol(symbol, expiry, strike, right)`로 계약별
+  고유 키 분리.
+- **Fork C Finding 6 / Fork D Finding 2 (같은 근본원인의 독립구현 2건) — FIFO PnL
+  매처가 숏/매도(공매도·옵션매도) 포지션을 못 표현**: `order_pnl.py`와
+  `agent_perf.py` 둘 다 매도가 book에 반대 lot이 없으면(sell-to-open) while 루프가
+  안 돌아 `realized=0`으로 사라지고 포지션 자체가 추적 안 됐음. 이후 되사기
+  (buy-to-cover)가 오면 신규 롱 오픈으로 오인식. 두 파일 모두 매칭 로직을 양방향
+  대칭으로 일반화(`signed_qty` 기반, buy가 기존 숏을 커버하는 경우도 realized 계산)
+  + `open_positions` 스킵조건 `total_qty <= 1e-9` → `abs(total_qty) <= 1e-9`로 수정
+  (숏은 total_qty가 음수라 항상 스킵되던 버그). `daily_summary.py`의
+  `realized_pnl is not None` 필터(청산여부 판정)도 부작용으로 같이 고쳐짐 —
+  sell-to-open을 더 이상 "청산됨"으로 오카운트 안 함.
+- 회귀테스트 8개 신규(`test_broker_bridge.py` 2개, `test_vrp_bot.py` 1개+기존1개
+  수정, `test_copytrade_autobot.py` 1개, `test_order_pnl.py` 2개, `test_agent_perf.py`
+  2개). `pytest tests/ -q` 2109→2113 passed, 회귀 없음.
+
+### 변경된 파일
+- `jarvis/execution/broker_bridge.py` (`_record_oms_and_audit()` 추가 + `_audit_submitted` 배선)
+- `api_server/vrp_bot.py` (`_record_order()` + `_contract_symbol()` 추가, 3곳 배선)
+- `api_server/copytrade_autobot.py` (`_record_order()` 추가 + 배선)
+- `api_server/order_pnl.py` (FIFO 매칭 양방향 일반화 + open_positions abs() 수정)
+- `api_server/agent_perf.py` (동일 FIFO 수정 — 독립 구현체라 따로 고침)
+- `tests/test_broker_bridge.py`, `tests/test_vrp_bot.py`, `tests/test_copytrade_autobot.py`,
+  `tests/test_order_pnl.py`, `tests/test_agent_perf.py`
+
+### 다음 할 일
+- **Fork C Finding 2 미논의**: `risk_state.py`의 MDD 자동킬이 "unified"라 라벨됐지만
+  실제론 Alpaca-paper만 봄 — dart_autobot/vrp_bot/copytrade_autobot 등 나머지 venue는
+  이 브레이크로 보호 안 됨. 유저에게 스코프 질문으로 아직 안 올림(크로스벤뉴 자산합산
+  기능으로 조용히 확장하면 안 됨).
+- `bash scripts/restart_api.sh` 재기동 여전히 보류 — 이전 세션에서 물어본 권한 요청에
+  응답 없어 재시도 안 함. 이번 세션 수정사항(Finding 5/6, Fork D Finding 2) 전부
+  재기동 전까지 실제 프로세스에 미반영.
+- **커밋 안 됨** — 이번 세션 전체(브로커브릿지+3개봇 Finding5, order_pnl/agent_perf
+  Finding6) 누적 diff 미커밋. 유저 요청 시 진행.
+
+### 결정사항
+- `agent_perf.py`의 `invested` 필드는 손 안 댐 — 숏 lot의 `cost`가 음수로 계산돼
+  `invested`도 음수가 되는데, 이는 숏 오픈 시 프리미엄을 미리 받는 경제적 실제와
+  일치(margin 계좌 별도 모델링 없이도 `cash = alloc + realized - invested` 공식이
+  자연스럽게 맞음) — 별도 마진 회계 안 만듦(YAGNI, 현재 이 코드경로로 숏 여는
+  실전 전략 없음 — daytrade_logic류는 전부 롱온리).

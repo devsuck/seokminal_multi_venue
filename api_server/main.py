@@ -45,7 +45,6 @@ from live_engine.engine import engine as live_engine, make_broker
 from live_engine.broker_interface import BotStatus
 from live_engine.risk_guard import (
     DailyLossLimitBreached,
-    DailyPnLTracker,
     RiskConfig,
     RiskViolation,
     set_kill_switch_file,
@@ -3155,6 +3154,7 @@ class KROrderResponse(BaseModel):
 class KRCancelRequest(BaseModel):
     code: str
     quantity: int
+    paper: bool = True  # must match the original order's mode — else this hits the wrong KIS account
 
 
 class USOrderRequest(BaseModel):
@@ -3212,10 +3212,19 @@ class AllBotsStatusResponse(BaseModel):
     bots: list[BotLiveEntry]
 
 
-# Shared firm-wide risk state: one config snapshot (env-driven) and one
-# realized-PnL ledger feed the pre-trade guard on every order path.
-daily_pnl_tracker = DailyPnLTracker()
+# Shared firm-wide risk state: one config snapshot (env-driven) feeds the
+# pre-trade guard on every order path. Realized PnL is computed fresh each
+# call from oms/order_audit (see _today_realized_pnl) rather than an
+# in-memory accumulator, so it survives a restart and reflects real fills.
 _circuit_breaker_notified_day: str | None = None  # debounce: alert once per breach-day, not per blocked retry
+
+
+def _today_realized_pnl() -> float:
+    """Today's net realized PnL across all venues, sourced the same way as
+    /pnl/realized — the pre-trade daily-loss check must reflect real fills,
+    not an accumulator nothing ever feeds."""
+    fallback = order_pnl.price_fallback_from_audit(read_order_audit(limit=5000))
+    return order_pnl.today_realized_pnl(oms.list_orders(limit=5000), fallback)
 
 
 def _check_risk(
@@ -3231,13 +3240,14 @@ def _check_risk(
     etc.) when set; omitted paths (US/options) keep the legacy shared limits.
     """
     cfg = RiskConfig.from_env(venue=venue)
+    day_pnl = _today_realized_pnl()
     try:
         validate_order(
             side=side,
             quantity=quantity,
             price_estimate=price_estimate,
             current_position_qty=current_position_qty,
-            day_realized_pnl=daily_pnl_tracker.realized(),
+            day_realized_pnl=day_pnl,
             config=cfg,
         )
         if option_expiry is not None:
@@ -3250,7 +3260,7 @@ def _check_risk(
             from api_server.lv6_notify import notify_circuit_breaker
             notify_circuit_breaker(
                 agent_id="FIRM",  # firm-wide chokepoint, not per-agent — see module docstring
-                daily_loss_usd=abs(daily_pnl_tracker.realized()),
+                daily_loss_usd=abs(day_pnl),
                 limit_usd=cfg.daily_loss_limit,
             )
         raise HTTPException(status_code=422, detail=f"risk check failed: {exc}") from exc
@@ -3363,6 +3373,49 @@ def _kr_current_position_qty(code: str, paper: bool) -> float | None:
     return 0.0
 
 
+async def _ib_position_qty(port: int, client_id: int, symbol: str) -> float | None:
+    """IB 보유 수량 조회 — contract.symbol이 기초자산 티커라 같은 심볼의 주식/옵션
+    포지션이 합산될 수 있음(과소평가보단 과대평가가 안전한 캡 방향이라 의도적)."""
+    try:
+        ib_client = _get_ib_order_client(port=port, client_id=client_id)
+        return sum(p["qty"] for p in await ib_client.get_positions() if p["symbol"] == symbol)
+    except Exception:
+        return None
+
+
+async def _us_current_position_qty(symbol: str, paper: bool) -> float | None:
+    """실보유 수량 조회(Alpaca 또는 IB) — _check_risk의 포지션캡 계산 입력.
+    None = 조회 실패, 호출부가 fail-closed 거부. 0.0 = 조회 성공, 포지션 없음
+    (_kr_current_position_qty와 동일 원칙)."""
+    if paper:
+        try:
+            from api_server.routers import alpaca_shared as shared
+            for p in shared._trading_client().get_all_positions():
+                if p.symbol == symbol:
+                    return float(p.qty)
+            return 0.0
+        except Exception:
+            return None
+    return await _ib_position_qty(
+        port=7496, client_id=int(os.environ.get("IB_MANUAL_ORDER_CLIENT_ID", "10")), symbol=symbol,
+    )
+
+
+def _hl_current_position_qty(coin: str, paper: bool) -> float | None:
+    """실보유 수량 조회(Hyperliquid) — _check_risk의 포지션캡 계산 입력. None/0.0 규칙은
+    _kr_current_position_qty와 동일."""
+    try:
+        from hyperliquid.trader import get_positions
+        raw = get_positions(paper=paper)
+        for p in raw.get("asset_positions", []):
+            pos = p.get("position", {})
+            if pos.get("coin") == coin:
+                return float(pos.get("szi", 0) or 0)
+        return 0.0
+    except Exception:
+        return None
+
+
 @app.post("/orders/kr", response_model=KROrderResponse)
 def place_kr_order(req: KROrderRequest) -> KROrderResponse:
     # Route to 모의(KIS_MOCK) or 실전(KIS) creds + server by the paper flag.
@@ -3375,39 +3428,40 @@ def place_kr_order(req: KROrderRequest) -> KROrderResponse:
         raise HTTPException(status_code=400, detail=f"invalid order_type: {req.order_type!r}")
     if req.order_type == "LIMIT" and req.price is None:
         raise HTTPException(status_code=400, detail="price required for LIMIT order")
-    cached = idempotency.get_cached("KR", req.client_order_id)
-    if cached is not None:
-        return KROrderResponse(**cached)
-    # broker_bridge.py와 동일 fail-closed 원칙 — 누적 포지션 조회 실패 시 0 가정 대신 거부.
-    current_qty = _kr_current_position_qty(req.code, req.paper)
-    if current_qty is None:
-        raise HTTPException(status_code=503, detail="position lookup failed — refusing to gate blind on unknown exposure")
-    _check_risk(side=req.side, quantity=req.quantity, price_estimate=req.price,
-                current_position_qty=current_qty, venue="KR")
-    try:
-        order_client = KISOrderClient(app_key, app_secret, cano, acnt_prdt_cd, mock=req.paper)
-        result = order_client.place_order(
-            req.code, req.side, req.quantity, req.order_type, req.price
-        )
-        record_order(venue="KR", request=req.model_dump(), result=result, status="submitted")
-        idempotency.store("KR", req.client_order_id, result)
-        oms.record_event("KR", result, symbol=req.code, side=req.side)
-        return KROrderResponse(**result)
-    except (requests.ConnectionError, requests.Timeout) as exc:
-        record_order(venue="KR", request=req.model_dump(), result=None, status="error")
-        raise HTTPException(status_code=503, detail="KIS unreachable") from exc
-    except Exception as exc:
-        record_order(venue="KR", request=req.model_dump(), result=None, status="error")
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    with idempotency.lock("KR"):
+        cached = idempotency.get_cached("KR", req.client_order_id)
+        if cached is not None:
+            return KROrderResponse(**cached)
+        # broker_bridge.py와 동일 fail-closed 원칙 — 누적 포지션 조회 실패 시 0 가정 대신 거부.
+        current_qty = _kr_current_position_qty(req.code, req.paper)
+        if current_qty is None:
+            raise HTTPException(status_code=503, detail="position lookup failed — refusing to gate blind on unknown exposure")
+        _check_risk(side=req.side, quantity=req.quantity, price_estimate=req.price,
+                    current_position_qty=current_qty, venue="KR")
+        try:
+            order_client = KISOrderClient(app_key, app_secret, cano, acnt_prdt_cd, mock=req.paper)
+            result = order_client.place_order(
+                req.code, req.side, req.quantity, req.order_type, req.price
+            )
+            record_order(venue="KR", request=req.model_dump(), result=result, status="submitted")
+            idempotency.store("KR", req.client_order_id, result)
+            oms.record_event("KR", result, symbol=req.code, side=req.side)
+            return KROrderResponse(**result)
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            record_order(venue="KR", request=req.model_dump(), result=None, status="error")
+            raise HTTPException(status_code=503, detail="KIS unreachable") from exc
+        except Exception as exc:
+            record_order(venue="KR", request=req.model_dump(), result=None, status="error")
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/orders/kr/{order_no}/cancel", response_model=KROrderResponse)
 def cancel_kr_order(order_no: str, req: KRCancelRequest) -> KROrderResponse:
-    app_key, app_secret, cano, acnt_prdt_cd = _kis_creds(mock=False)
+    app_key, app_secret, cano, acnt_prdt_cd = _kis_creds(mock=req.paper)
     if not all([app_key, app_secret, cano, acnt_prdt_cd]):
         raise HTTPException(status_code=503, detail="KIS credentials not configured")
     try:
-        order_client = KISOrderClient(app_key, app_secret, cano, acnt_prdt_cd)
+        order_client = KISOrderClient(app_key, app_secret, cano, acnt_prdt_cd, mock=req.paper)
         result = order_client.cancel_order(order_no, req.code, req.quantity)
         oms.record_event("KR", result)
         return KROrderResponse(**result)
@@ -3421,12 +3475,13 @@ def cancel_kr_order(order_no: str, req: KRCancelRequest) -> KROrderResponse:
 def get_kr_order_status(
     order_no: str,
     date: str = Query(..., description="Order date YYYYMMDD"),
+    paper: bool = Query(True, description="must match the original order's mode"),
 ) -> KROrderResponse:
-    app_key, app_secret, cano, acnt_prdt_cd = _kis_creds(mock=False)
+    app_key, app_secret, cano, acnt_prdt_cd = _kis_creds(mock=paper)
     if not all([app_key, app_secret, cano, acnt_prdt_cd]):
         raise HTTPException(status_code=503, detail="KIS credentials not configured")
     try:
-        order_client = KISOrderClient(app_key, app_secret, cano, acnt_prdt_cd)
+        order_client = KISOrderClient(app_key, app_secret, cano, acnt_prdt_cd, mock=paper)
         result = order_client.get_order_status(date, order_no)
     except (requests.ConnectionError, requests.Timeout) as exc:
         raise HTTPException(status_code=503, detail="KIS unreachable") from exc
@@ -3462,62 +3517,70 @@ async def place_us_order(req: USOrderRequest) -> USOrderResponse:
         raise HTTPException(status_code=400, detail=f"invalid order_type: {req.order_type!r}")
     if req.order_type == "LIMIT" and req.limit_price is None:
         raise HTTPException(status_code=400, detail="limit_price required for LIMIT order")
-    cached = idempotency.get_cached("US", req.client_order_id)
-    if cached is not None:
-        return USOrderResponse(**cached)
-    _check_risk(side=req.side, quantity=req.quantity, price_estimate=req.limit_price)
+    async with idempotency.async_lock("US"):
+        cached = idempotency.get_cached("US", req.client_order_id)
+        if cached is not None:
+            return USOrderResponse(**cached)
+        current_qty = await _us_current_position_qty(req.symbol, req.paper)
+        if current_qty is None:
+            raise HTTPException(status_code=503, detail="position lookup failed — refusing to gate blind on unknown exposure")
+        _check_risk(side=req.side, quantity=req.quantity, price_estimate=req.limit_price,
+                    current_position_qty=current_qty)
 
-    # US 라우팅: 페이퍼=Alpaca(무제한·무TWS), 실계좌=IB(TWS 7496).
-    if req.paper:
+        # US 라우팅: 페이퍼=Alpaca(무제한·무TWS), 실계좌=IB(TWS 7496).
+        if req.paper:
+            try:
+                from api_server.router_autopilot import place_order as _alpaca_order, OrderRequest as _AlpacaReq
+                r = _alpaca_order(_AlpacaReq(symbol=req.symbol, side=req.side.lower(),
+                                            qty=float(req.quantity), type=req.order_type.lower(),
+                                            limit_price=req.limit_price, paper=True))
+                record_order(venue="US", request=req.model_dump(), result=r, status="submitted")
+                # Alpaca order id is a UUID (str); USOrderResponse.order_id is int → 0 placeholder.
+                resp = {"order_id": 0, "status": r["status"],
+                        "filled": float(r.get("filled_qty", 0.0)),
+                        "remaining": float(req.quantity - r.get("filled_qty", 0.0))}
+                idempotency.store("US", req.client_order_id, resp)
+                # resp.order_id is a 0 placeholder (Alpaca id는 UUID, USOrderResponse.order_id는 int) —
+                # OMS엔 실제 Alpaca id로 기록해야 서로 다른 주문이 같은 키("US", 0)로 뭉개지지 않음.
+                # filled_avg_price는 resp에 없고 raw Alpaca 응답 r에만 있음 — PnL 매칭용으로 같이 전달.
+                oms.record_event(
+                    "US", {**resp, "order_id": r["id"], "filled_avg_price": r.get("filled_avg_price")},
+                    symbol=req.symbol, side=req.side,
+                )
+                return USOrderResponse(**resp)
+            except HTTPException:
+                raise
+            except Exception as exc:
+                record_order(venue="US", request=req.model_dump(), result=None, status="error")
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        ib_client = _get_ib_order_client(
+            port=7496,  # live TWS
+            client_id=int(os.environ.get("IB_MANUAL_ORDER_CLIENT_ID", "10")),
+        )
         try:
-            from api_server.router_autopilot import place_order as _alpaca_order, OrderRequest as _AlpacaReq
-            r = _alpaca_order(_AlpacaReq(symbol=req.symbol, side=req.side.lower(),
-                                        qty=float(req.quantity), type=req.order_type.lower(),
-                                        limit_price=req.limit_price, paper=True))
-            record_order(venue="US", request=req.model_dump(), result=r, status="submitted")
-            # Alpaca order id is a UUID (str); USOrderResponse.order_id is int → 0 placeholder.
-            resp = {"order_id": 0, "status": r["status"],
-                    "filled": float(r.get("filled_qty", 0.0)),
-                    "remaining": float(req.quantity - r.get("filled_qty", 0.0))}
-            idempotency.store("US", req.client_order_id, resp)
-            # resp.order_id is a 0 placeholder (Alpaca id는 UUID, USOrderResponse.order_id는 int) —
-            # OMS엔 실제 Alpaca id로 기록해야 서로 다른 주문이 같은 키("US", 0)로 뭉개지지 않음.
-            # filled_avg_price는 resp에 없고 raw Alpaca 응답 r에만 있음 — PnL 매칭용으로 같이 전달.
-            oms.record_event(
-                "US", {**resp, "order_id": r["id"], "filled_avg_price": r.get("filled_avg_price")},
-                symbol=req.symbol, side=req.side,
+            result = await ib_client.place_order(
+                req.symbol, req.side, req.quantity, req.order_type, req.limit_price
             )
-            return USOrderResponse(**resp)
-        except HTTPException:
-            raise
+            record_order(venue="US", request=req.model_dump(), result=result, status="submitted")
+            idempotency.store("US", req.client_order_id, result)
+            oms.record_event("US", result, symbol=req.symbol, side=req.side)
+            return USOrderResponse(**result)
+        except (ConnectionRefusedError, OSError) as exc:
+            record_order(venue="US", request=req.model_dump(), result=None, status="error")
+            raise HTTPException(status_code=503, detail="IB TWS not reachable") from exc
         except Exception as exc:
             record_order(venue="US", request=req.model_dump(), result=None, status="error")
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    ib_client = _get_ib_order_client(
-        port=7496,  # live TWS
-        client_id=int(os.environ.get("IB_MANUAL_ORDER_CLIENT_ID", "10")),
-    )
-    try:
-        result = await ib_client.place_order(
-            req.symbol, req.side, req.quantity, req.order_type, req.limit_price
-        )
-        record_order(venue="US", request=req.model_dump(), result=result, status="submitted")
-        idempotency.store("US", req.client_order_id, result)
-        oms.record_event("US", result, symbol=req.symbol, side=req.side)
-        return USOrderResponse(**result)
-    except (ConnectionRefusedError, OSError) as exc:
-        record_order(venue="US", request=req.model_dump(), result=None, status="error")
-        raise HTTPException(status_code=503, detail="IB TWS not reachable") from exc
-    except Exception as exc:
-        record_order(venue="US", request=req.model_dump(), result=None, status="error")
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
 
 @app.post("/orders/us/{order_id}/cancel", response_model=USOrderResponse)
-async def cancel_us_order(order_id: int) -> USOrderResponse:
+async def cancel_us_order(
+    order_id: int,
+    paper: bool = Query(True, description="must match the original order's mode"),
+) -> USOrderResponse:
     ib_client = _get_ib_order_client(
-        port=int(os.environ.get("IB_PORT", "7497")),
+        port=7497 if paper else 7496,
         client_id=int(os.environ.get("IB_MANUAL_ORDER_CLIENT_ID", "10")),
     )
     try:
@@ -3531,9 +3594,12 @@ async def cancel_us_order(order_id: int) -> USOrderResponse:
 
 
 @app.get("/orders/us/{order_id}/status", response_model=USOrderResponse)
-async def get_us_order_status(order_id: int) -> USOrderResponse:
+async def get_us_order_status(
+    order_id: int,
+    paper: bool = Query(True, description="must match the original order's mode"),
+) -> USOrderResponse:
     ib_client = _get_ib_order_client(
-        port=int(os.environ.get("IB_PORT", "7497")),
+        port=7497 if paper else 7496,
         client_id=int(os.environ.get("IB_MANUAL_ORDER_CLIENT_ID", "10")),
     )
     try:
@@ -3558,40 +3624,51 @@ async def place_option_order(req: OptionOrderRequest) -> OptionOrderResponse:
         raise HTTPException(status_code=400, detail=f"invalid order_type: {req.order_type!r}")
     if req.order_type == "LIMIT" and req.limit_price is None:
         raise HTTPException(status_code=400, detail="limit_price required for LIMIT order")
-    cached = idempotency.get_cached("US_OPTIONS", req.client_order_id)
-    if cached is not None:
-        return OptionOrderResponse(**cached)
-    # 1계약=기초자산 100주 → 리스크 한도(달러 기준)는 계약당 프리미엄*100으로 환산.
-    price_estimate = req.limit_price * 100 if req.limit_price is not None else None
-    _check_risk(side=req.side, quantity=req.quantity, price_estimate=price_estimate,
-                option_expiry=req.expiry)
-
-    ib_client = _get_ib_order_client(
-        port=7497 if req.paper else 7496,
-        client_id=int(os.environ.get("IB_OPTION_ORDER_CLIENT_ID", "12")),
-    )
-    try:
-        result = await ib_client.place_option_order(
-            req.symbol, req.expiry, req.strike, req.right,
-            req.side, req.quantity, req.order_type, req.limit_price,
+    async with idempotency.async_lock("US_OPTIONS"):
+        cached = idempotency.get_cached("US_OPTIONS", req.client_order_id)
+        if cached is not None:
+            return OptionOrderResponse(**cached)
+        # 1계약=기초자산 100주 → 리스크 한도(달러 기준)는 계약당 프리미엄*100으로 환산.
+        price_estimate = req.limit_price * 100 if req.limit_price is not None else None
+        current_qty = await _ib_position_qty(
+            port=7497 if req.paper else 7496,
+            client_id=int(os.environ.get("IB_OPTION_ORDER_CLIENT_ID", "12")),
+            symbol=req.symbol,
         )
-        record_order(venue="US_OPTIONS", request=req.model_dump(), result=result, status="submitted")
-        idempotency.store("US_OPTIONS", req.client_order_id, result)
-        opt_symbol = f"{req.symbol} {req.expiry} {req.strike}{req.right}"
-        oms.record_event("US_OPTIONS", result, symbol=opt_symbol, side=req.side)
-        return OptionOrderResponse(**result)
-    except (ConnectionRefusedError, OSError) as exc:
-        record_order(venue="US_OPTIONS", request=req.model_dump(), result=None, status="error")
-        raise HTTPException(status_code=503, detail="IB TWS not reachable") from exc
-    except Exception as exc:
-        record_order(venue="US_OPTIONS", request=req.model_dump(), result=None, status="error")
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if current_qty is None:
+            raise HTTPException(status_code=503, detail="position lookup failed — refusing to gate blind on unknown exposure")
+        _check_risk(side=req.side, quantity=req.quantity, price_estimate=price_estimate,
+                    current_position_qty=current_qty, option_expiry=req.expiry)
+
+        ib_client = _get_ib_order_client(
+            port=7497 if req.paper else 7496,
+            client_id=int(os.environ.get("IB_OPTION_ORDER_CLIENT_ID", "12")),
+        )
+        try:
+            result = await ib_client.place_option_order(
+                req.symbol, req.expiry, req.strike, req.right,
+                req.side, req.quantity, req.order_type, req.limit_price,
+            )
+            record_order(venue="US_OPTIONS", request=req.model_dump(), result=result, status="submitted")
+            idempotency.store("US_OPTIONS", req.client_order_id, result)
+            opt_symbol = f"{req.symbol} {req.expiry} {req.strike}{req.right}"
+            oms.record_event("US_OPTIONS", result, symbol=opt_symbol, side=req.side)
+            return OptionOrderResponse(**result)
+        except (ConnectionRefusedError, OSError) as exc:
+            record_order(venue="US_OPTIONS", request=req.model_dump(), result=None, status="error")
+            raise HTTPException(status_code=503, detail="IB TWS not reachable") from exc
+        except Exception as exc:
+            record_order(venue="US_OPTIONS", request=req.model_dump(), result=None, status="error")
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/orders/options/{order_id}/cancel", response_model=OptionOrderResponse)
-async def cancel_option_order(order_id: int) -> OptionOrderResponse:
+async def cancel_option_order(
+    order_id: int,
+    paper: bool = Query(True, description="must match the original order's mode"),
+) -> OptionOrderResponse:
     ib_client = _get_ib_order_client(
-        port=int(os.environ.get("IB_PORT", "7497")),
+        port=7497 if paper else 7496,
         client_id=int(os.environ.get("IB_OPTION_ORDER_CLIENT_ID", "12")),
     )
     try:
@@ -3605,9 +3682,12 @@ async def cancel_option_order(order_id: int) -> OptionOrderResponse:
 
 
 @app.get("/orders/options/{order_id}/status", response_model=OptionOrderResponse)
-async def get_option_order_status(order_id: int) -> OptionOrderResponse:
+async def get_option_order_status(
+    order_id: int,
+    paper: bool = Query(True, description="must match the original order's mode"),
+) -> OptionOrderResponse:
     ib_client = _get_ib_order_client(
-        port=int(os.environ.get("IB_PORT", "7497")),
+        port=7497 if paper else 7496,
         client_id=int(os.environ.get("IB_OPTION_ORDER_CLIENT_ID", "12")),
     )
     try:
@@ -5398,10 +5478,14 @@ def hl_place_order(req: HLOrderRequest) -> dict:
         raise HTTPException(status_code=400, detail="slippage must be 0~0.5")
     # reduce_only orders unwind exposure — exempt from the position cap path.
     if not req.reduce_only:
+        current_qty = _hl_current_position_qty(req.coin, req.paper)
+        if current_qty is None:
+            raise HTTPException(status_code=503, detail="position lookup failed — refusing to gate blind on unknown exposure")
         _check_risk(
             side="BUY" if req.is_buy else "SELL",
             quantity=req.size,
             price_estimate=req.limit_px,
+            current_position_qty=current_qty,
             venue="HL",
         )
     try:

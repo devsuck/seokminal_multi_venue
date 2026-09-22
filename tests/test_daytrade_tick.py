@@ -40,6 +40,50 @@ def test_daytrade_tick_us_no_crash(client):
     assert len(client.get(f"/agents/{aid}/cycles").json()["cycles"]) == 1
 
 
+def test_lv5_agentic_overlay_skipped_for_live_god_mode_agent(client, monkeypatch):
+    """Lv3 agent promoted to live(paper=False) must NOT run the Claude-driven
+    agentic overlay (unvalidated universe/dsl changes on real money would
+    violate CONSTITUTION.md's "no autonomous trading") — only the
+    deterministic compute_lv5_params() may still adjust threshold/position_pct."""
+    import api_server.lv5_agent as lv5_agent
+    from jarvis.execution import agent_gate
+
+    monkeypatch.setattr(agent_gate, "enforce_paper", lambda agent: (False, ""))
+    calls = []
+    monkeypatch.setattr(lv5_agent, "apply_cached_strategy", lambda *a, **k: calls.append("apply") or (0, 0, [], False, ""))
+    monkeypatch.setattr(lv5_agent, "trigger_review_if_needed", lambda *a, **k: calls.append("trigger"))
+
+    aid = client.post("/agents", json={
+        "name": "LiveLv3", "type": "daytrade", "account_alloc": 50000,
+        "paper": False, "autonomy": 3,
+    }).json()["id"]
+    r = client.post(f"/agents/{aid}/daytrade-tick?cycle=1")
+    assert r.status_code == 200
+    assert calls == []
+
+
+def test_lv5_agentic_overlay_runs_for_paper_agent(client, monkeypatch):
+    """Unchanged behavior for paper agents: the agentic overlay still applies."""
+    import api_server.lv5_agent as lv5_agent
+    import api_server.lv5_context as lv5_context
+    from jarvis.execution import agent_gate
+
+    monkeypatch.setattr(agent_gate, "enforce_paper", lambda agent: (True, ""))
+    calls = []
+    monkeypatch.setattr(lv5_agent, "apply_cached_strategy",
+                         lambda agent_id, threshold, position_pct, universe: (calls.append("apply") or (threshold, position_pct, universe, False, "")))
+    monkeypatch.setattr(lv5_agent, "trigger_review_if_needed", lambda *a, **k: calls.append("trigger"))
+    monkeypatch.setattr(lv5_context, "get_cached_context", lambda *a, **k: {})
+
+    aid = client.post("/agents", json={
+        "name": "PaperLv3", "type": "daytrade", "account_alloc": 50000,
+        "paper": True, "autonomy": 3,
+    }).json()["id"]
+    r = client.post(f"/agents/{aid}/daytrade-tick?cycle=1")
+    assert r.status_code == 200
+    assert calls == ["apply", "trigger"]
+
+
 def test_swing_kr_routes_to_kr_not_us(client, monkeypatch):
     """스윙(장투) 봇 + market=KR → KR 실행(KIS), US(Alpaca) 아님. 통화 오라우팅 회귀."""
     monkeypatch.setattr(shared, "_fetch_kr_intraday_bars", lambda s: [])

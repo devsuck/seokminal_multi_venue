@@ -100,20 +100,67 @@ def pool_capacity() -> dict:
     return {"pool_limit": limit, "pool_used": used, "pool_remaining": max(limit - used, 0.0)}
 
 
+_LIVE_BALANCE_CACHE: dict = {}
+_LIVE_BALANCE_TTL_SEC = 30
+
+
+def _usdkrw() -> float:
+    """USD/KRW 환율 — LIVE 실계좌 잔고(USD/USDC)를 KRW로 정규화. 5분 캐시, 실패 시 직전값 유지."""
+    import time
+    cached = _LIVE_BALANCE_CACHE.get("usdkrw")
+    now = time.time()
+    if cached and now - cached[0] < 300:
+        return cached[1]
+    try:
+        import yfinance as yf
+        hist = yf.Ticker("USDKRW=X").history(period="1d", interval="1d")
+        rate = float(hist["Close"].iloc[-1])
+    except Exception:
+        rate = cached[1] if cached else 1400.0
+    _LIVE_BALANCE_CACHE["usdkrw"] = (now, rate)
+    return rate
+
+
+def _live_balance_krw() -> float:
+    """실계좌(KIS 실전 + IB + HL 메인넷) 잔고 합 - 이미 agent_store 실운용 agent에
+    배정된 몫(row["allocated"]) - KRW 환산. 브로커 호출 있어 30초 캐시.
+    조회 실패한 venue는 0 취급(과소평가 방향 — 과다청구보다 안전). allocated를 안 빼면
+    이미 다른 실계좌 agent가 쓰고 있는 돈까지 여기서 또 배정 가능한 것처럼 보임."""
+    cached = _LIVE_BALANCE_CACHE.get("balance")
+    import time
+    now = time.time()
+    if cached and now - cached[0] < _LIVE_BALANCE_TTL_SEC:
+        return cached[1]
+    try:
+        from api_server.routers.agents import account_balances
+        usdkrw = _usdkrw()
+        total = 0.0
+        for row in account_balances().get("accounts", []):
+            if row.get("mode") != "live" or row.get("error") or row.get("balance") is None:
+                continue
+            free = float(row["balance"]) - float(row.get("allocated") or 0.0)
+            total += free if row.get("ccy") == "KRW" else free * usdkrw
+    except Exception:
+        total = cached[1] if cached else 0.0
+    _LIVE_BALANCE_CACHE["balance"] = (now, max(total, 0.0))
+    return max(total, 0.0)
+
+
 def pool_capacity_by_mode() -> dict:
-    """배정 가능 잔여 — LIVE/PAPER 분리. LIVE는 armed 전략들의 arm.py capital_limit 합,
-    PAPER는 capital_envelope.pool_limit 기준(LIVE 배정은 이 풀을 안 씀)."""
+    """배정 가능 잔여 — LIVE/PAPER 분리. LIVE는 실계좌 잔고(KIS실전+IB+HL메인넷, KRW환산) -
+    이미 배정된 금액 기준(PAPER의 envelope 풀 모델과 동일 원리) — 실제 가용 자금을 승인 전에도
+    보여준다. 전략별 상한은 여전히 arm.py capital_limit(사람이 설정)가 별도로 게이트하며 이건
+    안 바뀐다. PAPER는 capital_envelope.pool_limit 기준(LIVE 배정은 이 풀을 안 씀)."""
     paper_pool_limit = get_envelope()["pool_limit"]
     paper_used = 0.0
-    live_limit = 0.0
     live_used = 0.0
     for sid, amt in _current_allocations().items():
-        mode, limit = _fulfillment_mode(sid)
+        mode, _ = _fulfillment_mode(sid)
         if mode == "live":
-            live_limit += limit
             live_used += amt
         else:
             paper_used += amt
+    live_limit = _live_balance_krw()
     return {
         "paper_limit": paper_pool_limit, "paper_used": paper_used,
         "paper_remaining": max(paper_pool_limit - paper_used, 0.0),
@@ -168,11 +215,16 @@ def submit_claim(strategy_id: str, ai: Principal, requested_amount: float | None
 
     current = _current_allocations()
     strategy_used = current.get(strategy_id, 0.0)  # 대체될 이전 배정(정보용)
-    pool_used_excl = sum(v for sid, v in current.items() if sid != strategy_id)
+    # 풀 한도(capital_envelope.pool_limit)는 PAPER 전용 — LIVE는 arm.py capital_limit(strategy_limit)이
+    # 유일한 상한이라 여기서 또 막으면 안 됨(모듈 docstring 참고).
+    pool_used_excl = sum(
+        v for sid, v in current.items()
+        if sid != strategy_id and _fulfillment_mode(sid)[0] == "paper"
+    )
     pool_limit = get_envelope()["pool_limit"]
     amount = proposal["proposed_amount"]
     within_strategy = amount <= hard_limit
-    within_pool = (pool_used_excl + amount) <= pool_limit
+    within_pool = mode == "live" or (pool_used_excl + amount) <= pool_limit
 
     row = _base_row(strategy_id, requested_amount, proposal, mode, amount)
     row["envelope_check"] = {

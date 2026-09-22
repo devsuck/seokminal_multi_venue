@@ -10,6 +10,7 @@ import asyncio
 import datetime as _dt
 import json
 import os
+import threading
 from pathlib import Path
 
 from fastapi import APIRouter
@@ -278,18 +279,28 @@ def _process_exits(cfg: dict) -> int:
     return sold
 
 
-def _reconcile_positions(cfg: dict) -> None:
+def _reconcile_positions(cfg: dict) -> int:
     """로컬 포지션 장부 vs 실제 KIS 보유 대조 — 모의계좌가 외부 리셋되는 등으로
     브로커 보유가 사라졌는데 로컬 spent/positions만 남아있으면 예산이 영구히
     묶여 신규 매수가 막힌다. 브로커에 없는 코드는 원금을 spent에서 돌려주고 드롭.
+
+    브로커 보유 소실의 가장 흔한 원인은 계좌 리셋이 아니라 당일 상신해둔 손절
+    지정가 주문이 이 틱 전에 이미 체결된 경우다 — 이 함수가 _process_exits보다
+    먼저 돌기 때문에, 체결가 조회 없이 무조건 "desync"로 드롭하면 실제 손절
+    손익이 통째로 사라진다(_process_exits 235행대의 같은 상황 처리와 동등하게
+    맞춰야 함). 그래서 드롭 전에 먼저 체결가 조회를 시도해 성사되면 정상 매도로
+    기록한다.
+
+    Returns: 체결가 조회로 복구해 정상 매도 처리한 건수(= _process_exits의 sold와
+    합산 가능한 수치). 진짜 desync(체결가 조회도 실패)는 포함하지 않음.
     """
     positions = cfg.get("positions", [])
     if not positions:
-        return
+        return 0
     try:
         held_codes = {h.get("code") for h in _kis().get_holdings()}
     except Exception:
-        return  # 조회 실패 — 다음 tick에 재시도, 잘못 드롭하지 않음
+        return 0  # 조회 실패 — 다음 tick에 재시도, 잘못 드롭하지 않음
     keep, dropped = [], []
     for pos in positions:
         if pos.get("code") in held_codes:
@@ -297,39 +308,72 @@ def _reconcile_positions(cfg: dict) -> None:
         else:
             dropped.append(pos)
     if not dropped:
-        return
+        return 0
+    recovered = 0
     for pos in dropped:
-        cost = int(pos.get("qty", 0)) * float(pos.get("entry_price") or 0)
+        code = pos.get("code")
+        entry = float(pos.get("entry_price") or 0)
+        qty = int(pos.get("qty", 0))
+        cost = qty * entry
+        fill_px = _query_fill_price(pos)
+        if fill_px:
+            cfg["spent"] = round(max(float(cfg.get("spent", 0.0)) - cost, 0.0), 2)
+            fill_pnl = (fill_px - entry) / entry if entry else 0.0
+            _log_event({"kind": "sell", "corp": pos.get("corp", ""), "code": code,
+                        "qty": qty, "entry_price": entry, "exit_price": round(fill_px, 0),
+                        "pnl_pct": round(fill_pnl * 100, 2),
+                        "reason": f"손절 {fill_pnl*100:.1f}% (reconcile 중 선체결 발견, 체결가 조회)",
+                        "spent": cfg["spent"]})
+            recovered += 1
+            continue
         cfg["spent"] = round(max(float(cfg.get("spent", 0.0)) - cost, 0.0), 2)
-        _log_event({"kind": "desync", "corp": pos.get("corp", ""), "code": pos.get("code"),
+        _log_event({"kind": "desync", "corp": pos.get("corp", ""), "code": code,
                     "msg": "브로커 보유 없음(계좌 리셋 등) — 로컬 포지션 드롭, 예산 회수",
                     "spent": cfg["spent"]})
     cfg["positions"] = keep
+    return recovered
+
+
+_tick_lock = threading.Lock()
 
 
 def tick() -> dict:
+    """백그라운드 루프(_loop, interval_sec 주기)와 수동 트리거(POST /run-now)가
+    같은 threadpool에서 겹쳐 돌면 cfg 로드→수정→저장 구간이 경합해 같은 공시를
+    두 번 매수하거나 서로의 저장을 덮어쓸 수 있음 — 전역 락으로 tick 전체를 직렬화.
+    ponytail: 봇 하나당 실행 흐름이 사실상 하나뿐이라 전역 락으로 충분, 처리량
+    문제되면 세분화."""
+    with _tick_lock:
+        return _tick_impl()
+
+
+def _tick_impl() -> dict:
     """1회 실행: 신규 자사주 취득/소각 공시를 모의 매수. 장 마감 시 스킵."""
     cfg = _load()
     if not cfg["enabled"]:
         return {"skipped": "disabled"}
-    # 킬스위치(수동 or MDD 자동차단) — 모든 자동 매수 중단
-    try:
-        from api_server.risk_state import is_killed
-        if is_killed():
-            _log_event({"kind": "kill", "msg": "리스크 킬스위치 — 매수 중단"})
-            return {"skipped": "kill_switch"}
-    except Exception:
-        pass
-    _reconcile_positions(cfg)
+    recovered = _reconcile_positions(cfg)
     _save(cfg)
     if not _kr_market_open():
         cfg["last_run"] = _dt.datetime.now(_dt.timezone.utc).isoformat()
         _save(cfg)
         return {"skipped": "market_closed"}
 
-    # 매도 먼저 — 예산이 풀려야 신규 매수 여력이 생김
-    sold = _process_exits(cfg)
+    # 매도 먼저 — 예산이 풀려야 신규 매수 여력이 생김. 킬스위치는 매도는 막지
+    # 않음 — 드로다운 브레이크가 손절/청산까지 얼어붙게 하면 위험이 커진 순간
+    # 오히려 손실을 방치하게 된다(신규 매수만 차단하는 게 브레이크의 목적).
+    sold = _process_exits(cfg) + recovered
     _save(cfg)
+
+    try:
+        from api_server.risk_state import is_killed
+        if is_killed():
+            _log_event({"kind": "kill", "msg": "리스크 킬스위치 — 신규 매수 중단"})
+            cfg["last_run"] = _dt.datetime.now(_dt.timezone.utc).isoformat()
+            _save(cfg)
+            return {"skipped": "kill_switch", "sold": sold}
+    except Exception:
+        pass
 
     from insider.dart_client import get_recent_kr_corporate_actions, action_weight
     try:

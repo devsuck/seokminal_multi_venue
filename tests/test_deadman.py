@@ -1,4 +1,5 @@
-"""데드맨 스위치 테스트 — heartbeat 없음/만료 시 BUY만 차단, SELL/청산은 항상 통과."""
+"""데드맨 스위치 테스트 — heartbeat 없음/만료 시 익스포저 늘리는 주문만 차단.
+청산/축소(포지션 줄이는 SELL)는 항상 통과, 신규 진입(플랫에서 SELL 포함)은 차단."""
 import datetime as dt
 import os
 from unittest.mock import patch
@@ -52,7 +53,17 @@ def test_gate_blocks_buy_when_expired():
             broker_bridge._gate(order)
 
 
-def test_gate_allows_sell_when_expired():
+def test_gate_blocks_new_short_sell_when_expired():
+    """플랫(0)에서 SELL은 신규 숏 진입 — 익스포저 증가라 청산 면제 대상 아님."""
+    order = {"venue": "KR", "symbol": "005930", "side": "SELL", "quantity": 1, "price": 1000}
+    with patch("jarvis.config.AUTONOMY_LEVEL", 6):
+        with pytest.raises(broker_bridge.BrokerOrderRejected, match="deadman"):
+            broker_bridge._gate(order)
+
+
+def test_gate_allows_closing_sell_when_expired(monkeypatch):
+    """기존 롱 포지션 줄이는 SELL은 청산이라 만료 상태에서도 항상 통과."""
+    monkeypatch.setattr(broker_bridge, "_current_position_qty", lambda order: 5.0)
     order = {"venue": "KR", "symbol": "005930", "side": "SELL", "quantity": 1, "price": 1000}
     with patch("jarvis.config.AUTONOMY_LEVEL", 6):
         broker_bridge._gate(order)  # raises only if blocked; risk caps not hit here

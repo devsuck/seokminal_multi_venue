@@ -9,6 +9,8 @@ cancel_order/get_order_status/get_holdings는 여전히 bot._kis()를 직접 쓰
 """
 import datetime as dt
 import os
+import threading
+import time
 from unittest.mock import MagicMock, patch
 
 from api_server import dart_autobot as bot
@@ -168,6 +170,85 @@ def test_sell_order_failure_keeps_position():
     assert sold == 0
     assert len(cfg["positions"]) == 1  # 실패 → 보유 유지, 다음 tick 재시도
     assert cfg["spent"] == 10000.0     # 예산도 그대로
+
+
+def test_reconcile_recovers_fill_price_instead_of_neutral_desync():
+    """브로커 보유 소실 = 대부분 당일 손절 지정가가 이미 체결된 경우 —
+    _reconcile_positions가 desync로 그냥 드롭하면 실제 체결 손익이 사라짐.
+    체결가 조회로 복구해 sell로 기록하고 recovered=1을 반환해야 함."""
+    pos = _pos(code="005930", entry=1000.0, qty=10)
+    pos["sl_order_id"] = "ORD1"
+    pos["sl_order_date"] = bot._kst_today_str()
+    cfg = _cfg([pos], spent=10000.0)
+    kis = MagicMock()
+    kis.get_holdings.return_value = []  # 브로커 보유 없음
+    kis.get_order_status.return_value = {"status": "FILLED", "filled": 10.0, "remaining": 0.0, "avg_price": 928.0}
+    log = MagicMock()
+    with patch.object(bot, "_kis", return_value=kis), patch.object(bot, "_log_event", log):
+        recovered = bot._reconcile_positions(cfg)
+    assert recovered == 1
+    assert cfg["positions"] == []
+    assert cfg["spent"] == 0.0
+    sell_events = [c.args[0] for c in log.call_args_list if c.args[0]["kind"] == "sell"]
+    desync_events = [c.args[0] for c in log.call_args_list if c.args[0]["kind"] == "desync"]
+    assert len(sell_events) == 1
+    assert sell_events[0]["exit_price"] == 928.0
+    assert desync_events == []
+
+
+def test_reconcile_falls_back_to_desync_when_fill_price_unavailable():
+    """체결가 조회 자체가 실패하면(당일 주문 정보 없음 등) 여전히 중립 desync로
+    드롭 — 이 폴백 경로는 그대로 유지되어야 함."""
+    pos = _pos(code="005930", entry=1000.0, qty=10)  # sl_order_id/date 없음
+    cfg = _cfg([pos], spent=10000.0)
+    kis = MagicMock()
+    kis.get_holdings.return_value = []
+    log = MagicMock()
+    with patch.object(bot, "_kis", return_value=kis), patch.object(bot, "_log_event", log):
+        recovered = bot._reconcile_positions(cfg)
+    assert recovered == 0
+    assert cfg["positions"] == []
+    assert cfg["spent"] == 0.0
+    desync_events = [c.args[0] for c in log.call_args_list if c.args[0]["kind"] == "desync"]
+    assert len(desync_events) == 1
+
+
+def test_tick_kill_switch_blocks_new_buys_but_not_exits():
+    """킬스위치(수동 or MDD)는 신규 매수만 막아야 함 — 손절/청산까지 얼어붙으면
+    드로다운 브레이크가 오히려 손실을 방치하게 됨(회귀: Fork C Finding 4)."""
+    pos = _pos(code="005930", entry=1000.0, qty=10)
+    cfg = {"enabled": True, "budget": 100000.0, "spent": 10000.0, "positions": [pos], "acted": []}
+    with patch.object(bot, "_load", return_value=cfg), \
+         patch.object(bot, "_save"), \
+         patch.object(bot, "_kr_market_open", return_value=True), \
+         patch.object(bot, "_reconcile_positions", return_value=0), \
+         patch.object(bot, "_process_exits", return_value=1) as mock_exits, \
+         patch("api_server.risk_state.is_killed", return_value=True), \
+         patch.object(bot, "_log_event"):
+        result = bot.tick()
+    mock_exits.assert_called_once()  # 청산 로직은 킬스위치와 무관하게 실행됨
+    assert result == {"skipped": "kill_switch", "sold": 1}
+
+
+def test_tick_concurrent_calls_are_serialized():
+    """백그라운드 루프와 수동 /run-now가 겹쳐 돌면 cfg 로드→수정→저장 구간이
+    경합할 수 있음 — 전역 락이 tick() 전체를 직렬화해야 함(회귀: Fork C Finding 1)."""
+    order = []
+
+    def _slow_impl():
+        order.append("start")
+        time.sleep(0.05)
+        order.append("end")
+        return {"ok": True}
+
+    with patch.object(bot, "_tick_impl", side_effect=_slow_impl):
+        t1 = threading.Thread(target=bot.tick)
+        t2 = threading.Thread(target=bot.tick)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+    assert order == ["start", "end", "start", "end"]
 
 
 def test_sell_no_holdings_drops_stale_position():

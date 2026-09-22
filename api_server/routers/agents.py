@@ -87,6 +87,76 @@ def create_agent(body: AgentCreate) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+# ── 오프라인 리포팅 봇(SIREN/오디세이 등, jarvis 밖에서 cron 재실행) ──────────
+# generate()는 무거움(DART 네트워크 호출 + 백테스트 재계산) — 요청 경로에서 직접
+# 안 부름(lab_api.py의 forward 캐시 패턴과 같은 이유). 마지막 cron 실행이 남긴
+# state.json + equity_curve.jsonl만 읽는다. "봇" 판정 = *_state.json 존재
+# 여부(계속 재실행되는 하네스만) — 1회성 백테스트(ledger만 있고 state 없음)는 제외.
+# /{agent_id}보다 먼저 등록해야 함 — 안 그러면 "bots"가 agent_id로 잡아먹힘.
+
+_BOT_DISPLAY_NAMES = {"siren": "SIREN", "odyssey": "오디세이 (Odyssey)"}
+
+
+@agents_router.get("/bots")
+def list_bots() -> dict:
+    from pathlib import Path
+
+    paper_dir = Path(__file__).resolve().parent.parent.parent / "research" / "paper"
+    bots = []
+    for state_path in sorted(paper_dir.glob("*_state.json")):
+        bot_id = state_path.name[: -len("_state.json")]
+        try:
+            state = json.loads(state_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        positions = state.get("positions", [])
+        open_positions = [p for p in positions if p.get("status") == "open"]
+        closed_positions = [p for p in positions if p.get("status") == "closed"]
+
+        equity_path = paper_dir / f"{bot_id}_equity_curve.jsonl"
+        last_snapshot = None
+        if equity_path.exists():
+            lines = [ln for ln in equity_path.read_text().strip().splitlines() if ln]
+            if lines:
+                try:
+                    last_snapshot = json.loads(lines[-1])
+                except json.JSONDecodeError:
+                    last_snapshot = None
+
+        starting_capital = None
+        try:
+            module = __import__(f"research.paper.{bot_id}_forward", fromlist=["STARTING_CAPITAL"])
+            starting_capital = getattr(module, "STARTING_CAPITAL", None)
+        except Exception:
+            pass
+
+        cash = state.get("cash", 0.0)
+        equity = last_snapshot["equity"] if last_snapshot else cash
+        return_pct = round((equity / starting_capital - 1) * 100, 4) if starting_capital else None
+
+        bots.append({
+            "id": bot_id,
+            "name": _BOT_DISPLAY_NAMES.get(bot_id, bot_id.upper()),
+            "starting_capital": starting_capital,
+            "cash": round(cash, 2),
+            "equity": round(equity, 2),
+            "return_pct": return_pct,
+            "n_open": len(open_positions),
+            "n_closed": len(closed_positions),
+            "last_run": dt.datetime.fromtimestamp(state_path.stat().st_mtime).isoformat(),
+            "open_positions": [
+                {
+                    "symbol": p.get("stock_code"), "entry_date": p.get("entry_date"),
+                    "entry_price": p.get("entry_price"), "notional": p.get("notional"),
+                    "weight": p.get("weight"),
+                }
+                for p in sorted(open_positions, key=lambda x: x.get("entry_date", ""))
+            ],
+        })
+    return {"bots": bots}
+
+
 @agents_router.get("/{agent_id}")
 def get_agent(agent_id: str) -> dict:
     agent = agent_store.get_agent(agent_id)
@@ -498,20 +568,25 @@ def _daytrade_tick_locked(agent_id: str, cycle: int) -> dict:
         lv5_state = compute_lv5_params(_cycles, threshold, position_pct)
         threshold = lv5_state["threshold"]
         position_pct = lv5_state["position_pct"]
-        # 에이전틱 오버레이: 캐시된 Claude 분석 적용 → universe 재구성 포함
-        from api_server.lv5_agent import trigger_review_if_needed, apply_cached_strategy
-        from api_server.lv5_context import get_cached_context
-        threshold, position_pct, universe, _agent_pause, lv5_agent_note = apply_cached_strategy(
-            agent_id, threshold, position_pct, universe,
-        )
-        # 시장 컨텍스트 (VIX/어닝/뉴스) — 30분 캐시, 빠름
-        _market_ctx = get_cached_context(venue, universe)
-        # 10사이클마다 백그라운드 3-Phase 에이전틱 리뷰 트리거 (tick 블로킹 없음)
-        trigger_review_if_needed(
-            agent_id, venue, threshold, position_pct, universe, _cycles, cycle,
-        )
-        if _agent_pause:
-            lv5_state["pause"] = True
+        # 에이전틱 오버레이(3-Phase Claude 리뷰): lv5_agent.py 자체 docstring이
+        # "페이퍼 전용"이라 명시 — God Mode 승급(paper=0) 후에도 사람 재승인 없이
+        # Claude가 universe_add/remove·DSL을 자율로 계속 바꿔 실주문에 반영되면
+        # CONSTITUTION.md의 "Bad automation: autonomous trading" 위반. 실계좌는
+        # 승급 시점 파라미터로 고정 — Lv3 결정론적 자가학습(compute_lv5_params)만 계속 적용.
+        if paper:
+            from api_server.lv5_agent import trigger_review_if_needed, apply_cached_strategy
+            from api_server.lv5_context import get_cached_context
+            threshold, position_pct, universe, _agent_pause, lv5_agent_note = apply_cached_strategy(
+                agent_id, threshold, position_pct, universe,
+            )
+            # 시장 컨텍스트 (VIX/어닝/뉴스) — 30분 캐시, 빠름
+            _market_ctx = get_cached_context(venue, universe)
+            # 10사이클마다 백그라운드 3-Phase 에이전틱 리뷰 트리거 (tick 블로킹 없음)
+            trigger_review_if_needed(
+                agent_id, venue, threshold, position_pct, universe, _cycles, cycle,
+            )
+            if _agent_pause:
+                lv5_state["pause"] = True
 
     actions: list[str] = []
     if _gate_note:
@@ -1189,8 +1264,8 @@ def account_balances() -> dict:
     except Exception as e:
         out["venues"]["hl"] = {"error": str(e)[:120]}
 
-    # Allocated to agents, split by venue (type/market → venue).
-    us = kr = hl_paper = hl_live = 0.0
+    # Allocated to agents, split by venue (type/market → venue) AND paper/live.
+    us = kr_paper = kr_live = hl_paper = hl_live = 0.0
     for a in agent_store.list_agents():
         alloc = float(a["account_alloc"])
         if a["type"] == "hl_daytrade":
@@ -1198,13 +1273,17 @@ def account_balances() -> dict:
                 hl_paper += alloc
             else:
                 hl_live += alloc
-        elif a.get("market") == "KR":
-            kr += alloc  # kr_macro → KIS, not Alpaca
+        elif a.get("market") == "KR":  # kr_macro → KIS
+            if a["paper"]:
+                kr_paper += alloc
+            else:
+                kr_live += alloc
         else:  # swing / autonomous → Alpaca (US)
             us += alloc
     out["allocated"] = {
         "us_alpaca": round(us, 2),
-        "kr_kis": round(kr, 2),
+        "kr_kis": round(kr_paper, 2),
+        "kr_kis_live": round(kr_live, 2),
         "hl_testnet": round(hl_paper, 2),
         "hl_mainnet": round(hl_live, 2),
     }
@@ -1224,12 +1303,13 @@ def account_balances() -> dict:
          "allocated": round(us, 2), "error": ven.get("alpaca", {}).get("error")},
         {"venue": "kis_mock", "label": "한투 · 모의(한국주식)", "ccy": "KRW",
          "mode": "paper", "balance": _num(ven.get("kis_mock", {}), "net_asset"),
-         "allocated": round(kr, 2), "error": ven.get("kis_mock", {}).get("error")},
+         "allocated": round(kr_paper, 2), "error": ven.get("kis_mock", {}).get("error")},
         {"venue": "kis_live", "label": "한투 · 실계좌(한국주식)", "ccy": "KRW",
          "mode": "live", "balance": _num(ven.get("kis_live", {}), "net_asset"),
-         "allocated": 0.0, "error": ven.get("kis_live", {}).get("error")},
+         "allocated": round(kr_live, 2), "error": ven.get("kis_live", {}).get("error")},
         {"venue": "ib_live", "label": "IB · 실계좌(미국)", "ccy": ven.get("ib_live", {}).get("currency", "USD"),
          "mode": "live", "balance": _num(ven.get("ib_live", {}), "net_liquidation"),
+         # agent_store엔 IB를 직접 타겟하는 agent type이 없음(US는 전부 Alpaca) — 0.0 고정
          "allocated": 0.0, "error": ven.get("ib_live", {}).get("error")},
         {"venue": "hl_testnet", "label": "HL · 테스트넷(크립토)", "ccy": "USDC",
          "mode": "paper", "balance": _num(ven.get("hl_testnet", {}), "account_value"),

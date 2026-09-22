@@ -81,12 +81,23 @@ def _current_position_qty(order: dict) -> float | None:
 
 
 def _gate(order: dict) -> None:
-    """route_order()/route_order_ib()가 공유하는 게이트: AUTONOMY_LEVEL → risk_guard.
-    통과 못하면 BrokerOrderRejected. 브로커 호출 전에 반드시 이걸 거쳐야 함.
+    """route_order()/route_order_ib()가 공유하는 게이트: 킬스위치 → AUTONOMY_LEVEL →
+    risk_guard. 통과 못하면 BrokerOrderRejected. 브로커 호출 전에 반드시 이걸 거쳐야 함.
+
+    킬스위치는 venue별 독립(risk_state.is_killed) — 자기 venue 킬 OR 전체(_AGGREGATE)
+    킬이면 차단. paper/live 여부와 무관하게 적용(페이퍼도 자원/API 쿼터를 쓰고,
+    dart_autobot/vrp_bot도 paper 여부 무관하게 자체 킬체크를 걸어왔던 기존 관례와 통일).
 
     AUTONOMY_LEVEL 체크는 실계좌(paper=False)에만 적용 — ADR 0004는 jarvis 자율리서치가
     실돈을 못 건드리게 막는 게 목적이라 페이퍼 주문(실리스크 0)까지 막을 이유 없음.
     risk_guard/deadman 체크는 paper 여부와 무관하게 그대로 적용."""
+    from api_server.risk_state import is_killed
+    if is_killed(order["venue"]):
+        reason = f"risk kill switch engaged for venue={order['venue']}"
+        record({"layer": "broker_bridge", "action": "route_order", "venue": order.get("venue"),
+                "symbol": order.get("symbol"), "result": "risk_rejected", "reason": reason})
+        raise BrokerOrderRejected(reason)
+
     if not bool(order.get("paper", True)) and not live_execution_enabled():
         reason = f"AUTONOMY_LEVEL={AUTONOMY_LEVEL} < MIN_LIVE_LEVEL={MIN_LIVE_LEVEL}"
         record({"layer": "broker_bridge", "action": "route_order", "venue": order.get("venue"),

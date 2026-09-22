@@ -260,3 +260,56 @@ def test_route_set_leverage_not_blocked_by_autonomy_level_for_paper(monkeypatch)
     monkeypatch.setitem(__import__("sys").modules, "hyperliquid.trader", fake_trader)
     result = bb.route_set_leverage(coin="BTC", leverage=3, is_cross=True, paper=True)
     assert result == {"status": "ok"}
+
+
+def test_route_order_blocked_when_own_venue_killed(monkeypatch):
+    monkeypatch.setattr(
+        "api_server.risk_state.is_killed",
+        lambda venue: venue == "KR",
+    )
+    with pytest.raises(bb.BrokerOrderRejected):
+        bb.route_order(_kr_order())
+
+
+def test_route_order_not_blocked_when_different_venue_killed(monkeypatch):
+    """KR이 죽어도 HL 같은 무관한 venue는 막히면 안 됨 — 교차오염 없음 확인."""
+    monkeypatch.setattr(
+        "api_server.risk_state.is_killed",
+        lambda venue: venue == "HL",
+    )
+    monkeypatch.setenv("KIS_MOCK_APP_KEY", "k")
+    monkeypatch.setenv("KIS_MOCK_APP_SECRET", "s")
+    monkeypatch.setenv("KIS_MOCK_CANO", "c")
+    monkeypatch.setenv("KIS_ACNT_PRDT_CD", "01")
+    monkeypatch.delenv("MAX_ORDER_QTY_KR", raising=False)
+
+    class _FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        def get_holdings(self):
+            return []
+
+        def place_order(self, symbol, side, qty, order_type, price):
+            return {"status": "filled", "symbol": symbol}
+
+    monkeypatch.setattr(bb, "KISOrderClient", _FakeClient)
+    result = bb.route_order(_kr_order())
+    assert result["status"] == "filled"
+
+
+async def test_route_order_ib_blocked_when_us_ib_killed(monkeypatch):
+    monkeypatch.setattr(
+        "api_server.risk_state.is_killed",
+        lambda venue: venue == "US_IB",
+    )
+
+    class _FakeIBClient:
+        async def place_order(self, *a, **kw):
+            raise AssertionError("차단됐어야 함 — 브로커 호출까지 가면 안 됨")
+
+    with pytest.raises(bb.BrokerOrderRejected):
+        await bb.route_order_ib(
+            {"symbol": "AAPL", "side": "BUY", "quantity": 1, "paper": True},
+            _FakeIBClient(),
+        )

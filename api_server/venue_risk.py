@@ -14,10 +14,13 @@ from __future__ import annotations
 import asyncio
 import datetime as _dt
 import json
+import logging
 import os
 from pathlib import Path
 
 from api_server import risk_state
+
+_log = logging.getLogger(__name__)
 
 VENUES = ("KR", "HL", "US_IB", "US_ALPACA")
 _DATA = Path(os.environ.get("DART_BOT_DIR", "data"))
@@ -32,8 +35,10 @@ def _kr_equity_usd() -> float | None:
         snap = KISReadOnlyProvider(paper=True).account_snapshot()
         if snap is None:
             return None
-        return snap.equity / _usdkrw_rate()
-    except Exception:
+        eq = snap.equity / _usdkrw_rate()
+        return eq if eq > 0 else None
+    except Exception as e:
+        _log.warning("venue_risk: KR equity fetch failed: %s", e)
         return None
 
 
@@ -41,17 +46,23 @@ def _hl_equity_usd() -> float | None:
     from jarvis.broker_readonly.live_providers import HLReadOnlyProvider
     try:
         snap = HLReadOnlyProvider(paper=False).account_snapshot()
-        return snap.equity if snap else None
-    except Exception:
+        eq = snap.equity if snap else None
+        return eq if eq and eq > 0 else None
+    except Exception as e:
+        _log.warning("venue_risk: HL equity fetch failed: %s", e)
         return None
 
 
 async def _us_ib_equity_usd() -> float | None:
     from backends.ib.client import IBClient
+    import random
     try:
-        summary = await IBClient().get_account_summary()
-        return float(summary["net_liquidation"])
-    except Exception:
+        port = int(os.environ.get("IB_PORT", "7498"))
+        summary = await IBClient(port=port, client_id=random.randint(500, 599)).get_account_summary()
+        eq = float(summary["net_liquidation"])
+        return eq if eq > 0 else None
+    except Exception as e:
+        _log.warning("venue_risk: US_IB equity fetch failed: %s", e)
         return None
 
 
@@ -63,8 +74,10 @@ def _us_alpaca_equity_usd() -> float | None:
     try:
         from alpaca.trading.client import TradingClient
         acct = TradingClient(key, sec, paper=True).get_account()
-        return float(acct.equity)
-    except Exception:
+        eq = float(acct.equity)
+        return eq if eq > 0 else None
+    except Exception as e:
+        _log.warning("venue_risk: US_ALPACA equity fetch failed: %s", e)
         return None
 
 
@@ -103,15 +116,12 @@ def history(venue: str) -> list[float]:
 
 
 def drawdown_pct(venue: str, current: float) -> float:
-    """히스토리 + 현재값 기준 peak 대비 dd%. 히스토리 없으면(첫 관측) 0.0."""
-    hist = history(venue) + [current]
-    peak = hist[0]
-    dd = 0.0
-    for e in hist:
-        peak = max(peak, e)
-        if peak:
-            dd = min(dd, (e - peak) / peak * 100)
-    return round(dd, 2)
+    """현재 관측값의 peak(자기 자신 포함 역대 최고) 대비 dd%. 히스토리 없으면 0.0."""
+    hist = history(venue)
+    peak = max(hist + [current]) if hist else current
+    if not peak:
+        return 0.0
+    return round((current - peak) / peak * 100, 2)
 
 
 def max_dd_limit(venue: str) -> float:
@@ -126,6 +136,7 @@ def _check_and_kill(venue: str, dd: float) -> None:
         return  # sticky — 이미 killed면 재호출 안 함(최초 원인 보존)
     limit = max_dd_limit(venue)
     if dd <= -limit:
+        _log.warning("venue_risk: %s kill triggered dd=%s%% limit=-%s%%", venue, dd, limit)
         risk_state.set_kill(venue, True, f"MDD {dd}% <= -{limit}% 자동 차단")
 
 
@@ -146,8 +157,8 @@ async def tick() -> None:
             latest[venue] = equity
             dd = drawdown_pct(venue, equity)
             _check_and_kill(venue, dd)
-        except Exception:
-            pass
+        except Exception as e:
+            _log.warning("venue_risk: tick failed for venue=%s: %s", venue, e)
 
     if latest:
         try:
@@ -155,8 +166,8 @@ async def tick() -> None:
             _append_snapshot("_AGGREGATE", total)
             dd = drawdown_pct("_AGGREGATE", total)
             _check_and_kill("_AGGREGATE", dd)
-        except Exception:
-            pass
+        except Exception as e:
+            _log.warning("venue_risk: tick failed for venue=_AGGREGATE: %s", e)
 
 
 async def venue_risk_loop() -> None:

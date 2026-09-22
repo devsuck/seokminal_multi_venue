@@ -36,7 +36,9 @@ def set_kill(venue: str, engaged: bool, reason: str = "") -> None:
         "engaged": engaged, "reason": reason,
         "ts": _dt.datetime.now(_dt.timezone.utc).isoformat(),
     }
-    _KILL.write_text(json.dumps(state))
+    tmp = _KILL.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state))
+    tmp.replace(_KILL)
 
 
 def venue_engaged(venue: str) -> bool:
@@ -62,12 +64,20 @@ class VenueRiskStatus(BaseModel):
 class RiskStatus(BaseModel):
     venues: dict[str, VenueRiskStatus]
     limits: dict
+    # --- back-compat top-level mirror for the pre-per-venue dashboard widget.
+    # Real fix is a dashboard update (separate follow-up, different repo) — this
+    # keeps the existing emergency-stop control honest in the meantime. ---
+    kill_engaged: bool = False
+    kill_reason: str = ""
+    current_drawdown_pct: float | None = None
+    max_drawdown_limit_pct: float | None = None
+    drawdown_breached: bool = False
 
 
 class KillRequest(BaseModel):
-    venue: str
     engaged: bool
     reason: str = "manual"
+    venue: str = "_AGGREGATE"
 
 
 @router.get("/status", response_model=RiskStatus)
@@ -87,6 +97,9 @@ def risk_status() -> RiskStatus:
             current_drawdown_pct=dd,
             max_drawdown_limit_pct=venue_risk.max_dd_limit(v),
         )
+    any_killed = any(v.kill_engaged for v in venues.values())
+    kill_reason = next((v.kill_reason for v in venues.values() if v.kill_engaged), "")
+    worst = min(venues.values(), key=lambda v: v.current_drawdown_pct if v.current_drawdown_pct is not None else 0.0)
     return RiskStatus(
         venues=venues,
         limits={
@@ -95,6 +108,11 @@ def risk_status() -> RiskStatus:
             "max_position_qty": cfg.max_position_qty,
             "daily_loss_limit": cfg.daily_loss_limit,
         },
+        kill_engaged=any_killed,
+        kill_reason=kill_reason,
+        current_drawdown_pct=worst.current_drawdown_pct,
+        max_drawdown_limit_pct=worst.max_drawdown_limit_pct,
+        drawdown_breached=any_killed,
     )
 
 

@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
+
+import pytest
 
 from api_server import risk_state, venue_risk
+from jarvis.execution import broker_bridge
 
 
 def _isolate(tmp_path, monkeypatch):
@@ -33,6 +37,18 @@ def test_drawdown_pct_tracks_peak_across_history(tmp_path, monkeypatch):
     venue_risk._append_snapshot("KR", 1200.0)
     dd = venue_risk.drawdown_pct("KR", 900.0)
     assert dd == round((900.0 - 1200.0) / 1200.0 * 100, 2)  # -25.0
+
+
+def test_drawdown_pct_is_current_from_peak_not_alltime_mdd(tmp_path, monkeypatch):
+    """회귀: Fix 2 — history [1000, 700, 1500]에서 current=1500(역대 최고)은
+    peak(자기 자신 포함) 대비 0.0이어야 함. 옛 all-time-MDD 방식은 -30.0을 반환했음
+    (700에서의 옛 min() 낙폭이 새 관측 후에도 안 사라짐 — sticky kill이 회복 후에도
+    안 풀리는 원인)."""
+    _isolate(tmp_path, monkeypatch)
+    venue_risk._append_snapshot("KR", 1000.0)
+    venue_risk._append_snapshot("KR", 700.0)
+    dd = venue_risk.drawdown_pct("KR", 1500.0)
+    assert dd == 0.0
 
 
 def test_max_dd_limit_uses_venue_env_override(monkeypatch):
@@ -93,6 +109,57 @@ def test_tick_aggregate_reuses_last_known_value_on_fetch_failure(tmp_path, monke
     assert venue_risk.history("_AGGREGATE") == [1800.0]  # KR 1000(재사용) + HL 500 + US_ALPACA 300
 
 
+def test_kr_equity_usd_returns_none_when_snapshot_equity_is_zero(monkeypatch):
+    """회귀: Fix 1 — 조회 실패/0 잔고가 진짜 0 잔고와 구별 안 되면 0.0이 히스토리에
+    쌓여서 -100% drawdown으로 오인되고 sticky kill이 걸림. 0 이하는 None이어야 함."""
+    fake_snap = type("S", (), {"equity": 0.0})()
+    monkeypatch.setattr(
+        "jarvis.broker_readonly.live_providers.KISReadOnlyProvider.account_snapshot",
+        lambda self: fake_snap,
+    )
+    monkeypatch.setattr("jarvis.broker_readonly.aggregator._usdkrw_rate", lambda: 1300.0)
+    assert venue_risk._kr_equity_usd() is None
+
+
+def test_hl_equity_usd_returns_none_when_snapshot_equity_is_zero(monkeypatch):
+    fake_snap = type("S", (), {"equity": 0.0})()
+    monkeypatch.setattr(
+        "jarvis.broker_readonly.live_providers.HLReadOnlyProvider.account_snapshot",
+        lambda self: fake_snap,
+    )
+    assert venue_risk._hl_equity_usd() is None
+
+
+def test_us_ib_equity_usd_returns_none_when_net_liquidation_is_zero(monkeypatch):
+    class _FakeIBClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def get_account_summary(self):
+            return {"net_liquidation": 0.0}
+
+    monkeypatch.setattr("backends.ib.client.IBClient", _FakeIBClient)
+    assert asyncio.run(venue_risk._us_ib_equity_usd()) is None
+
+
+def test_us_alpaca_equity_usd_returns_none_when_equity_is_zero(monkeypatch):
+    monkeypatch.setenv("ALPACA_API_KEY", "k")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "s")
+
+    class _FakeAccount:
+        equity = "0.0"
+
+    class _FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        def get_account(self):
+            return _FakeAccount()
+
+    monkeypatch.setattr("alpaca.trading.client.TradingClient", _FakeClient)
+    assert venue_risk._us_alpaca_equity_usd() is None
+
+
 def test_tick_triggers_kill_when_venue_breaches_threshold(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
     monkeypatch.setenv("MAX_DRAWDOWN_PCT_HL", "10")
@@ -106,3 +173,30 @@ def test_tick_triggers_kill_when_venue_breaches_threshold(tmp_path, monkeypatch)
 
     assert risk_state.venue_engaged("HL") is True
     assert risk_state.venue_engaged("KR") is False  # 무관한 venue는 안 막힘
+
+
+def test_tick_kill_is_persisted_to_real_file_and_blocks_broker_bridge(tmp_path, monkeypatch):
+    """Fix 6 — 최종 리뷰가 지적한 통합 테스트 갭: is_killed()를 mock하지 않고 실제
+    tmp-dir risk_kill.json 파일을 통해 venue_risk.tick() → risk_state.set_kill()
+    → broker_bridge.route_order()의 _gate()까지 끝까지 통과시켜서, Fix 1의 버그
+    (0.0이 실패로 오인되어 -100% drawdown 킬 유발)가 이번엔 이 경로에서 잡히는지
+    확인한다."""
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setenv("MAX_DRAWDOWN_PCT_HL", "10")
+    venue_risk._append_snapshot("HL", 1000.0)  # peak
+    monkeypatch.setitem(venue_risk._EQUITY_FETCHERS, "KR", lambda: 100.0)
+    monkeypatch.setitem(venue_risk._EQUITY_FETCHERS, "HL", lambda: 850.0)  # -15% > 10% 한도
+    monkeypatch.setattr(venue_risk, "_us_ib_equity_usd", _raise_async)
+    monkeypatch.setitem(venue_risk._EQUITY_FETCHERS, "US_ALPACA", lambda: 100.0)
+
+    asyncio.run(venue_risk.tick())
+
+    kill_file = tmp_path / "risk_kill.json"
+    assert kill_file.exists()
+    on_disk = json.loads(kill_file.read_text())
+    assert on_disk["HL"]["engaged"] is True
+
+    order = dict(venue="HL", symbol="BTC", side="BUY", quantity=0.001,
+                 order_type="market", price=60000, paper=True)
+    with pytest.raises(broker_bridge.BrokerOrderRejected, match="risk kill switch engaged"):
+        broker_bridge.route_order(order)

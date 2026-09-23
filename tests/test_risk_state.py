@@ -71,10 +71,12 @@ def test_missing_kill_file_defaults_to_not_killed(tmp_path, monkeypatch):
 
 
 def test_set_kill_does_not_leave_tmp_file_behind(tmp_path, monkeypatch):
-    """Fix 4 — atomic replace: .tmp가 write 후 남아있으면 안 됨."""
+    """Fix 4 — atomic replace: .tmp가 write 후 남아있으면 안 됨.
+    Path.with_suffix(".tmp")는 확장자를 교체(추가 아님)하므로 실제 임시파일명은
+    risk_kill.tmp — 이전엔 risk_kill.json.tmp를 확인해서 항상 vacuous하게 통과했음."""
     _isolate(tmp_path, monkeypatch)
     risk_state.set_kill("KR", True, "A")
-    assert not (tmp_path / "risk_kill.json.tmp").exists()
+    assert not list(tmp_path.glob("*.tmp"))
     assert (tmp_path / "risk_kill.json").exists()
 
 

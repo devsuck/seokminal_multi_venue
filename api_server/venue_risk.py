@@ -26,16 +26,20 @@ VENUES = ("KR", "HL", "US_IB", "US_ALPACA")
 _DATA = Path(os.environ.get("DART_BOT_DIR", "data"))
 _SNAPSHOT_PATH = _DATA / "venue_risk_snapshots.jsonl"
 _TICK_INTERVAL_SEC = 300
+_STALE_AFTER_SEC = 3 * _TICK_INTERVAL_SEC  # 15분 — 이보다 오래된 값 재사용시 로그 경고
+_MAX_SNAPSHOT_BYTES = 5_000_000  # ponytail: 넘으면 오래된 절반 버림, 무제한 증가 방지
 
 
-def _kr_equity_usd() -> float | None:
-    from jarvis.broker_readonly.aggregator import _usdkrw_rate
+def _kr_equity_native() -> float | None:
+    """원화(KRW) 그대로 반환 — FX환산은 안 함. 자기 venue 드로다운/킬 판정은 이
+    값(자국통화 원금)으로 해야 환율 변동이 가짜 손익으로 잡히지 않는다. USD환산은
+    tick()이 aggregate 합산 시점에만 별도로 한다."""
     from jarvis.broker_readonly.live_providers import KISReadOnlyProvider
     try:
         snap = KISReadOnlyProvider(paper=False).account_snapshot()
         if snap is None:
             return None
-        eq = snap.equity / _usdkrw_rate()
+        eq = snap.equity
         return eq if eq > 0 else None
     except Exception as e:
         _log.warning("venue_risk: KR equity fetch failed: %s", e)
@@ -82,16 +86,27 @@ def _us_alpaca_equity_usd() -> float | None:
 
 
 _EQUITY_FETCHERS = {
-    "KR": _kr_equity_usd,
+    "KR": _kr_equity_native,
     "HL": _hl_equity_usd,
     "US_ALPACA": _us_alpaca_equity_usd,
 }
 
 
 async def _equity_usd(venue: str) -> float | None:
+    """이름과 달리 KR은 KRW 원화 그대로 반환한다(자기 venue 판정용 자국통화 원금).
+    나머지 venue는 원래부터 USD 네이티브라 이름 그대로."""
     if venue == "US_IB":
         return await _us_ib_equity_usd()
     return await asyncio.to_thread(_EQUITY_FETCHERS[venue])
+
+
+def _to_usd_for_aggregate(venue: str, native: float) -> float:
+    """firm-wide aggregate 합산 전용 USD 환산 — KR의 자기 드로다운/킬 판정에는
+    안 쓴다(그건 native KRW 그대로, FX노이즈 차단)."""
+    if venue != "KR":
+        return native
+    from jarvis.broker_readonly.aggregator import _usdkrw_rate
+    return native / _usdkrw_rate()
 
 
 def _append_snapshot(venue: str, equity_usd: float) -> None:
@@ -99,9 +114,17 @@ def _append_snapshot(venue: str, equity_usd: float) -> None:
     entry = {"ts": _dt.datetime.now(_dt.timezone.utc).isoformat(), "venue": venue, "equity_usd": equity_usd}
     with _SNAPSHOT_PATH.open("a") as f:
         f.write(json.dumps(entry) + "\n")
+    _prune_snapshot_file()
 
 
-def history(venue: str) -> list[float]:
+def _prune_snapshot_file() -> None:
+    if _SNAPSHOT_PATH.stat().st_size <= _MAX_SNAPSHOT_BYTES:
+        return
+    lines = _SNAPSHOT_PATH.read_text().splitlines()
+    _SNAPSHOT_PATH.write_text("\n".join(lines[len(lines) // 2:]) + "\n")
+
+
+def _rows(venue: str) -> list[dict]:
     if not _SNAPSHOT_PATH.exists():
         return []
     out = []
@@ -111,8 +134,12 @@ def history(venue: str) -> list[float]:
         except Exception:
             continue
         if row.get("venue") == venue:
-            out.append(float(row["equity_usd"]))
+            out.append(row)
     return out
+
+
+def history(venue: str) -> list[float]:
+    return [float(r["equity_usd"]) for r in _rows(venue)]
 
 
 def drawdown_pct(venue: str, current: float) -> float:
@@ -127,8 +154,16 @@ def drawdown_pct(venue: str, current: float) -> float:
 def max_dd_limit(venue: str) -> float:
     override = os.environ.get(f"MAX_DRAWDOWN_PCT_{venue}")
     if override:
-        return float(override)
-    return float(os.environ.get("MAX_DRAWDOWN_PCT", "15"))
+        try:
+            return float(override)
+        except ValueError:
+            _log.warning("venue_risk: MAX_DRAWDOWN_PCT_%s=%r invalid, falling back to default", venue, override)
+    default = os.environ.get("MAX_DRAWDOWN_PCT", "15")
+    try:
+        return float(default)
+    except ValueError:
+        _log.warning("venue_risk: MAX_DRAWDOWN_PCT=%r invalid, falling back to 15", default)
+        return 15.0
 
 
 def _check_and_kill(venue: str, dd: float) -> None:
@@ -148,15 +183,26 @@ async def tick() -> None:
         except Exception:
             equity = None
         if equity is None:
-            hist = history(venue)
-            if hist:
-                latest[venue] = hist[-1]  # 조회 실패 — 마지막 알려진 값으로 aggregate엔 남김
+            rows = _rows(venue)
+            if rows:
+                last_ts = _dt.datetime.fromisoformat(rows[-1]["ts"])
+                age = (_dt.datetime.now(_dt.timezone.utc) - last_ts).total_seconds()
+                if age > _STALE_AFTER_SEC:
+                    _log.warning(
+                        "venue_risk: %s stale %.0fs (> %ds) — reusing last known value for aggregate anyway",
+                        venue, age, _STALE_AFTER_SEC,
+                    )
+                # 조회 실패 — 마지막 알려진 값으로 aggregate엔 남김. staleness는 로그만
+                # 하고 aggregate에서 빼진 않는다 — 뺐다간 벤뉴 하나 죽었을 뿐인데
+                # 나머지 합산이 줄어든 걸 진짜 손실로 오인해 firm-wide kill을 유발할
+                # 수 있음(실제 손실보다 더 위험한 false positive).
+                latest[venue] = _to_usd_for_aggregate(venue, float(rows[-1]["equity_usd"]))
             continue
         try:
             _append_snapshot(venue, equity)
-            latest[venue] = equity
             dd = drawdown_pct(venue, equity)
             _check_and_kill(venue, dd)
+            latest[venue] = _to_usd_for_aggregate(venue, equity)
         except Exception as e:
             _log.warning("venue_risk: tick failed for venue=%s: %s", venue, e)
 

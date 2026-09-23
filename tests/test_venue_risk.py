@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as _dt
 import json
+import logging
 
 import pytest
 
@@ -97,7 +99,8 @@ def test_tick_isolates_one_venue_failure(tmp_path, monkeypatch):
 def test_tick_aggregate_reuses_last_known_value_on_fetch_failure(tmp_path, monkeypatch):
     """직전 tick 성공값이 있으면, 이번 tick 실패해도 그 값으로 aggregate에 포함."""
     _isolate(tmp_path, monkeypatch)
-    venue_risk._append_snapshot("KR", 1000.0)  # 이전 tick의 성공 기록
+    venue_risk._append_snapshot("KR", 1000.0)  # 이전 tick의 성공 기록(KRW 네이티브)
+    monkeypatch.setattr("jarvis.broker_readonly.aggregator._usdkrw_rate", lambda: 1.0)
 
     monkeypatch.setitem(venue_risk._EQUITY_FETCHERS, "KR", _raise)
     monkeypatch.setitem(venue_risk._EQUITY_FETCHERS, "HL", lambda: 500.0)
@@ -109,7 +112,7 @@ def test_tick_aggregate_reuses_last_known_value_on_fetch_failure(tmp_path, monke
     assert venue_risk.history("_AGGREGATE") == [1800.0]  # KR 1000(재사용) + HL 500 + US_ALPACA 300
 
 
-def test_kr_equity_usd_returns_none_when_snapshot_equity_is_zero(monkeypatch):
+def test_kr_equity_native_returns_none_when_snapshot_equity_is_zero(monkeypatch):
     """회귀: Fix 1 — 조회 실패/0 잔고가 진짜 0 잔고와 구별 안 되면 0.0이 히스토리에
     쌓여서 -100% drawdown으로 오인되고 sticky kill이 걸림. 0 이하는 None이어야 함."""
     fake_snap = type("S", (), {"equity": 0.0})()
@@ -117,8 +120,7 @@ def test_kr_equity_usd_returns_none_when_snapshot_equity_is_zero(monkeypatch):
         "jarvis.broker_readonly.live_providers.KISReadOnlyProvider.account_snapshot",
         lambda self: fake_snap,
     )
-    monkeypatch.setattr("jarvis.broker_readonly.aggregator._usdkrw_rate", lambda: 1300.0)
-    assert venue_risk._kr_equity_usd() is None
+    assert venue_risk._kr_equity_native() is None
 
 
 def test_hl_equity_usd_returns_none_when_snapshot_equity_is_zero(monkeypatch):
@@ -164,6 +166,7 @@ def test_tick_triggers_kill_when_venue_breaches_threshold(tmp_path, monkeypatch)
     _isolate(tmp_path, monkeypatch)
     monkeypatch.setenv("MAX_DRAWDOWN_PCT_HL", "10")
     venue_risk._append_snapshot("HL", 1000.0)  # peak
+    monkeypatch.setattr("jarvis.broker_readonly.aggregator._usdkrw_rate", lambda: 1.0)
     monkeypatch.setitem(venue_risk._EQUITY_FETCHERS, "KR", lambda: 100.0)
     monkeypatch.setitem(venue_risk._EQUITY_FETCHERS, "HL", lambda: 850.0)  # -15% > 10% 한도
     monkeypatch.setattr(venue_risk, "_us_ib_equity_usd", _raise_async)
@@ -184,6 +187,7 @@ def test_tick_kill_is_persisted_to_real_file_and_blocks_broker_bridge(tmp_path, 
     _isolate(tmp_path, monkeypatch)
     monkeypatch.setenv("MAX_DRAWDOWN_PCT_HL", "10")
     venue_risk._append_snapshot("HL", 1000.0)  # peak
+    monkeypatch.setattr("jarvis.broker_readonly.aggregator._usdkrw_rate", lambda: 1.0)
     monkeypatch.setitem(venue_risk._EQUITY_FETCHERS, "KR", lambda: 100.0)
     monkeypatch.setitem(venue_risk._EQUITY_FETCHERS, "HL", lambda: 850.0)  # -15% > 10% 한도
     monkeypatch.setattr(venue_risk, "_us_ib_equity_usd", _raise_async)
@@ -200,3 +204,66 @@ def test_tick_kill_is_persisted_to_real_file_and_blocks_broker_bridge(tmp_path, 
                  order_type="market", price=60000, paper=True)
     with pytest.raises(broker_bridge.BrokerOrderRejected, match="risk kill switch engaged"):
         broker_bridge.route_order(order)
+
+
+def test_kr_kill_decision_uses_native_krw_not_fx_converted(tmp_path, monkeypatch):
+    """Fix 8 — KR 자체 킬 판정은 KRW 원화 기준이어야 한다. FX가 급변(원화 반토막)해도
+    원화 원금이 그대로면 KR 자체 dd는 0이어야 하고, 히스토리도 원화 그대로 쌓여야 함."""
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setenv("MAX_DRAWDOWN_PCT_KR", "10")
+    venue_risk._append_snapshot("KR", 1_000_000.0)  # KRW peak
+    monkeypatch.setitem(venue_risk._EQUITY_FETCHERS, "KR", lambda: 1_000_000.0)  # 원화 그대로
+    monkeypatch.setattr("jarvis.broker_readonly.aggregator._usdkrw_rate", lambda: 2000.0)  # FX만 급변
+    monkeypatch.setitem(venue_risk._EQUITY_FETCHERS, "HL", lambda: 500.0)
+    monkeypatch.setattr(venue_risk, "_us_ib_equity_usd", _raise_async)
+    monkeypatch.setitem(venue_risk._EQUITY_FETCHERS, "US_ALPACA", lambda: 300.0)
+
+    asyncio.run(venue_risk.tick())
+
+    assert risk_state.venue_engaged("KR") is False  # FX 급변에도 킬 안 걸림
+    assert venue_risk.history("KR") == [1_000_000.0, 1_000_000.0]  # 원화 그대로 저장
+
+
+def test_max_dd_limit_falls_back_when_venue_override_is_malformed(monkeypatch):
+    monkeypatch.setenv("MAX_DRAWDOWN_PCT_KR", "abc")
+    monkeypatch.setenv("MAX_DRAWDOWN_PCT", "20")
+    assert venue_risk.max_dd_limit("KR") == 20.0
+
+
+def test_max_dd_limit_falls_back_to_15_when_default_also_malformed(monkeypatch):
+    monkeypatch.delenv("MAX_DRAWDOWN_PCT_KR", raising=False)
+    monkeypatch.setenv("MAX_DRAWDOWN_PCT", "xyz")
+    assert venue_risk.max_dd_limit("KR") == 15.0
+
+
+def test_snapshot_file_is_pruned_when_it_exceeds_size_cap(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(venue_risk, "_MAX_SNAPSHOT_BYTES", 200)
+    for i in range(20):
+        venue_risk._append_snapshot("KR", float(i))
+    lines = venue_risk._SNAPSHOT_PATH.read_text().splitlines()
+    assert len(lines) < 20  # 오래된 절반 버려짐
+    assert json.loads(lines[-1])["equity_usd"] == 19.0  # 최신 값은 남아있음
+
+
+def test_tick_logs_warning_when_reusing_stale_fallback_value(tmp_path, monkeypatch, caplog):
+    """Fix 6 후속 — aggregate 계산은 안 바꾸되(false-kill 위험), stale 재사용은
+    더 이상 silent하면 안 됨."""
+    _isolate(tmp_path, monkeypatch)
+    old_ts = (_dt.datetime.now(_dt.timezone.utc)
+              - _dt.timedelta(seconds=venue_risk._STALE_AFTER_SEC + 1)).isoformat()
+    venue_risk._SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with venue_risk._SNAPSHOT_PATH.open("w") as f:
+        f.write(json.dumps({"ts": old_ts, "venue": "KR", "equity_usd": 1000.0}) + "\n")
+
+    monkeypatch.setattr("jarvis.broker_readonly.aggregator._usdkrw_rate", lambda: 1.0)
+    monkeypatch.setitem(venue_risk._EQUITY_FETCHERS, "KR", _raise)
+    monkeypatch.setitem(venue_risk._EQUITY_FETCHERS, "HL", lambda: 500.0)
+    monkeypatch.setattr(venue_risk, "_us_ib_equity_usd", _raise_async)
+    monkeypatch.setitem(venue_risk._EQUITY_FETCHERS, "US_ALPACA", lambda: 300.0)
+
+    with caplog.at_level(logging.WARNING):
+        asyncio.run(venue_risk.tick())
+
+    assert any("stale" in r.message for r in caplog.records)
+    assert venue_risk.history("_AGGREGATE") == [1800.0]  # 동작 자체는 안 바뀜 — 여전히 재사용

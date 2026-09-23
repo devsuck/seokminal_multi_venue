@@ -3633,3 +3633,164 @@ Daytrade E2E/lv5가상화폐)이 `status:stopped`였던 원인을 `docs/progress
   일치(margin 계좌 별도 모델링 없이도 `cash = alloc + realized - invested` 공식이
   자연스럽게 맞음) — 별도 마진 회계 안 만듦(YAGNI, 현재 이 코드경로로 숏 여는
   실전 전략 없음 — daytrade_logic류는 전부 롱온리).
+
+## 2026-09-23: Task 4 — dart_autobot/vrp_bot 킬스위치 venue 명시 + 전체 회귀
+
+### 완료된 작업
+- **Task 4/4 (최종태스크)**: SDD 4-태스크 플랜의 마지막 태스크.
+  - `api_server/dart_autobot.py:370`: `if is_killed():` → `if is_killed("KR"):`
+  - `api_server/vrp_bot.py:443`: `if is_killed():` → `if is_killed("US_IB"):`
+  - `api_server/copytrade_autobot.py`: 무변경 확인(grep 결과 empty, `is_killed`/`risk_state`
+    참조 없음 — 청산전용봇, tests/test_copytrade_autobot.py::test_kill_switch_does_not_block_autoliquidation
+    회귀테스트가 불변식 고정).
+- **전체 회귀 테스트**: `pytest tests/ -q` → 2132 passed (부녀, 신규 회귀 없음).
+  이는 4-태스크 플랜 전체의 마지막 게이트(Task1: risk_state.is_killed(venue),
+  Task2: venue_risk 드로다운 루프, Task3: broker_bridge._gate(), Task4: 이 봇들)
+  전부 배선 완료 상태 확인.
+
+### 변경된 파일
+- `api_server/dart_autobot.py` (line 370)
+- `api_server/vrp_bot.py` (line 443)
+
+### 다음 할 일
+- 없음 — 4-태스크 플랜 완료.
+
+### 결정사항
+- 순수 기계적 변경 — 동작 개선 아님, 기존 동작 유지만(각 봇이 자기 venue만 보던
+  동작은 이전에도 그랬고 이제도 그렇지만, 이전엔 이 값이 Alpaca-paper 계좌 관측치와
+  뒤섞여 나왔음).
+
+## 2026-09-23: venue별 킬스위치 플랜 최종 완료 + KR paper/live 버그 수정
+
+### 완료된 작업
+- SDD 4-태스크 플랜(afdb466 스펙) 전체 완료 + 최종 whole-branch review(opus) +
+  그 review가 찾은 3 Critical + 6 Important 결함 중 1회 fix dispatch로 처리 가능한
+  항목 수정 + scoped re-review(sonnet, Approved) 완료.
+  - Critical#1: venue_risk.py 4개 equity fetcher 전부 zero/실패 조회를 실제 0 잔고와
+    구분 못해 일시적 조회실패가 -100% drawdown으로 오인되고 sticky kill → aggregate
+    OR로 전체 venue 연쇄킬 위험 → `eq > 0` 가드 복원.
+  - Critical#2: `drawdown_pct()`가 전체 히스토리 min()(all-time MDD)을 계산해서
+    신고점 갱신 중에도 과거 최대낙폭이 남아있으면 -30% 같은 값 반환 → sticky kill이
+    영구 해제 불가능해지는 버그. `(current-peak)/peak`로 "현재 peak 대비 낙폭"으로
+    수정.
+  - Critical#3: `GET /risk/status`/`POST /risk/kill` 응답 스펙이 바뀌어(flat →
+    nested venues{}) seokminal-dashboard의 긴급정지 위젯이 깨짐(항상 "OFF-정상"
+    표시 + 정지버튼 422). 대시보드 레포는 안 건드리고 risk_state.py에 구버전
+    호환 필드 추가하는 shim으로 막음. **대시보드 자체의 venue별 UI 개선은 아직
+    별도 후속작업으로 남아있음.**
+  - Important 중 반영: IB client_id/port 충돌(#5, Fix1에 병합), non-atomic write
+    fail-open 레이스(#7, atomic tmp+replace), 로깅 전무(#6, 기본 warning 로그만—
+    staleness bound는 범위밖), 실통합경로 테스트 부재(#9, 실제 risk_kill.json
+    파일 거치는 통합테스트 1개 추가).
+  - Important 중 미반영(사용자 확인 필요해서 보류): #4 venue별 paper=True/False
+    불일치, #8 KR 드로다운 USD환산 FX노이즈.
+  - Fix commit: `61b0a92`. 커밋: 1738a04→049d947→d8225c4→046ae55→61b0a92, 전체
+    2142/2142 그린.
+- **KR paper/live 버그 확인 및 수정(사용자 직접 확인)**: KR 실제 라이브 트레이딩은
+  실계좌인데 `venue_risk.py`의 `_kr_equity_usd()`는 `KISReadOnlyProvider(paper=True)`
+  (모의계좌) 잔고를 감시하고 있었음 — 즉 KR 킬스위치가 실전 손실을 전혀 못 봄.
+  `paper=False`로 수정. HL(paper=False)/US_ALPACA(paper=True)는 사용자 확인 결과
+  이미 맞는 설정이라 무변경. 커밋 `a16696f`, 2142/2142 그린.
+- origin/main에 전부 push 완료 (61b0a92, a16696f 둘 다).
+- `.superpowers/sdd/2026-09-23-per-venue-kill-switch/` 워크스페이스 삭제(git-ignored
+  scratch, 플랜 완료로 정리).
+
+### 변경된 파일
+- `api_server/risk_state.py`, `api_server/venue_risk.py` (final fix + KR paper 수정)
+- `tests/test_risk_state.py`, `tests/test_venue_risk.py` (신규 테스트 10개)
+
+### 다음 할 일 (후속 태스크 후보, 이번 플랜 범위 밖)
+- `seokminal-dashboard`의 `SettingsDrawer.tsx`/`lib/api.ts`를 venue별 킬스위치
+  인지하도록 업데이트 — 지금은 호환 shim이 "뭔가 killed면 OFF 아님"만 보여주고
+  어느 venue인지는 못 보여줌.
+- KR 드로다운을 USD환산(`_usdkrw_rate()`, yfinance 콜드캐시시 1350.0 하드코딩
+  fallback)이 아니라 KRW 네이티브로 계산할지 결정.
+- `venue_risk.history()` jsonl 무제한 증가, `max_dd_limit()`의 env var 오타시
+  ValueError가 조용히 삼켜지는 것(fail-open), `route_close()`가 여전히 별도
+  `RiskConfig.kill_switch`만 보고 새 `is_killed()` 킬스위치는 안 봄 — 전부
+  기존에 parked, 아직 안 건드림.
+- aggregate가 죽은 venue를 마지막 알려진 값으로 무기한 fallback하는 staleness
+  bound 없음(#6 후반부, 이번 fix 범위 밖).
+- `tests/test_risk_state.py`의 atomic-write 테스트 하나가 `risk_kill.json.tmp`를
+  assert하는데 실제 생성되는 파일명은 `risk_kill.tmp`(`Path.with_suffix`가 확장자
+  치환이라)라 항상 vacuously true — 다음에 이 파일 건드릴 때 한 줄 수정.
+
+### 결정사항
+- Critical#3은 대시보드 레포를 직접 안 고치고 백엔드 shim으로 막기로 결정 —
+  이 플랜의 파일 스코프 밖(다른 레포)이고, 진짜 해결(venue별 UI)은 디자인 작업이
+  필요해서 별도 후속 태스크로 미룸.
+- venue별 paper=True/False 설정은 코드만 봐서는 판단 불가(계좌 상태는 코드 밖
+  정보)라 추측 안 하고 사용자에게 직접 확인 — KR만 틀렸고 나머지는 맞았음
+  (라이브머니 시스템에서 이런 항목은 추측하면 안 된다는 판단, 실제로 틀린 게
+  하나 있었음).
+
+## 2026-09-23 (계속): venue_risk 후속 이슈 4건 수정 (커밋 `dcc99ab`)
+
+### 완료된 작업
+- 지난 세션 "다음 할 일"에 parked된 항목 중 4건 처리:
+  1. KR FX노이즈: `_kr_equity_native()`로 분리 — KR 자기 드로다운/킬 판정은
+     KRW 네이티브 그대로, USD환산은 `_to_usd_for_aggregate()`로 aggregate 합산
+     시점에만 적용. 환율 변동이 KR 자체 손익으로 오인되지 않음.
+  2. `venue_risk_snapshots.jsonl` 5MB 초과시 오래된 절반 버림(`_prune_snapshot_file`)
+     — 무제한 증가 방지.
+  3. `max_dd_limit()`의 `MAX_DRAWDOWN_PCT[_VENUE]` env 오타가 조용히 fail-open
+     하던 것 → try/except + 경고 로그 + 기본값(15%) 폴백.
+  4. `tick()`에서 venue 조회 실패 후 15분+ 지난 stale 값을 aggregate에 재사용할 때
+     경고 로그 추가(재사용 자체는 유지 — 벤뉴 하나 뺐다가 나머지 합산 감소를 손실로
+     오인해 firm-wide kill 유발하는 게 더 위험한 false positive라 판단).
+- `pytest tests/ -q` 그린 확인 후 커밋.
+
+### 변경된 파일
+- `api_server/venue_risk.py`
+
+### 다음 할 일
+- 남은 parked 항목(KR 드로다운 USD환산 여부는 이번에 KRW 네이티브로 이미 결정됨,
+  `route_close()`가 구`RiskConfig.kill_switch`만 보는 문제, atomic-write 테스트
+  vacuous 케이스)은 이번 라운드 스코프 밖 — 다음에 건드릴 때 처리.
+
+### 결정사항
+- staleness bound(오래된 값 완전 배제)는 여전히 안 넣음 — 로그만 남기고 aggregate
+  계산에서 빼지 않는 게 더 안전한 fail-safe라는 기존 판단 유지.
+
+## 2026-09-23 (계속): 대시보드 venue별 킬스위치 UI (커밋 `e9f9974`, seokminal-dashboard)
+
+### 완료된 작업
+- 후속 태스크 7항목 중 마지막 남은 항목(대시보드 UI) 완료. `seokminal-dashboard`
+  레포 `lib/api.ts`/`components/console/SettingsDrawer.tsx` 갱신:
+  - `RiskStatus.venues: Record<string, VenueRiskStatus>` 타입 추가, `setKillSwitch()`에
+    `venue` 파라미터 추가(기본값 `_AGGREGATE`).
+  - 상단 카드는 `data.venues["_AGGREGATE"]`만 보도록 스코프 분리 — 기존엔
+    `data.kill_engaged`(구버전 호환 shim, "venue중 하나라도 killed"를 반영하는
+    any-venue 집계값)를 그대로 썼는데, 이러면 개별 venue 킬이 상단 firm-wide
+    카드에 잘못 번져 보임.
+  - 신규 "Venue별 상태" 패널 추가 — KR/HL/US_IB/US_ALPACA 4개 개별 상태 표시 +
+    각각 독립 차단/해제 버튼(`toggleVenueKill`).
+- **백엔드 재기동**: 떠있던 uvicorn(:8000) 프로세스가 per-venue 스키마 반영 전
+  구버전이라(`/risk/status` 응답에 `venues` 키 없음) 대시보드 새 패널이 비어있던
+  문제 발견 → 사용자 승인 받고 `scripts/restart_api.sh` 실행(launchd KeepAlive가
+  자동재기동, 다운타임 수초) → `venues` 필드 포함 신버전 확인.
+- **E2E 검증**(브라우저 + 실 API, 사용자 승인 하에 라이브 킬스위치 실토글):
+  - golden path: 드로어 열어 4 venue 정상 표시, 상단 카드 "킬스위치 OFF — 정상" 확인.
+  - edge case: `POST /risk/kill {venue:"KR", engaged:true}`로 KR만 실제 킬 →
+    UI에서 KR만 빨간색+사유 표시, 나머지 venue와 상단 `_AGGREGATE` 카드는 영향
+    없음 확인(스코프 격리 검증) → 즉시 해제, 전체 venue `kill_engaged:false` 복귀 확인.
+  - `npx tsc --noEmit` 클린, `npm test`(vitest) 기존 4건 실패는 이번 변경과 무관
+    (stash 전후 비교로 확인, 다른 라우트 경로 불일치 — pre-existing).
+
+### 변경된 파일
+- (다른 레포) `seokminal-dashboard/lib/api.ts`, `seokminal-dashboard/components/console/SettingsDrawer.tsx`
+  — 커밋 `e9f9974`
+
+### 다음 할 일
+- 없음 — 지난 세션에서 식별된 후속 작업 7항목(2/3/4/6/7은 `dcc99ab`까지, 1은
+  이번 대시보드 커밋, 5는 "설계상 정상, 수정 불필요"로 검증 완료) 전부 처리됨.
+- `seokminal-dashboard`의 pre-existing vitest 실패 4건은 이번 스코프 밖(무관 확인됨) —
+  건드리려면 별도 세션.
+- 두 레포(`seokminal-multi-venue`: `dcc99ab`, `seokminal-dashboard`: `e9f9974`) 모두
+  origin push는 아직 안 함 — 사용자 확인 필요.
+
+### 결정사항
+- venue 개별 킬 토글은 `confirm()` 다이얼로그를 거치는데 브라우저 자동화 도구가
+  JS 모달을 트리거하면 이후 이벤트를 못 받아 세션이 멈추므로, UI 클릭 대신
+  API 직접 호출로 edge case 검증 — 다이얼로그 자체의 존재/텍스트는 코드 리뷰로 확인.
+

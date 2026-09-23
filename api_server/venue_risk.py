@@ -32,7 +32,7 @@ def _kr_equity_usd() -> float | None:
     from jarvis.broker_readonly.aggregator import _usdkrw_rate
     from jarvis.broker_readonly.live_providers import KISReadOnlyProvider
     try:
-        snap = KISReadOnlyProvider(paper=True).account_snapshot()
+        snap = KISReadOnlyProvider(paper=False).account_snapshot()
         if snap is None:
             return None
         eq = snap.equity / _usdkrw_rate()
